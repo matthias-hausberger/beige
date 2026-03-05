@@ -6,18 +6,20 @@ import { AuditLogger } from "./audit.js";
 import { PolicyEngine } from "./policy.js";
 import { AgentManager } from "./agent-manager.js";
 import { BeigeSessionStore } from "./sessions.js";
+import { GatewayAPI } from "./api.js";
 import { SandboxManager } from "../sandbox/manager.js";
 import { AgentSocketServer } from "../socket/server.js";
 import { ToolRunner } from "../tools/runner.js";
 import { loadTools, type LoadedTool } from "../tools/registry.js";
 import { TelegramChannel } from "../channels/telegram.js";
-import { TUIChannel } from "../channels/tui.js";
 
 /**
- * Main gateway. Wires everything together.
+ * Main gateway. Wires everything together and exposes an HTTP API
+ * that channels (TUI, future CLI, web UI, etc.) connect to.
  *
- * The gateway is always the single orchestrator. Channels (Telegram, TUI, etc.)
- * are interfaces that plug into the gateway to talk to agents.
+ * Usage:
+ *   Shell 1: `beige`          → starts gateway (API + Telegram)
+ *   Shell 2: `beige tui`      → TUI channel connects to gateway API
  */
 export class Gateway {
   private config: BeigeConfig;
@@ -27,9 +29,9 @@ export class Gateway {
   private sessionStore: BeigeSessionStore;
   private sandboxManager!: SandboxManager;
   private agentManager!: AgentManager;
+  private api!: GatewayAPI;
   private socketServers = new Map<string, AgentSocketServer>();
   private telegramChannel?: TelegramChannel;
-  private tuiChannel?: TUIChannel;
   private loadedTools!: Map<string, LoadedTool>;
 
   constructor(config: BeigeConfig) {
@@ -42,16 +44,7 @@ export class Gateway {
     this.sessionStore = new BeigeSessionStore();
   }
 
-  /**
-   * Start the gateway.
-   *
-   * @param opts.tui  If set, also launch a TUI channel for the given agent
-   * @param opts.tuiResumeFile  Resume a specific session file in TUI
-   */
-  async start(opts?: {
-    tui?: string;
-    tuiResumeFile?: string;
-  }): Promise<void> {
+  async start(): Promise<void> {
     console.log("[GATEWAY] Starting Beige gateway...");
 
     // 1. Load tool packages and register handlers
@@ -81,9 +74,22 @@ export class Gateway {
       await this.startAgentInfra(agentName);
     }
 
-    // 6. Start channel adapters
+    // 6. Start HTTP API (for TUI and other external channels)
+    const host = this.config.server?.host ?? "127.0.0.1";
+    const port = this.config.server?.port ?? 7433;
 
-    // Telegram (non-blocking — runs in background)
+    this.api = new GatewayAPI({
+      config: this.config,
+      agentManager: this.agentManager,
+      sessionStore: this.sessionStore,
+      sandbox: this.sandboxManager,
+      audit: this.audit,
+      host,
+      port,
+    });
+    await this.api.start();
+
+    // 7. Start Telegram channel (non-blocking)
     if (this.config.channels?.telegram?.enabled) {
       this.telegramChannel = new TelegramChannel(
         this.config.channels.telegram,
@@ -96,28 +102,6 @@ export class Gateway {
     }
 
     console.log("[GATEWAY] Beige gateway started ✓");
-
-    // TUI (blocking — takes over the terminal)
-    // Launched LAST because InteractiveMode blocks until exit.
-    // Other channels (Telegram) continue running in the background.
-    if (opts?.tui) {
-      const agentName = opts.tui;
-      if (!this.config.agents[agentName]) {
-        throw new Error(
-          `Unknown agent '${agentName}'. Available: ${Object.keys(this.config.agents).join(", ")}`
-        );
-      }
-
-      this.tuiChannel = new TUIChannel(
-        this.config,
-        this.agentManager,
-        this.sessionStore
-      );
-      await this.tuiChannel.run(agentName, opts.tuiResumeFile);
-
-      // TUI exited — shut down the gateway
-      await this.stop();
-    }
   }
 
   async stop(): Promise<void> {
@@ -126,6 +110,8 @@ export class Gateway {
     if (this.telegramChannel) {
       await this.telegramChannel.stop();
     }
+
+    await this.api?.stop();
 
     for (const [, server] of this.socketServers) {
       await server.stop();

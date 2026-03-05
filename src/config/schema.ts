@@ -7,6 +7,7 @@ export interface BeigeConfig {
   llm: LLMConfig;
   tools: Record<string, ToolConfig>;
   agents: Record<string, AgentConfig>;
+  server?: GatewayServerConfig;
   channels: ChannelsConfig;
 }
 
@@ -47,6 +48,11 @@ export interface SandboxConfig {
   image?: string; // Docker image, defaults to "beige-sandbox:latest"
   extraMounts?: Record<string, string>; // host:container
   extraEnv?: Record<string, string>;
+}
+
+export interface GatewayServerConfig {
+  host?: string;  // default: "127.0.0.1"
+  port?: number;  // default: 7433
 }
 
 export interface ChannelsConfig {

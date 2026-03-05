@@ -237,37 +237,36 @@ sequenceDiagram
 
 ## 8. TUI Channel — Interactive Terminal Session
 
-The TUI is a channel like Telegram. It plugs into the running gateway and talks to the agent-manager. The gateway starts all infrastructure (sandboxes, sockets, tools) then hands control to the TUI channel.
+The TUI runs as a separate process (`beige tui`) and connects to the gateway's HTTP API. The LLM session runs locally in the TUI (full pi experience), but tool execution is proxied through the gateway.
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant TUI as TUI Channel<br/>(pi InteractiveMode)
-    participant AM as Agent Manager
-    participant PI as pi SDK
-    participant CT as Core Tools
+    participant TUI as TUI process<br/>(pi InteractiveMode)
+    participant LLM as LLM (via pi SDK)
+    participant API as Gateway HTTP API
     participant SM as Sandbox Manager
     participant SB as Docker Sandbox
 
-    Note over User,SB: Gateway has already started sandboxes, sockets, tools
+    Note over User,SB: Gateway is running in another shell
 
     User->>TUI: type message in editor
-    TUI->>AM: getOrCreateSession(tuiKey, agent)
-    AM-->>TUI: ManagedSession (AgentSession)
-    TUI->>PI: session.prompt(message)
-    PI->>CT: exec("ls /workspace")
-    CT->>SM: docker exec
-    SM->>SB: ls /workspace
-    SB-->>SM: file listing
-    SM-->>CT: stdout
-    CT-->>PI: tool result
-    PI-->>TUI: streaming text_delta
-    TUI-->>User: rendered in terminal
+    TUI->>LLM: session.prompt(message)
+    LLM-->>TUI: tool_use: exec("ls /workspace")
 
-    Note over User,SB: User exits — gateway shuts down
+    TUI->>API: POST /api/agents/testo/exec<br/>{tool: "exec", params: {command: "ls"}}
+    API->>SM: sandbox.exec("testo", ["sh","-c","ls"])
+    SM->>SB: docker exec
+    SB-->>SM: file listing
+    SM-->>API: result
+    API-->>TUI: {content: [{type:"text", text:"..."}]}
+
+    TUI->>LLM: tool_result
+    LLM-->>TUI: streaming text_delta
+    TUI-->>User: rendered in terminal
 ```
 
-> The TUI uses the same agent-manager and session store as Telegram. Both channels can run simultaneously — Telegram in the background while you use the TUI.
+> The TUI process needs the config file (for LLM API keys) but all tool execution goes through the gateway. This means audit logging, policy enforcement, and sandbox management are always centralized in the gateway.
 
 ## 9. Session Lifecycle
 

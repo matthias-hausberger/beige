@@ -64,38 +64,40 @@ The gateway is the single host process. It never runs untrusted code — all age
 
 ### Channels
 
-The gateway always runs. Channels are interfaces plugged into it. Multiple channels can be active simultaneously.
+The gateway always runs in its own process. Channels connect to it — some in-process (Telegram), some as separate processes (TUI).
 
 ```mermaid
 graph TB
-    subgraph Gateway["Gateway (always running)"]
+    subgraph Gateway["Gateway process (beige)"]
+        API["HTTP API<br/>:7433"]
         AM[Agent Manager]
         SM[Sandbox Manager]
         SS[Socket Servers]
+        TG["Telegram Channel<br/>(in-process)"]
     end
 
-    subgraph Channels
-        TUI["TUI Channel<br/>(pi InteractiveMode)"]
-        TG["Telegram Channel<br/>(GrammY)"]
+    subgraph Separate["Separate processes"]
+        TUI["TUI (beige tui)<br/>pi InteractiveMode"]
         FUTURE["Future channels<br/>(CLI, Web, API, ...)"]
     end
 
-    TUI --> AM
     TG --> AM
-    FUTURE -.-> AM
+    TUI -->|"HTTP /api/agents/:name/exec"| API
+    FUTURE -.->|HTTP| API
+    API --> AM
     AM --> SM
     SM --> SS
 
     style Gateway fill:#f5f0e0,stroke:#c9b97a
-    style Channels fill:#e0f0e8,stroke:#7ac9a0
+    style Separate fill:#e0f0e8,stroke:#7ac9a0
 ```
 
-| Channel | Enabled via | Session model | Commands |
-|---------|-------------|--------------|----------|
-| **TUI** | `beige --tui [agent]` | Persistent per agent, auto-continues most recent | `/new` `/resume` `/sessions` `/agent` |
-| **Telegram** | `channels.telegram.enabled: true` in config | Persistent per chat/thread | `/new` `/status` |
+| Channel | How it connects | Session model | Commands |
+|---------|----------------|--------------|----------|
+| **TUI** | Separate process → gateway HTTP API | Persistent per agent (local pi sessions) | Full pi commands |
+| **Telegram** | In-process (GrammY) | Persistent per chat/thread | `/new` `/status` |
 
-The TUI channel reuses [pi's `InteractiveMode`](https://github.com/badlogic/pi-mono) — you get the full pi experience (editor, streaming, history, model switching) with beige's sandboxed core tools underneath. When TUI is active, other channels (e.g. Telegram) continue running in the background.
+The TUI runs pi's `InteractiveMode` locally for the full pi experience (editor, streaming, model switching, compaction). Tool execution (read, write, patch, exec) is proxied through the gateway's HTTP API to the sandbox. The LLM session runs in the TUI process.
 
 ### Sandbox (per agent)
 
@@ -152,16 +154,16 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant CLI as cli.ts
+    participant CLI as Shell 1: beige
     participant GW as Gateway
     participant Tools as Tool Registry
     participant SM as Sandbox Manager
     participant SS as Socket Servers
-    participant TG as Telegram Channel
-    participant TUI as TUI Channel
+    participant API as HTTP API
+    participant TG as Telegram
 
     CLI->>GW: new Gateway(config)
-    CLI->>GW: gateway.start({ tui: "agent" })
+    CLI->>GW: gateway.start()
 
     GW->>Tools: loadTools(config)
     Tools-->>GW: loaded tools + handlers
@@ -174,22 +176,41 @@ sequenceDiagram
         SS-->>GW: listening on ~/.beige/sockets/<agent>.sock
     end
 
-    Note over GW: Start channels
+    GW->>API: start HTTP API on :7433
+    API-->>GW: listening
 
     opt Telegram enabled in config
-        GW->>TG: new TelegramChannel(config)
-        TG->>TG: bot.start() (background)
+        GW->>TG: bot.start() (background)
     end
 
     Note over GW: Gateway ready ✓
+```
 
-    opt --tui flag provided
-        GW->>TUI: new TUIChannel(config)
-        GW->>TUI: tui.run(agentName)
-        Note over TUI: Blocks until user exits.<br/>Other channels keep running.
-        TUI-->>GW: user exited
-        GW->>GW: gateway.stop()
-    end
+Then in a separate shell:
+
+```mermaid
+sequenceDiagram
+    participant CLI2 as Shell 2: beige tui testo
+    participant TUI as pi InteractiveMode
+    participant API as Gateway API (:7433)
+    participant SB as Docker Sandbox
+
+    CLI2->>API: GET /api/health
+    API-->>CLI2: ok
+
+    CLI2->>API: GET /api/agents
+    API-->>CLI2: [{name: "testo", tools: ["kv"]}]
+
+    CLI2->>TUI: createAgentSession (LLM local, tools proxied)
+
+    Note over TUI: User types a message
+
+    TUI->>API: POST /api/agents/testo/exec {tool: "exec", params: {command: "ls"}}
+    API->>SB: docker exec
+    SB-->>API: file listing
+    API-->>TUI: {content: [...]}
+
+    TUI-->>CLI2: Rendered in terminal
 ```
 
 ## Multi-Agent Setup

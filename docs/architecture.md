@@ -235,10 +235,10 @@ Error response:
 
 ### 7. Channel Adapters (`src/channels/`)
 
-Channels are interfaces plugged into the gateway. Multiple can be active simultaneously.
+Channels are interfaces that connect to the gateway. Some run in-process, others as separate processes.
 
-- **Telegram**: GrammY bot. Maps Telegram user/chat → agent. Persistent sessions per chat/thread.
-- **TUI**: Interactive terminal powered by pi's `InteractiveMode`. Full editor, streaming, model switching. Talks to the gateway's agent-manager like any other channel.
+- **Telegram** (in-process): GrammY bot. Maps Telegram user/chat → agent. Persistent sessions per chat/thread.
+- **TUI** (separate process): Connects to gateway HTTP API. Runs pi's `InteractiveMode` locally for the full pi experience. Tool execution is proxied through the gateway API.
 
 ### 8. Sandbox Docker Image
 
@@ -316,6 +316,7 @@ beige/
 │   │   └── loader.ts           # JSON5 loader + env var resolution
 │   ├── gateway/
 │   │   ├── gateway.ts          # Main gateway orchestrator
+│   │   ├── api.ts              # HTTP API for external channels (TUI, etc.)
 │   │   ├── agent-manager.ts    # Agent session lifecycle
 │   │   ├── sessions.ts         # Session store (persistence + mapping)
 │   │   ├── policy.ts           # Permission checks

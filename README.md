@@ -47,18 +47,18 @@ cp examples/config.json5 ~/.beige/config.json5
 # Set required env vars (or put them in config directly)
 export ANTHROPIC_API_KEY="sk-..."
 
-# Start gateway with interactive TUI (talk to an agent in your terminal)
-npm run dev:tui
-
-# Start gateway only (e.g. for Telegram)
-export TELEGRAM_BOT_TOKEN="123:ABC..."
+# Shell 1: Start the gateway (API + sandboxes + Telegram if configured)
 npm run dev
 
-# Both at once — TUI in terminal, Telegram in background
+# Shell 2: Connect with interactive TUI
 npm run dev:tui
+# or with a specific agent:
+# npx tsx src/cli.ts tui testo
 ```
 
-The gateway always runs. Channels (TUI, Telegram) are interfaces plugged into it.
+The gateway runs in one shell and manages everything (sandboxes, tools, audit, policy).
+The TUI runs in another shell and connects to the gateway's HTTP API.
+Telegram also connects to the gateway (if configured).
 
 ### TUI Commands
 

@@ -3,111 +3,130 @@
 /**
  * Beige CLI
  *
- * The gateway always runs. Channels are interfaces plugged into it.
- *
  * Usage:
- *   beige                              Start gateway (configured channels only)
- *   beige --tui [agent]                Start gateway + attach interactive TUI
+ *   beige                              Start the gateway (API server + channels)
+ *   beige tui [agent]                  Connect to a running gateway via TUI
  *   beige --config <path>              Use a specific config file
  *
- * Examples:
- *   beige                              Gateway with Telegram (if configured)
- *   beige --tui                        Gateway + TUI (first agent)
- *   beige --tui travel                 Gateway + TUI for "travel" agent
- *   beige -c prod.json5 --tui          Different config + TUI
- *   beige --tui travel -r session.jsonl Resume specific session
+ * The gateway runs in one shell, the TUI connects to it from another:
+ *
+ *   Shell 1:  beige                    ← starts gateway, sandboxes, API
+ *   Shell 2:  beige tui testo          ← interactive TUI, proxies tools to gateway
  */
 
 import { resolve } from "path";
 import { homedir } from "os";
 import { loadConfig } from "./config/loader.js";
-import { Gateway } from "./gateway/gateway.js";
 
 // ── Parse args ──────────────────────────────────────────────────────
 
-let configPath = resolve(homedir(), ".beige", "config.json5");
-let tuiAgent: string | undefined;
-let tuiEnabled = false;
-let resumeFile: string | undefined;
+const defaultConfigPath = resolve(homedir(), ".beige", "config.json5");
+let configPath = defaultConfigPath;
+let mode: "gateway" | "tui" = "gateway";
+let agentName: string | undefined;
+let gatewayUrl: string | undefined;
 
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
   if (arg === "--config" || arg === "-c") {
     configPath = args[++i];
-  } else if (arg === "--tui" || arg === "tui") {
-    tuiEnabled = true;
-    // Next non-flag arg is the agent name
+  } else if (arg === "--gateway" || arg === "-g") {
+    gatewayUrl = args[++i];
+  } else if (arg === "tui") {
+    mode = "tui";
     if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
-      tuiAgent = args[++i];
+      agentName = args[++i];
     }
-  } else if (arg === "--resume" || arg === "-r") {
-    resumeFile = args[++i];
   } else if (arg === "--help" || arg === "-h") {
     console.log(`
 Beige — Secure sandboxed agent system
 
-The gateway always runs. Channels (Telegram, TUI) are interfaces plugged into it.
-
 Usage:
-  beige                                  Start gateway
-  beige --tui [agent]                    Start gateway + interactive TUI
-  beige --tui [agent] --resume <file>    Resume a specific session
+  beige                                  Start the gateway
+  beige tui [agent]                      Connect TUI to running gateway
+
+Start the gateway in one shell, then connect with TUI from another:
+
+  Shell 1:  beige
+  Shell 2:  beige tui testo
 
 Options:
-  --tui [agent]              Attach interactive TUI channel
   -c, --config <path>        Config file (default: ~/.beige/config.json5)
-  -r, --resume <file>        Resume a specific session file (with --tui)
+  -g, --gateway <url>        Gateway URL for TUI (default: http://127.0.0.1:7433)
   -h, --help                 Show this help
-
-TUI commands (inside the interactive session):
-  /new                       Start a new conversation session
-  /resume                    Pick a previous session to continue
-  /sessions                  List sessions for the current agent
-  /agent [name]              Switch to a different beige agent
 `);
     process.exit(0);
   }
 }
 
-// ── Load config + start gateway ─────────────────────────────────────
+// ── Load config ─────────────────────────────────────────────────────
 
 console.log(`[BEIGE] Loading config from: ${resolve(configPath)}`);
-
 const config = loadConfig(configPath);
 
-// Resolve TUI agent name
-if (tuiEnabled && !tuiAgent) {
+// ── Mode: Gateway ───────────────────────────────────────────────────
+
+if (mode === "gateway") {
+  const { Gateway } = await import("./gateway/gateway.js");
+  const gateway = new Gateway(config);
+
+  const shutdown = async () => {
+    console.log("\n[BEIGE] Shutting down...");
+    await gateway.stop();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  try {
+    await gateway.start();
+  } catch (err) {
+    console.error("[BEIGE] Failed to start gateway:", err);
+    process.exit(1);
+  }
+}
+
+// ── Mode: TUI ───────────────────────────────────────────────────────
+
+if (mode === "tui") {
+  // Resolve agent name
   const agentNames = Object.keys(config.agents);
   if (agentNames.length === 0) {
     console.error("[BEIGE] No agents defined in config");
     process.exit(1);
   }
-  tuiAgent = agentNames[0];
-  if (agentNames.length > 1) {
-    console.log(
-      `[BEIGE] No agent specified for TUI, using '${tuiAgent}'. Available: ${agentNames.join(", ")}`
-    );
+
+  if (!agentName) {
+    agentName = agentNames[0];
+    if (agentNames.length > 1) {
+      console.log(
+        `[BEIGE] No agent specified, using '${agentName}'. Available: ${agentNames.join(", ")}`
+      );
+    }
   }
-}
 
-const gateway = new Gateway(config);
+  if (!config.agents[agentName]) {
+    console.error(
+      `[BEIGE] Unknown agent '${agentName}'. Available: ${agentNames.join(", ")}`
+    );
+    process.exit(1);
+  }
 
-// Graceful shutdown
-const shutdown = async () => {
-  console.log("\n[BEIGE] Received shutdown signal...");
-  await gateway.stop();
-  process.exit(0);
-};
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+  const url =
+    gatewayUrl ??
+    `http://${config.server?.host ?? "127.0.0.1"}:${config.server?.port ?? 7433}`;
 
-try {
-  await gateway.start({
-    tui: tuiAgent,
-    tuiResumeFile: resumeFile,
-  });
-} catch (err) {
-  console.error("[BEIGE] Failed to start:", err);
-  process.exit(1);
+  const { launchTUI } = await import("./channels/tui.js");
+
+  try {
+    await launchTUI({
+      config,
+      agentName,
+      gatewayUrl: url,
+    });
+  } catch (err) {
+    console.error("[BEIGE] TUI error:", err);
+    process.exit(1);
+  }
 }

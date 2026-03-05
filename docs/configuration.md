@@ -162,6 +162,10 @@ The gateway creates directories under `~/.beige/`:
 │   └── <agent>/
 │       ├── workspace/          # mounted as /workspace (rw)
 │       └── launchers/          # mounted as /tools/bin (ro)
+├── sessions/
+│   ├── session-map.json        # maps keys → session files
+│   └── <agent>/
+│       └── <id>.jsonl          # pi session files (persistent)
 ├── sockets/
 │   └── <agent>.sock           # Unix socket per agent
 ├── data/

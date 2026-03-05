@@ -4,10 +4,14 @@
   "description": "Secure sandboxed agent system",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "beige": "dist/cli.js"
+  },
   "scripts": {
-    "dev": "tsx src/index.ts",
+    "dev": "tsx src/cli.ts",
+    "dev:tui": "tsx src/cli.ts --tui",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node dist/cli.js",
     "build:sandbox": "docker build -t beige-sandbox:latest ./sandbox"
   },
   "dependencies": {

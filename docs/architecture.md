@@ -235,8 +235,10 @@ Error response:
 
 ### 7. Channel Adapters (`src/channels/`)
 
-- **Telegram**: GrammY bot. Maps Telegram user/chat → agent. Sends user messages as prompts, streams responses back.
-- **CLI** (future): Direct terminal interaction.
+Channels are interfaces plugged into the gateway. Multiple can be active simultaneously.
+
+- **Telegram**: GrammY bot. Maps Telegram user/chat → agent. Persistent sessions per chat/thread.
+- **TUI**: Interactive terminal powered by pi's `InteractiveMode`. Full editor, streaming, model switching. Talks to the gateway's agent-manager like any other channel.
 
 ### 8. Sandbox Docker Image
 
@@ -307,13 +309,15 @@ beige/
 │   ├── tools.md                # Tool packages + protocol
 │   └── configuration.md        # Config reference
 ├── src/
-│   ├── index.ts                # Entry point
+│   ├── cli.ts                  # CLI entry point (starts gateway, optionally with TUI channel)
+│   ├── index.ts                # Programmatic exports
 │   ├── config/
 │   │   ├── schema.ts           # Config types + validation
 │   │   └── loader.ts           # JSON5 loader + env var resolution
 │   ├── gateway/
 │   │   ├── gateway.ts          # Main gateway orchestrator
 │   │   ├── agent-manager.ts    # Agent session lifecycle
+│   │   ├── sessions.ts         # Session store (persistence + mapping)
 │   │   ├── policy.ts           # Permission checks
 │   │   └── audit.ts            # Audit logging
 │   ├── sandbox/
@@ -328,7 +332,8 @@ beige/
 │   │   ├── registry.ts         # Load tool packages, register handlers
 │   │   └── runner.ts           # Execute tool handlers
 │   └── channels/
-│       └── telegram.ts         # GrammY adapter
+│       ├── telegram.ts         # GrammY adapter
+│       └── tui.ts              # pi InteractiveMode adapter
 ├── tools/
 │   └── kv/                     # MVP tool
 │       ├── tool.json

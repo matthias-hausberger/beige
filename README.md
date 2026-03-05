@@ -46,27 +46,49 @@ cp examples/config.json5 config.json5
 ```bash
 # Set required env vars (or put them in config directly)
 export ANTHROPIC_API_KEY="sk-..."
-export TELEGRAM_BOT_TOKEN="123:ABC..."
 
+# Start gateway with interactive TUI (talk to an agent in your terminal)
+npm run dev:tui
+
+# Start gateway only (e.g. for Telegram)
+export TELEGRAM_BOT_TOKEN="123:ABC..."
 npm run dev
+
+# Both at once — TUI in terminal, Telegram in background
+npm run dev:tui
 ```
+
+The gateway always runs. Channels (TUI, Telegram) are interfaces plugged into it.
+
+### TUI Commands
+
+Once inside the TUI, these slash commands are available:
+
+| Command | Description |
+|---------|-------------|
+| `/new` | Start a fresh conversation session |
+| `/resume` | Pick a previous session to continue |
+| `/sessions` | List saved sessions for the current agent |
+| `/agent [name]` | Switch to a different beige agent (with tab-completion) |
 
 ## Architecture
 
 ```
-User (Telegram/CLI)
+Channels
+  ├── TUI (pi interactive mode)
+  └── Telegram bot
+        │
+        ▼
+  Gateway (always running)
+  ├── Agent Manager → LLM (via pi SDK) → Core Tools
+  │                                            │
+  │                                            ▼
+  │                                      Docker Sandbox
+  │                                      ├── /workspace (rw)
+  │                                      ├── /tools/bin (ro)
+  │                                      └── /tools/packages (ro)
   │
-  ▼
-Gateway (Node.js)
-  ├── LLM (via pi SDK) → Core Tools: read, write, patch, exec
-  │                              │
-  │                              ▼
-  │                        Docker Sandbox
-  │                        ├── /workspace (writable)
-  │                        ├── /tools/bin (read-only launchers)
-  │                        └── /tools/packages (read-only docs)
-  │
-  └── Unix Socket ← Tool launchers call back for gateway-hosted tools
+  └── Unix Socket ← Tool launchers call back to gateway
         │
         ▼
   Policy Engine → Audit Logger → Tool Runner
@@ -142,6 +164,7 @@ The agent calls tools via `exec /tools/bin/my-tool <args>`. The launcher routes 
 - [x] Audit logging
 - [x] KV tool (gateway-hosted)
 - [x] Telegram channel (GrammY)
+- [x] Interactive TUI (via pi SDK InteractiveMode)
 - [x] LLM integration via pi SDK
 
 ## License

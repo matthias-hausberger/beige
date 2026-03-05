@@ -5,8 +5,8 @@
 ```mermaid
 graph TB
     subgraph Channels
+        TUI[TUI — pi InteractiveMode]
         TG[Telegram Bot]
-        CLI[CLI / Future]
     end
 
     subgraph Gateway["Gateway (Node.js)"]
@@ -35,8 +35,8 @@ graph TB
         SB2[/"Agent Sandbox (Docker)"\]
     end
 
+    TUI --> AM
     TG --> CM
-    CLI --> CM
     SB1 -->|Unix Socket| SS
     SB2 -->|Unix Socket| SS
 
@@ -61,6 +61,41 @@ The gateway is the single host process. It never runs untrusted code — all age
 | **Sandbox Manager** | Creates/destroys Docker containers, generates tool launchers, runs `docker exec` |
 | **Socket Servers** | One Unix domain socket per agent. Receives tool requests from sandbox launchers |
 | **Tool Runner** | Executes gateway-hosted tool handlers (e.g. KV store) |
+
+### Channels
+
+The gateway always runs. Channels are interfaces plugged into it. Multiple channels can be active simultaneously.
+
+```mermaid
+graph TB
+    subgraph Gateway["Gateway (always running)"]
+        AM[Agent Manager]
+        SM[Sandbox Manager]
+        SS[Socket Servers]
+    end
+
+    subgraph Channels
+        TUI["TUI Channel<br/>(pi InteractiveMode)"]
+        TG["Telegram Channel<br/>(GrammY)"]
+        FUTURE["Future channels<br/>(CLI, Web, API, ...)"]
+    end
+
+    TUI --> AM
+    TG --> AM
+    FUTURE -.-> AM
+    AM --> SM
+    SM --> SS
+
+    style Gateway fill:#f5f0e0,stroke:#c9b97a
+    style Channels fill:#e0f0e8,stroke:#7ac9a0
+```
+
+| Channel | Enabled via | Session model | Commands |
+|---------|-------------|--------------|----------|
+| **TUI** | `beige --tui [agent]` | Persistent per agent, auto-continues most recent | `/new` `/resume` `/sessions` `/agent` |
+| **Telegram** | `channels.telegram.enabled: true` in config | Persistent per chat/thread | `/new` `/status` |
+
+The TUI channel reuses [pi's `InteractiveMode`](https://github.com/badlogic/pi-mono) — you get the full pi experience (editor, streaming, history, model switching) with beige's sandboxed core tools underneath. When TUI is active, other channels (e.g. Telegram) continue running in the background.
 
 ### Sandbox (per agent)
 
@@ -117,14 +152,17 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant Main as index.ts
+    participant CLI as cli.ts
     participant GW as Gateway
     participant Tools as Tool Registry
     participant SM as Sandbox Manager
     participant SS as Socket Servers
-    participant TG as Telegram Bot
+    participant TG as Telegram Channel
+    participant TUI as TUI Channel
 
-    Main->>GW: new Gateway(config)
+    CLI->>GW: new Gateway(config)
+    CLI->>GW: gateway.start({ tui: "agent" })
+
     GW->>Tools: loadTools(config)
     Tools-->>GW: loaded tools + handlers
 
@@ -136,11 +174,22 @@ sequenceDiagram
         SS-->>GW: listening on ~/.beige/sockets/<agent>.sock
     end
 
-    GW->>TG: new TelegramChannel(config)
-    TG->>TG: bot.start()
-    TG-->>GW: bot online
+    Note over GW: Start channels
+
+    opt Telegram enabled in config
+        GW->>TG: new TelegramChannel(config)
+        TG->>TG: bot.start() (background)
+    end
 
     Note over GW: Gateway ready ✓
+
+    opt --tui flag provided
+        GW->>TUI: new TUIChannel(config)
+        GW->>TUI: tui.run(agentName)
+        Note over TUI: Blocks until user exits.<br/>Other channels keep running.
+        TUI-->>GW: user exited
+        GW->>GW: gateway.stop()
+    end
 ```
 
 ## Multi-Agent Setup

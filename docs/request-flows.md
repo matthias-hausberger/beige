@@ -235,7 +235,96 @@ sequenceDiagram
 
 > Telegram edits are rate-limited to ~1/second to avoid API errors. The final message is always sent as a complete edit.
 
-## 8. Gateway Startup → Ready
+## 8. TUI Channel — Interactive Terminal Session
+
+The TUI is a channel like Telegram. It plugs into the running gateway and talks to the agent-manager. The gateway starts all infrastructure (sandboxes, sockets, tools) then hands control to the TUI channel.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant TUI as TUI Channel<br/>(pi InteractiveMode)
+    participant AM as Agent Manager
+    participant PI as pi SDK
+    participant CT as Core Tools
+    participant SM as Sandbox Manager
+    participant SB as Docker Sandbox
+
+    Note over User,SB: Gateway has already started sandboxes, sockets, tools
+
+    User->>TUI: type message in editor
+    TUI->>AM: getOrCreateSession(tuiKey, agent)
+    AM-->>TUI: ManagedSession (AgentSession)
+    TUI->>PI: session.prompt(message)
+    PI->>CT: exec("ls /workspace")
+    CT->>SM: docker exec
+    SM->>SB: ls /workspace
+    SB-->>SM: file listing
+    SM-->>CT: stdout
+    CT-->>PI: tool result
+    PI-->>TUI: streaming text_delta
+    TUI-->>User: rendered in terminal
+
+    Note over User,SB: User exits — gateway shuts down
+```
+
+> The TUI uses the same agent-manager and session store as Telegram. Both channels can run simultaneously — Telegram in the background while you use the TUI.
+
+## 9. Session Lifecycle
+
+Sessions persist across gateway restarts. Each conversation gets its own `.jsonl` file.
+
+### Telegram Session Model
+
+```mermaid
+flowchart TD
+    MSG[Incoming Telegram message] --> THREAD{Has thread ID?}
+    THREAD -->|yes| KEY_T["key = telegram:<chatId>:<threadId>"]
+    THREAD -->|no| KEY_C["key = telegram:<chatId>"]
+    KEY_T --> LOOKUP
+    KEY_C --> LOOKUP
+    LOOKUP{Session exists<br/>for this key?}
+    LOOKUP -->|yes| CONTINUE[Continue existing session]
+    LOOKUP -->|no| CREATE[Create new session file<br/>~/.beige/sessions/<agent>/...]
+    CREATE --> CONTINUE
+
+    NEW["/new command"] --> RESET["Create new session file<br/>(old one kept for history)"]
+    RESET --> CONTINUE
+
+    style CREATE fill:#ccffcc
+    style RESET fill:#ccffcc
+```
+
+### TUI Session Commands
+
+```mermaid
+flowchart LR
+    subgraph Commands
+        NEW["/new"]
+        RESUME["/resume"]
+        SESSIONS["/sessions"]
+        AGENT["/agent"]
+    end
+
+    NEW --> N_ACT["Create fresh session<br/>Old session saved"]
+    RESUME --> R_ACT["Pick any session<br/>across all agents"]
+    SESSIONS --> S_ACT["List sessions for<br/>current agent"]
+    AGENT --> A_ACT["Switch agent<br/>(tears down + restarts<br/>with new agent's session)"]
+```
+
+### Session Storage Layout
+
+```
+~/.beige/
+├── sessions/
+│   ├── session-map.json          # Maps keys → session files
+│   ├── assistant/
+│   │   ├── 20260305-120000-a1b2c3.jsonl
+│   │   └── 20260305-143000-d4e5f6.jsonl
+│   └── travel/
+│       └── 20260304-091500-g7h8i9.jsonl
+```
+
+## 10. Gateway Startup → Ready
 
 ```mermaid
 flowchart TD

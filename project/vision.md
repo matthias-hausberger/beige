@@ -29,6 +29,7 @@ The agent can run TypeScript scripts via `exec` **inside its sandbox**; those sc
     - `patch` (patch file (if that is something we can provide easily))
     - `exec` (execute)
 - "Tools" are _bin_ exectuables that are exposed in the sandbox in `/tools` (by the gateway / config). The LLM can call these by using the `exec` core tool.
+- The agent could also execute anything else available within that sandbox of course, like `exec curl` (which we don't have to create specific tools for).
 
 ---
 
@@ -210,7 +211,7 @@ This MVP should confirm:
 
 * Tool packages mounted read-only into sandbox
 * Generated executables mounted read-only into sandbox
-* Only `/workspace` is writable
+* Only `/workspace` is writable. Each `/workspace` should be bound to `~/.beige/agents/agentName/` on the gateway host.
 * Explain why:
 
   * prevents agent from modifying tool code

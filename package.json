@@ -1,0 +1,26 @@
+{
+  "name": "beige",
+  "version": "0.1.0",
+  "description": "Secure sandboxed agent system",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "build:sandbox": "docker build -t beige-sandbox:latest ./sandbox"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "latest",
+    "@sinclair/typebox": "^0.34.0",
+    "grammy": "^1.35.0",
+    "json5": "^2.2.3",
+    "dockerode": "^4.0.5"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.38",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

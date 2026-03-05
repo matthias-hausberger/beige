@@ -1,0 +1,205 @@
+# Security Model
+
+Beige is designed with the assumption that **an agent might go rogue**. Every layer is built to contain damage even in the worst case.
+
+## Defense in Depth
+
+```mermaid
+graph TB
+    subgraph Layer1["Layer 1: Docker Isolation"]
+        direction TB
+        L1A[Separate container per agent]
+        L1B[No host env vars]
+        L1C[No host filesystem access]
+        L1D[No Docker socket access]
+    end
+
+    subgraph Layer2["Layer 2: Read-Only Mounts"]
+        direction TB
+        L2A[Tool launchers — read-only]
+        L2B[Tool packages — read-only]
+        L2C[tool-client binary — read-only]
+        L2D[Only /workspace is writable]
+    end
+
+    subgraph Layer3["Layer 3: Socket Identity"]
+        direction TB
+        L3A[One socket per agent]
+        L3B[Identity from connection, not payload]
+        L3C[Agent cannot impersonate another agent]
+    end
+
+    subgraph Layer4["Layer 4: Policy Engine"]
+        direction TB
+        L4A[Deny by default]
+        L4B[Explicit tool allowlist per agent]
+        L4C[Checked on every invocation]
+    end
+
+    subgraph Layer5["Layer 5: Audit Logging"]
+        direction TB
+        L5A[Every tool call logged]
+        L5B[Args, timing, decision recorded]
+        L5C[Append-only JSONL]
+    end
+
+    Layer1 --> Layer2 --> Layer3 --> Layer4 --> Layer5
+
+    style Layer1 fill:#ffcccc,stroke:#cc0000
+    style Layer2 fill:#ffe0cc,stroke:#cc6600
+    style Layer3 fill:#ffffcc,stroke:#cccc00
+    style Layer4 fill:#ccffcc,stroke:#00cc00
+    style Layer5 fill:#cce0ff,stroke:#0066cc
+```
+
+## What an Agent CAN Do
+
+| Action | Allowed? | Mechanism |
+|--------|----------|-----------|
+| Read/write files in `/workspace` | ✅ | Writable bind mount |
+| Execute code (any language) | ✅ | Deno, sh, python, etc. in sandbox |
+| Call allowed tools via `/tools/bin/` | ✅ | Launcher → socket → policy → execute |
+| Access the internet | ✅ | Container has network access (for now) |
+| Read tool documentation | ✅ | Read-only mount at `/tools/packages/` |
+| Install packages in sandbox | ✅ | Can run `apt-get`, `npm`, etc. inside container |
+| Persist data across sessions | ✅ | `/workspace` is a persistent bind mount |
+
+## What an Agent CANNOT Do
+
+| Action | Prevented By |
+|--------|-------------|
+| Read gateway env vars / API keys | Docker isolation — no host env passed |
+| Access host filesystem | Docker isolation — only explicit bind mounts |
+| Modify tool code or launchers | Read-only mounts |
+| Use tools not in its allowlist | Policy engine (deny by default) |
+| Impersonate another agent | Socket identity (one socket per agent) |
+| Access another agent's workspace | Separate containers, separate bind mounts |
+| Access the Docker daemon | No Docker socket mount |
+| Modify gateway config | Config lives on host, not in sandbox |
+| Access audit logs | Logs are on host, not mounted |
+| Bypass tool logging | All `/tools/bin/` calls route through gateway socket |
+
+## Threat Model
+
+### Threat: Agent tries to read API keys
+
+```mermaid
+flowchart LR
+    A[Agent tries] --> B{How?}
+    B -->|env vars| C[Empty — not passed to container]
+    B -->|read /proc| D[Only sees container's own processes]
+    B -->|read host files| E[No host mounts except /workspace]
+    B -->|inspect tool code| F[Tools don't contain secrets — config is gateway-side]
+
+    C --> G[❌ Blocked]
+    D --> G
+    E --> G
+    F --> G
+
+    style G fill:#ffcccc
+```
+
+### Threat: Agent spoofs identity to use another agent's tools
+
+```mermaid
+flowchart LR
+    A[Agent sends<br/>tool_request with<br/>fake agent_id] --> B[Socket server<br/>receives request]
+    B --> C[Server identifies agent<br/>from WHICH SOCKET<br/>received the connection]
+    C --> D[Payload agent_id<br/>is IGNORED]
+    D --> E[Real agent identity<br/>used for policy check]
+
+    style D fill:#ccffcc
+    style E fill:#ccffcc
+```
+
+Each agent has its own Unix socket file. The gateway creates one socket per agent and mounts it into the corresponding container. The gateway knows which agent sent a request by which socket server received it — not by any field in the request payload.
+
+### Threat: Agent modifies tool launcher to skip gateway
+
+```mermaid
+flowchart LR
+    A[Agent tries to<br/>modify /tools/bin/kv] --> B[Write fails:<br/>read-only mount]
+    A2[Agent tries to<br/>create /tools/bin/fake] --> B2[Write fails:<br/>read-only mount]
+    A3[Agent copies launcher<br/>to /workspace and edits] --> C[Edited copy can still<br/>only connect to<br/>/beige/gateway.sock]
+    C --> D[Gateway still enforces<br/>policy on the socket]
+
+    style B fill:#ffcccc
+    style B2 fill:#ffcccc
+    style D fill:#ccffcc
+```
+
+### Threat: Agent exfiltrates data via network
+
+| Mitigation | Status |
+|------------|--------|
+| Network access logged via audit (exec calls) | ✅ Current |
+| Network egress filtering / allowlist | 🔮 Future |
+| MITM proxy for all sandbox traffic | 🔮 Future |
+| DNS-based filtering | 🔮 Future |
+
+> **Current stance:** Network is open. All `exec curl` / `exec wget` calls are logged as core tool calls. Future phases will add network-level controls.
+
+### Threat: Agent escapes Docker container
+
+This is a Docker-level concern, not Beige-specific. Mitigations:
+
+- Use rootless Docker or Podman (future)
+- Don't run containers as root (future hardening)
+- Keep Docker and kernel updated
+- Don't mount the Docker socket into containers (enforced)
+
+## Secrets Flow
+
+```mermaid
+flowchart TD
+    subgraph Host["Gateway Host"]
+        ENV["Environment Variables<br/>ANTHROPIC_API_KEY<br/>TELEGRAM_BOT_TOKEN"]
+        CONF["config.json5<br/>${ANTHROPIC_API_KEY}"]
+        GW["Gateway Process<br/>(resolves env vars at startup)"]
+        PI["pi SDK<br/>(API key via AuthStorage)"]
+        GRAM["GrammY<br/>(bot token)"]
+
+        ENV --> CONF
+        CONF --> GW
+        GW --> PI
+        GW --> GRAM
+    end
+
+    subgraph Sandbox["Docker Sandbox"]
+        AGENT["Agent Code"]
+        TOOL_BIN["/tools/bin/"]
+        WORKSPACE["/workspace/"]
+    end
+
+    GW ---|docker exec| Sandbox
+    PI -.-x Sandbox
+    GRAM -.-x Sandbox
+
+    style Host fill:#f5f0e0,stroke:#c9b97a
+    style Sandbox fill:#e0e8f0,stroke:#7a9cc9
+```
+
+> Secrets exist **only** in the gateway process memory. They are resolved from environment variables at startup, used to configure the pi SDK and Telegram bot, and **never** passed to any sandbox container.
+
+## Audit Log
+
+Every tool invocation produces a JSONL audit entry at `~/.beige/logs/audit.jsonl`.
+
+```json
+{"ts":"2026-03-05T12:00:00.000Z","agent":"travel","type":"core_tool","tool":"exec","args":["/tools/bin/kv set trip:paris March 15"],"decision":"allowed","durationMs":45,"exitCode":0,"outputBytes":23}
+{"ts":"2026-03-05T12:00:00.050Z","agent":"travel","type":"tool","tool":"kv","args":["set","trip:paris","March 15"],"decision":"allowed","target":"gateway","durationMs":12,"exitCode":0,"outputBytes":2}
+```
+
+| Field | Description |
+|-------|-------------|
+| `ts` | ISO 8601 timestamp |
+| `agent` | Agent name (derived from socket identity) |
+| `type` | `core_tool` (LLM→gateway) or `tool` (sandbox→gateway socket) |
+| `tool` | Tool name |
+| `args` | Arguments (future: redaction rules for sensitive values) |
+| `decision` | `allowed` or `denied` |
+| `target` | Where the tool executes (`gateway` or `sandbox`) |
+| `durationMs` | Execution time |
+| `exitCode` | Process exit code |
+| `outputBytes` | Size of output returned |
+| `error` | Error message (if any) |

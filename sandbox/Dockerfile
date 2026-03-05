@@ -11,12 +11,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create workspace directory
 RUN mkdir -p /workspace /tools/bin /tools/packages /beige
 
-# Copy tool-client source (will be compiled at build time)
+# Copy tool-client source
 COPY tool-client.ts /beige/tool-client.ts
 
 # Create a wrapper script that runs tool-client via deno
+# --allow-read: read the socket file path
+# --allow-write: needed for some Deno versions with Unix sockets
+# --allow-env: environment variables
+# --unstable-net: Unix domain socket support (needed for some Deno 2.x builds)
 RUN echo '#!/bin/sh' > /beige/tool-client && \
-    echo 'exec deno run --allow-net --allow-read --allow-env /beige/tool-client.ts "$@"' >> /beige/tool-client && \
+    echo 'exec deno run --allow-read --allow-write --allow-net --allow-env --unstable-net /beige/tool-client.ts "$@"' >> /beige/tool-client && \
     chmod +x /beige/tool-client
 
 WORKDIR /workspace

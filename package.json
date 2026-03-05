@@ -15,11 +15,12 @@
     "build:sandbox": "docker build -t beige-sandbox:latest ./sandbox"
   },
   "dependencies": {
+    "@mariozechner/pi-ai": "^0.56.1",
     "@mariozechner/pi-coding-agent": "latest",
     "@sinclair/typebox": "^0.34.0",
+    "dockerode": "^4.0.5",
     "grammy": "^1.35.0",
-    "json5": "^2.2.3",
-    "dockerode": "^4.0.5"
+    "json5": "^2.2.3"
   },
   "devDependencies": {
     "@types/dockerode": "^3.3.38",

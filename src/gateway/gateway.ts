@@ -124,8 +124,7 @@ export class Gateway {
   }
 
   private async startAgentInfra(agentName: string): Promise<void> {
-    await this.sandboxManager.createSandbox(agentName);
-
+    // Start socket server FIRST so the socket file exists before Docker mounts it
     const socketPath = resolve(
       homedir(),
       ".beige",
@@ -141,6 +140,9 @@ export class Gateway {
     );
     await socketServer.start();
     this.socketServers.set(agentName, socketServer);
+
+    // Then create sandbox (which bind-mounts the now-existing socket file)
+    await this.sandboxManager.createSandbox(agentName);
   }
 
   private setupAuth(): AuthStorage {

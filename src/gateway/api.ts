@@ -92,6 +92,28 @@ export class GatewayAPI {
         return this.json(res, 200, result);
       }
 
+      // ── POST /api/agents/:name/prompt ────────────────────
+      const promptMatch = path.match(/^\/api\/agents\/([^/]+)\/prompt$/);
+      if (method === "POST" && promptMatch) {
+        const agentName = decodeURIComponent(promptMatch[1]);
+        if (!this.opts.config.agents[agentName]) {
+          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
+        }
+
+        const body = await readBody(req);
+        const { message, sessionKey } = JSON.parse(body);
+
+        if (!message) {
+          return this.json(res, 400, { error: "Missing message" });
+        }
+
+        const key = sessionKey ?? `api:${agentName}:default`;
+        console.log(`[API] Prompt to agent '${agentName}' (session: ${key}): ${message.slice(0, 80)}...`);
+
+        const response = await this.opts.agentManager.prompt(key, agentName, message);
+        return this.json(res, 200, { response });
+      }
+
       // ── GET /api/agents/:name/sessions ────────────────────
       const sessionsMatch = path.match(/^\/api\/agents\/([^/]+)\/sessions$/);
       if (method === "GET" && sessionsMatch) {

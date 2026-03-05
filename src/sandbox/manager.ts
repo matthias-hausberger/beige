@@ -2,6 +2,7 @@ import Docker from "dockerode";
 import { mkdirSync, writeFileSync, chmodSync } from "fs";
 import { resolve, join } from "path";
 import { homedir } from "os";
+import { PassThrough } from "stream";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { LoadedTool } from "../tools/registry.js";
 
@@ -139,7 +140,6 @@ export class SandboxManager {
           stream.end();
 
           // Demux the stream
-          const { PassThrough } = require("stream");
           const stdoutStream = new PassThrough();
           const stderrStream = new PassThrough();
 
@@ -163,7 +163,6 @@ export class SandboxManager {
           });
         } else {
           // Non-hijack mode: use demuxStream
-          const { PassThrough } = require("stream");
           const stdoutStream = new PassThrough();
           const stderrStream = new PassThrough();
 

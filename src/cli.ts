@@ -19,12 +19,13 @@
  */
 
 import { resolve } from "path";
+import { homedir } from "os";
 import { loadConfig } from "./config/loader.js";
 import { Gateway } from "./gateway/gateway.js";
 
 // ── Parse args ──────────────────────────────────────────────────────
 
-let configPath = "config.json5";
+let configPath = resolve(homedir(), ".beige", "config.json5");
 let tuiAgent: string | undefined;
 let tuiEnabled = false;
 let resumeFile: string | undefined;
@@ -55,7 +56,7 @@ Usage:
 
 Options:
   --tui [agent]              Attach interactive TUI channel
-  -c, --config <path>        Config file (default: config.json5)
+  -c, --config <path>        Config file (default: ~/.beige/config.json5)
   -r, --resume <file>        Resume a specific session file (with --tui)
   -h, --help                 Show this help
 

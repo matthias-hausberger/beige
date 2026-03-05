@@ -37,8 +37,8 @@ npm run build:sandbox
 ### 4. Configure
 
 ```bash
-cp examples/config.json5 config.json5
-# Edit config.json5 with your API keys and settings
+cp examples/config.json5 ~/.beige/config.json5
+# Edit ~/.beige/config.json5 with your API keys and settings
 ```
 
 ### 5. Run
@@ -103,7 +103,7 @@ See [docs/](docs/) for full documentation:
 
 ## Configuration
 
-Config is a single JSON5 file (JSON with comments). See [examples/config.json5](examples/config.json5).
+Config is a single JSON5 file (JSON with comments) at `~/.beige/config.json5`. See [examples/config.json5](examples/config.json5) for a template.
 
 ```json5
 {

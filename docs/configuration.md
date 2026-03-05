@@ -4,10 +4,10 @@ Beige is configured with a single `config.json5` file. JSON5 is JSON with commen
 
 ## Config File Location
 
-The gateway looks for `config.json5` in the current directory by default. Override with:
+The gateway looks for `~/.beige/config.json5` by default. Override with:
 
 ```bash
-npm run dev -- /path/to/my-config.json5
+beige --config /path/to/my-config.json5
 ```
 
 ## Environment Variable Resolution
@@ -158,6 +158,7 @@ The gateway creates directories under `~/.beige/`:
 
 ```
 ~/.beige/
+├── config.json5                # main config file
 ├── agents/
 │   └── <agent>/
 │       ├── workspace/          # mounted as /workspace (rw)

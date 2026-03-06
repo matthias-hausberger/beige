@@ -2,6 +2,7 @@ import { resolve } from "path";
 import { homedir } from "os";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { BeigeConfig } from "../config/schema.js";
+import { loadConfig } from "../config/loader.js";
 import { AuditLogger } from "./audit.js";
 import { PolicyEngine } from "./policy.js";
 import { AgentManager } from "./agent-manager.js";
@@ -23,6 +24,8 @@ import { TelegramChannel } from "../channels/telegram.js";
  */
 export class Gateway {
   private config: BeigeConfig;
+  /** Absolute path to the config file so restart() can reload it. */
+  private configPath: string;
   private audit: AuditLogger;
   private policy: PolicyEngine;
   private toolRunner: ToolRunner;
@@ -33,9 +36,12 @@ export class Gateway {
   private socketServers = new Map<string, AgentSocketServer>();
   private telegramChannel?: TelegramChannel;
   private loadedTools!: Map<string, LoadedTool>;
+  /** True while a restart is in progress — prevents overlapping restarts. */
+  private restarting = false;
 
-  constructor(config: BeigeConfig) {
+  constructor(config: BeigeConfig, configPath: string) {
     this.config = config;
+    this.configPath = resolve(configPath);
     this.audit = new AuditLogger(
       resolve(homedir(), ".beige", "logs", "audit.jsonl")
     );
@@ -83,6 +89,7 @@ export class Gateway {
 
     this.api = new GatewayAPI({
       config: this.config,
+      gateway: this,
       agentManager: this.agentManager,
       sessionStore: this.sessionStore,
       sandbox: this.sandboxManager,
@@ -109,21 +116,90 @@ export class Gateway {
 
   async stop(): Promise<void> {
     console.log("[GATEWAY] Shutting down...");
+    await this.teardown({ drain: true });
+    console.log("[GATEWAY] Shutdown complete");
+  }
 
-    if (this.telegramChannel) {
-      await this.telegramChannel.stop();
+  /**
+   * Gracefully restart the gateway in-place:
+   *   1. Drain all in-flight LLM / tool calls (no hard kill).
+   *   2. Tear down sandboxes, sockets, HTTP API, and Telegram.
+   *   3. Re-read config from disk (picks up any edits).
+   *   4. Bring everything back up fresh.
+   *
+   * If a restart is already in progress the call is a no-op.
+   */
+  async restart(): Promise<void> {
+    if (this.restarting) {
+      console.log("[GATEWAY] Restart already in progress — ignoring duplicate request");
+      return;
+    }
+    this.restarting = true;
+
+    try {
+      console.log("[GATEWAY] ── Restart requested ──────────────────────────────");
+
+      // ── Phase 1: Drain ────────────────────────────────────────────
+      console.log("[GATEWAY] Phase 1/3: Draining in-flight calls...");
+      await this.agentManager?.drainAll();
+
+      // ── Phase 2: Tear down ────────────────────────────────────────
+      console.log("[GATEWAY] Phase 2/3: Tearing down infrastructure...");
+      await this.teardown({ drain: false }); // already drained
+
+      // ── Phase 3: Reload config & start fresh ──────────────────────
+      console.log(`[GATEWAY] Phase 3/3: Reloading config from ${this.configPath}...`);
+      try {
+        this.config = loadConfig(this.configPath);
+      } catch (err) {
+        console.error("[GATEWAY] Failed to reload config — aborting restart:", err);
+        console.error("[GATEWAY] Gateway is now stopped. Fix the config and run 'beige gateway start'.");
+        return;
+      }
+
+      // Re-create stateless helpers that depend on config
+      this.policy = new PolicyEngine(this.config);
+      this.toolRunner = new ToolRunner();
+      // NOTE: AuditLogger and BeigeSessionStore are config-independent — reuse them.
+
+      await this.start();
+      console.log("[GATEWAY] ── Restart complete ───────────────────────────────");
+    } finally {
+      this.restarting = false;
+    }
+  }
+
+  // ── Private helpers ──────────────────────────────────────────────────
+
+  /**
+   * Tear down all live infrastructure.
+   * @param drain  If true, call drainAll() first to wait for in-flight calls.
+   */
+  private async teardown(opts: { drain: boolean }): Promise<void> {
+    if (opts.drain) {
+      await this.agentManager?.drainAll();
     }
 
+    // Stop Telegram first — no more inbound messages
+    if (this.telegramChannel) {
+      await this.telegramChannel.stop();
+      this.telegramChannel = undefined;
+    }
+
+    // Stop HTTP API — reject new tool-exec / prompt requests from TUI
     await this.api?.stop();
 
+    // Stop all Unix socket servers
     for (const [, server] of this.socketServers) {
       await server.stop();
     }
+    this.socketServers.clear();
 
+    // Dispose remaining sessions (already empty after drainAll, but safe)
     await this.agentManager?.shutdown();
-    await this.sandboxManager?.shutdown();
 
-    console.log("[GATEWAY] Shutdown complete");
+    // Stop + remove all sandbox containers
+    await this.sandboxManager?.shutdown();
   }
 
   private async startAgentInfra(agentName: string): Promise<void> {

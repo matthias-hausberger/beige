@@ -8,6 +8,7 @@
  *   beige gateway start                Start the gateway as a background daemon
  *   beige gateway start --foreground   Start the gateway in the foreground (for debugging)
  *   beige gateway stop                 Stop the running gateway daemon
+ *   beige gateway restart              Gracefully restart the gateway (drain, reload config, recreate sandboxes)
  *   beige gateway status               Show whether the gateway daemon is running
  *   beige gateway logs                 Show gateway logs
  *   beige gateway logs -f              Follow gateway logs (tail -f)
@@ -151,7 +152,7 @@ async function cmdGatewayStart(configPath: string, foreground: boolean): Promise
   const config = loadConfig(configPath);
 
   const { Gateway } = await import("./gateway/gateway.js");
-  const gateway = new Gateway(config);
+  const gateway = new Gateway(config, configPath);
 
   const shutdown = async () => {
     console.log("\n[BEIGE] Shutting down...");
@@ -160,6 +161,14 @@ async function cmdGatewayStart(configPath: string, foreground: boolean): Promise
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+
+  // SIGHUP → graceful in-place restart (reload config, recreate sandboxes)
+  process.on("SIGHUP", () => {
+    console.log("[BEIGE] Received SIGHUP — restarting gateway...");
+    gateway.restart().catch((err) => {
+      console.error("[BEIGE] Restart failed:", err);
+    });
+  });
 
   try {
     await gateway.start();
@@ -184,6 +193,28 @@ function cmdGatewayStop(): void {
     console.log(`[BEIGE] Sent SIGTERM to gateway (PID ${pid})`);
   } catch (err) {
     console.error(`[BEIGE] Failed to stop gateway (PID ${pid}):`, err);
+    process.exit(1);
+  }
+}
+
+function cmdGatewayRestart(): void {
+  const pid = readPid();
+  if (pid === null) {
+    console.log("[BEIGE] No PID file found — gateway is not running");
+    console.log("[BEIGE] Run 'beige gateway start' to start it");
+    process.exit(1);
+  }
+  if (!isRunning(pid)) {
+    console.log(`[BEIGE] Gateway (PID ${pid}) is not running`);
+    console.log("[BEIGE] Run 'beige gateway start' to start it");
+    process.exit(1);
+  }
+  try {
+    process.kill(pid, "SIGHUP");
+    console.log(`[BEIGE] Sent SIGHUP to gateway (PID ${pid}) — graceful restart initiated`);
+    console.log(`[BEIGE] Follow progress with: beige gateway logs -f`);
+  } catch (err) {
+    console.error(`[BEIGE] Failed to signal gateway (PID ${pid}):`, err);
     process.exit(1);
   }
 }
@@ -246,6 +277,7 @@ let gatewayUrl: string | undefined;
 type Mode =
   | { kind: "gateway-start"; foreground: boolean }
   | { kind: "gateway-stop" }
+  | { kind: "gateway-restart" }
   | { kind: "gateway-status" }
   | { kind: "gateway-logs"; follow: boolean }
   | { kind: "tui"; agentName?: string }
@@ -277,6 +309,7 @@ Usage:
   beige gateway start                    Start the gateway daemon
   beige gateway start --foreground       Start the gateway in the foreground
   beige gateway stop                     Stop the gateway daemon
+  beige gateway restart                  Gracefully restart the gateway (drain, reload config, recreate sandboxes)
   beige gateway status                   Show gateway daemon status
   beige gateway logs                     Show gateway logs
   beige gateway logs -f                  Follow gateway logs
@@ -324,6 +357,7 @@ function parseArgs(): Mode {
       return { kind: "gateway-start", foreground };
     }
     if (sub === "stop") return { kind: "gateway-stop" };
+    if (sub === "restart") return { kind: "gateway-restart" };
     if (sub === "status") return { kind: "gateway-status" };
     if (sub === "logs") {
       const follow = rest.includes("-f") || rest.includes("--follow");
@@ -366,6 +400,8 @@ if (mode.kind === "setup") {
   await cmdGatewayStart(configPath, mode.foreground);
 } else if (mode.kind === "gateway-stop") {
   cmdGatewayStop();
+} else if (mode.kind === "gateway-restart") {
+  cmdGatewayRestart();
 } else if (mode.kind === "gateway-status") {
   cmdGatewayStatus();
 } else if (mode.kind === "gateway-logs") {

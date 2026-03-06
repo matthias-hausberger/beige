@@ -7,6 +7,43 @@ import { homedir } from "os";
 // beige source tree.
 type ToolHandler = (args: string[], config?: Record<string, unknown>) => Promise<{ output: string; exitCode: number }>;
 
+/** All commands the KV tool exposes. */
+const ALL_COMMANDS = ["set", "get", "del", "list"] as const;
+type KVCommand = (typeof ALL_COMMANDS)[number];
+
+/**
+ * Resolve which commands are permitted given the tool config.
+ *
+ * Config fields (both optional, strings or arrays of strings):
+ *   allowCommands  — whitelist; only these commands are permitted.
+ *                    Defaults to all commands when absent.
+ *   denyCommands   — blacklist; these commands are always blocked,
+ *                    even if present in allowCommands.
+ *
+ * Precedence: deny beats allow.
+ */
+function resolveAllowedCommands(config: Record<string, unknown>): Set<KVCommand> {
+  const toArray = (value: unknown): string[] => {
+    if (Array.isArray(value)) return value.map(String);
+    if (typeof value === "string") return [value];
+    return [];
+  };
+
+  const allowed = new Set<KVCommand>(
+    config.allowCommands !== undefined
+      ? (toArray(config.allowCommands).filter((c) =>
+          (ALL_COMMANDS as readonly string[]).includes(c)
+        ) as KVCommand[])
+      : ALL_COMMANDS
+  );
+
+  for (const cmd of toArray(config.denyCommands)) {
+    allowed.delete(cmd as KVCommand);
+  }
+
+  return allowed;
+}
+
 /**
  * KV Tool — Simple key-value store that persists to disk.
  * Executes on the gateway host.
@@ -16,10 +53,16 @@ type ToolHandler = (args: string[], config?: Record<string, unknown>) => Promise
  *   get <key>          — Retrieve a value
  *   del <key>          — Delete a key
  *   list               — List all keys
+ *
+ * Config:
+ *   allowCommands  — only permit these commands (default: all)
+ *   denyCommands   — always block these commands (deny beats allow)
  */
-export function createHandler(_config: Record<string, unknown>): ToolHandler {
+export function createHandler(config: Record<string, unknown>): ToolHandler {
   const storePath = resolve(homedir(), ".beige", "data", "kv.json");
   mkdirSync(resolve(homedir(), ".beige", "data"), { recursive: true });
+
+  const allowedCommands = resolveAllowedCommands(config);
 
   function loadStore(): Record<string, string> {
     try {
@@ -35,6 +78,15 @@ export function createHandler(_config: Record<string, unknown>): ToolHandler {
 
   return async (args: string[]) => {
     const command = args[0];
+
+    // Access-control check — runs before any business logic.
+    if (command && !allowedCommands.has(command as KVCommand)) {
+      const permitted = [...allowedCommands].join(", ") || "(none)";
+      return {
+        output: `Permission denied: command '${command}' is not allowed for this agent.\nPermitted commands: ${permitted}`,
+        exitCode: 1,
+      };
+    }
 
     switch (command) {
       case "set": {

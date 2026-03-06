@@ -7,5 +7,17 @@
     "del <key>          — Delete a key",
     "list               — List all keys"
   ],
-  "target": "gateway"
+  "target": "gateway",
+  "config": {
+    "allowCommands": {
+      "type": "string | string[]",
+      "description": "Whitelist of permitted commands. Defaults to all commands when absent.",
+      "example": ["get", "list"]
+    },
+    "denyCommands": {
+      "type": "string | string[]",
+      "description": "Blacklist of blocked commands. Takes precedence over allowCommands.",
+      "example": ["del"]
+    }
+  }
 }

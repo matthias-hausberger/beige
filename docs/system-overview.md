@@ -94,8 +94,8 @@ graph TB
 
 | Channel | How it connects | Session model | Commands |
 |---------|----------------|--------------|----------|
-| **TUI** | Separate process → gateway HTTP API | Persistent per agent (local pi sessions) | Full pi commands |
-| **Telegram** | In-process (GrammY) | Persistent per chat/thread | `/new` `/status` |
+| **TUI** | Separate process → gateway HTTP API | Persistent per agent (local pi sessions) | Full pi commands + `/verbose` `/v` |
+| **Telegram** | In-process (GrammY) | Persistent per chat/thread | `/start` `/new` `/status` `/verbose` `/v` |
 
 The TUI runs pi's `InteractiveMode` locally for the full pi experience (editor, streaming, model switching, compaction). Tool execution (read, write, patch, exec) is proxied through the gateway's HTTP API to the sandbox. The LLM session runs in the TUI process.
 
@@ -130,6 +130,7 @@ graph TB
         LOGS[Audit Logs]
         KEYS[API Keys]
         KV_DATA[Tool Data — e.g. kv.json]
+        SESSION_SETTINGS[Session Settings<br/>session-settings.json]
         DOCKER[Docker Daemon]
     end
 
@@ -143,12 +144,13 @@ graph TB
     CONF -.-x Sandbox
     KEYS -.-x Sandbox
     LOGS -.-x Sandbox
+    SESSION_SETTINGS -.-x Sandbox
 
     style Host fill:#f5f0e0,stroke:#c9b97a
     style Sandbox fill:#e0e8f0,stroke:#7a9cc9
 ```
 
-> ❌ Dashed-X lines = **no access**. Secrets, config, and logs never enter the sandbox.
+> ❌ Dashed-X lines = **no access**. Secrets, config, session settings, and logs never enter the sandbox.
 
 ## Startup Sequence
 

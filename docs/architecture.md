@@ -237,8 +237,53 @@ Error response:
 
 Channels are interfaces that connect to the gateway. Some run in-process, others as separate processes.
 
-- **Telegram** (in-process): GrammY bot. Maps Telegram user/chat → agent. Persistent sessions per chat/thread.
-- **TUI** (separate process): Connects to gateway HTTP API. Runs pi's `InteractiveMode` locally for the full pi experience. Tool execution is proxied through the gateway API.
+- **Telegram** (in-process): GrammY bot. Maps Telegram user/chat → agent. Persistent sessions per chat/thread. Supports channel-level settings (e.g. `verbose`) and per-session overrides via commands.
+- **TUI** (separate process): Connects to gateway HTTP API. Runs pi's `InteractiveMode` locally for the full pi experience. Tool execution is proxied through the gateway API. Supports `/verbose` command for tool-call visibility.
+
+#### Channel Settings System
+
+Channels support layered settings with three levels of precedence (highest wins):
+
+1. **System default** — hardcoded in the gateway
+2. **Channel config default** — set in `config.json5` under `channels.<name>.defaults`
+3. **Session override** — set by user via commands, persisted in `~/.beige/sessions/session-settings.json`
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Setting Resolution                        │
+├─────────────────────────────────────────────────────────────┤
+│  System Default (false)                                     │
+│       ↓ overridden by                                       │
+│  Channel Config Default (config.json5: defaults.verbose)    │
+│       ↓ overridden by                                       │
+│  Session Override (user: /verbose on)                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Verbose Mode
+
+When verbose mode is enabled, the channel receives a callback (`onToolStart`) before each tool execution and can notify the user:
+
+| Channel | Notification Method | Example |
+|---------|---------------------|---------|
+| Telegram | Bot message in chat | `🔧 exec: ls -la` |
+| TUI | stderr output | `🔧 exec: ls -la` (appears above TUI) |
+
+This gives users visibility into what the agent is doing without cluttering the main response.
+
+#### Channel Commands
+
+Commands are handled locally by the channel and **not** sent to the LLM:
+
+| Command | Telegram | TUI | Description |
+|---------|----------|-----|-------------|
+| `/start` | ✅ | — | Welcome message + command list |
+| `/new` | ✅ | — | Start fresh session |
+| `/status` | ✅ | — | Show session info + settings |
+| `/verbose on\|off` | ✅ | ✅ | Toggle verbose mode |
+| `/v on\|off` | ✅ | ✅ | Shorthand for /verbose |
+
+On startup, the Telegram channel registers its commands with the bot API (deleting stale commands first).
 
 ### 8. Sandbox Docker Image
 
@@ -320,6 +365,7 @@ beige/
 │   │   ├── api.ts              # HTTP API for external channels (TUI, etc.)
 │   │   ├── agent-manager.ts    # Agent session lifecycle
 │   │   ├── sessions.ts         # Session store (persistence + mapping)
+│   │   ├── session-settings.ts # Per-session setting overrides
 │   │   ├── policy.ts           # Permission checks
 │   │   └── audit.ts            # Audit logging
 │   ├── sandbox/
@@ -362,6 +408,7 @@ beige/
 | Socket | Unix domain socket | Peer identity from connection (not payload). Simple, fast, no TCP overhead. |
 | Config format | JSON5 | JSON with comments. Human-readable, familiar syntax, env var interpolation. |
 | Audit format | JSONL | Append-only, streamable, parseable. |
+| Session settings | JSON file (`session-settings.json`) | Simple persistence for per-session overrides. Layered with channel defaults. |
 | Build tool | tsx (dev) / tsc (build) | Fast dev iteration with tsx, standard tsc for production. |
 | Install strategy | Lazy first-run setup (no `postinstall`) | `postinstall` runs on `npm install` in dev too and cannot distinguish `--global`. Lazy setup in `src/install.ts` fires only on first real command, skips entirely for source installs (detected via `.git` at package root). |
 | npm package contents | `dist/` + `tools/` (via `files` in `package.json`) | Tool packages must ship with the npm package so `beige setup` can copy them to `~/.beige/tools/`. |

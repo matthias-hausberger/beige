@@ -14,13 +14,31 @@ import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { AuditLogger } from "./audit.js";
 import type { BeigeSessionStore } from "./sessions.js";
-import { createCoreTools } from "../tools/core.js";
+import { createCoreTools, type ToolStartHandlerRef } from "../tools/core.js";
 import { buildToolContext, type LoadedTool } from "../tools/registry.js";
+
+/**
+ * Callback fired by the gateway when the agent is about to execute a tool.
+ * Channels use this to show verbose tool-call notifications.
+ *
+ * @param toolName   The core tool being called (read, write, patch, exec).
+ * @param params     The parameters passed to the tool.
+ */
+export type OnToolStart = (toolName: string, params: Record<string, unknown>) => void;
 
 export interface ManagedSession {
   agentName: string;
   sessionKey: string;
   session: AgentSession;
+  /** Number of currently in-flight prompt calls on this session. */
+  inflightCount: number;
+  /** Resolvers that fire once inflightCount drops to zero. */
+  drainResolvers: Array<() => void>;
+  /**
+   * Mutable handler reference shared with core tool closures.
+   * Update `.fn` to change the active handler without recreating tools.
+   */
+  toolStartHandlerRef: ToolStartHandlerRef;
 }
 
 /**
@@ -49,13 +67,14 @@ export class AgentManager {
    *
    * @param sessionKey  Unique key (e.g. "telegram:123:456" or "tui:assistant:default")
    * @param agentName   Which agent to use
-   * @param opts.forceNew  If true, always create a new session (for /new command)
+   * @param opts.forceNew     If true, always create a new session (for /new command)
    * @param opts.sessionFile  If set, open this specific session file (for /resume)
+   * @param opts.onToolStart  Callback fired when a core tool is about to execute (verbose mode)
    */
   async getOrCreateSession(
     sessionKey: string,
     agentName: string,
-    opts?: { forceNew?: boolean; sessionFile?: string }
+    opts?: { forceNew?: boolean; sessionFile?: string; onToolStart?: OnToolStart }
   ): Promise<ManagedSession> {
     // If forceNew, dispose old session and create fresh
     if (opts?.forceNew) {
@@ -86,8 +105,10 @@ export class AgentManager {
 
     console.log(`[AGENT] Creating session for '${agentName}' (key: ${sessionKey})`);
 
-    // Build pi session
-    const coreTools = createCoreTools(agentName, this.sandbox, this.audit);
+    // Build pi session — wire onToolStart so channels get notified on tool calls.
+    // Store the ref on the ManagedSession so it can be mutated at runtime (verbose toggle).
+    const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
+    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef);
     const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
     const systemPrompt = buildSystemPrompt(agentName, toolContext);
 
@@ -135,6 +156,9 @@ export class AgentManager {
       agentName,
       sessionKey,
       session,
+      inflightCount: 0,
+      drainResolvers: [],
+      toolStartHandlerRef,
     };
 
     this.sessions.set(sessionKey, managed);
@@ -146,31 +170,43 @@ export class AgentManager {
   /**
    * Send a message to a session and collect the full response.
    */
-  async prompt(sessionKey: string, agentName: string, message: string): Promise<string> {
-    const managed = await this.getOrCreateSession(sessionKey, agentName);
-
-    return new Promise<string>((resolve, reject) => {
-      let responseText = "";
-
-      const unsubscribe = managed.session.subscribe((event) => {
-        if (
-          event.type === "message_update" &&
-          event.assistantMessageEvent.type === "text_delta"
-        ) {
-          responseText += event.assistantMessageEvent.delta;
-        }
-
-        if (event.type === "agent_end") {
-          unsubscribe();
-          resolve(responseText);
-        }
-      });
-
-      managed.session.prompt(message).catch((err) => {
-        unsubscribe();
-        reject(err);
-      });
+  async prompt(
+    sessionKey: string,
+    agentName: string,
+    message: string,
+    opts?: { onToolStart?: OnToolStart }
+  ): Promise<string> {
+    const managed = await this.getOrCreateSession(sessionKey, agentName, {
+      onToolStart: opts?.onToolStart,
     });
+    managed.inflightCount++;
+
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        let responseText = "";
+
+        const unsubscribe = managed.session.subscribe((event) => {
+          if (
+            event.type === "message_update" &&
+            event.assistantMessageEvent.type === "text_delta"
+          ) {
+            responseText += event.assistantMessageEvent.delta;
+          }
+
+          if (event.type === "agent_end") {
+            unsubscribe();
+            resolve(responseText);
+          }
+        });
+
+        managed.session.prompt(message).catch((err) => {
+          unsubscribe();
+          reject(err);
+        });
+      });
+    } finally {
+      this.decrementInflight(managed);
+    }
   }
 
   /**
@@ -180,43 +216,109 @@ export class AgentManager {
     sessionKey: string,
     agentName: string,
     message: string,
-    onDelta: (delta: string) => void
+    onDelta: (delta: string) => void,
+    opts?: { onToolStart?: OnToolStart }
   ): Promise<string> {
-    const managed = await this.getOrCreateSession(sessionKey, agentName);
-
-    return new Promise<string>((resolve, reject) => {
-      let responseText = "";
-
-      const unsubscribe = managed.session.subscribe((event) => {
-        if (
-          event.type === "message_update" &&
-          event.assistantMessageEvent.type === "text_delta"
-        ) {
-          const delta = event.assistantMessageEvent.delta;
-          responseText += delta;
-          onDelta(delta);
-        }
-
-        if (event.type === "agent_end") {
-          unsubscribe();
-          resolve(responseText);
-        }
-      });
-
-      managed.session.prompt(message).catch((err) => {
-        unsubscribe();
-        reject(err);
-      });
+    const managed = await this.getOrCreateSession(sessionKey, agentName, {
+      onToolStart: opts?.onToolStart,
     });
+    managed.inflightCount++;
+
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        let responseText = "";
+
+        const unsubscribe = managed.session.subscribe((event) => {
+          if (
+            event.type === "message_update" &&
+            event.assistantMessageEvent.type === "text_delta"
+          ) {
+            const delta = event.assistantMessageEvent.delta;
+            responseText += delta;
+            onDelta(delta);
+          }
+
+          if (event.type === "agent_end") {
+            unsubscribe();
+            resolve(responseText);
+          }
+        });
+
+        managed.session.prompt(message).catch((err) => {
+          unsubscribe();
+          reject(err);
+        });
+      });
+    } finally {
+      this.decrementInflight(managed);
+    }
+  }
+
+  /**
+   * Wait for all currently in-flight prompt / promptStreaming calls to finish,
+   * then dispose every session. New calls made after drainAll() starts will
+   * still complete before disposal — drainAll() re-waits until quiet.
+   *
+   * Safe to call multiple times; idempotent once all sessions are disposed.
+   */
+  async drainAll(): Promise<void> {
+    console.log("[AGENT] Draining in-flight LLM calls...");
+
+    // Wait for every managed session to have inflightCount === 0.
+    const drainSession = (managed: ManagedSession): Promise<void> => {
+      if (managed.inflightCount === 0) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        managed.drainResolvers.push(resolve);
+      });
+    };
+
+    // Iteratively wait until the whole map is quiet (new sessions could be
+    // created by concurrent callers while we wait).
+    let quiet = false;
+    while (!quiet) {
+      const pending = [...this.sessions.values()];
+      await Promise.all(pending.map(drainSession));
+      // Check again — no new calls should have started after drainResolvers fire
+      quiet = [...this.sessions.values()].every((s) => s.inflightCount === 0);
+    }
+
+    console.log("[AGENT] All in-flight calls finished. Disposing sessions...");
+    for (const [, managed] of this.sessions) {
+      managed.session.dispose();
+    }
+    this.sessions.clear();
+    console.log("[AGENT] Sessions drained and disposed.");
   }
 
   /**
    * Start a new session for a key (disposes old one).
+   * If an existing session has an onToolStart handler, it is re-registered.
    */
-  async newSession(sessionKey: string, agentName: string): Promise<ManagedSession> {
+  async newSession(
+    sessionKey: string,
+    agentName: string,
+    opts?: { onToolStart?: OnToolStart }
+  ): Promise<ManagedSession> {
+    // Carry over onToolStart from the old session if not explicitly provided
+    const existingHandler = this.sessions.get(sessionKey)?.toolStartHandlerRef.fn;
     // Reset in session store — creates new file, keeps old one
     this.sessionStore.resetSession(sessionKey, agentName);
-    return this.getOrCreateSession(sessionKey, agentName, { forceNew: true });
+    return this.getOrCreateSession(sessionKey, agentName, {
+      forceNew: true,
+      onToolStart: opts?.onToolStart ?? existingHandler,
+    });
+  }
+
+  /**
+   * Update the onToolStart handler for an existing session without recreating it.
+   * Used when verbose mode is toggled at runtime.
+   */
+  updateToolStartHandler(sessionKey: string, onToolStart: OnToolStart | undefined): void {
+    const managed = this.sessions.get(sessionKey);
+    if (managed) {
+      // Mutating the ref updates all tool closures immediately — no recreation needed.
+      managed.toolStartHandlerRef.fn = onToolStart;
+    }
   }
 
   /**
@@ -231,7 +333,7 @@ export class AgentManager {
   }
 
   /**
-   * Dispose all sessions.
+   * Dispose all sessions immediately (no drain).
    */
   async shutdown(): Promise<void> {
     for (const [, managed] of this.sessions) {
@@ -240,9 +342,19 @@ export class AgentManager {
     this.sessions.clear();
   }
 
+  // ── Private helpers ────────────────────────────────────────────────
+
+  private decrementInflight(managed: ManagedSession): void {
+    managed.inflightCount = Math.max(0, managed.inflightCount - 1);
+    if (managed.inflightCount === 0 && managed.drainResolvers.length > 0) {
+      const resolvers = managed.drainResolvers.splice(0);
+      for (const resolve of resolvers) resolve();
+    }
+  }
+
   private resolveModel(agentConfig: AgentConfig) {
     const { provider, model: modelId } = agentConfig.model;
-    const model = getModel(provider, modelId);
+    const model = getModel(provider as any, modelId);
     if (model) return model;
     const custom = this.modelRegistry.find(provider, modelId);
     if (custom) return custom;

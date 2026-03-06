@@ -60,6 +60,18 @@ export interface ChannelsConfig {
   telegram?: TelegramChannelConfig;
 }
 
+/**
+ * Channel-level default settings. These can be overridden per-session
+ * by the user (e.g. via Telegram commands or TUI slash commands).
+ */
+export interface ChannelDefaultSettings {
+  /**
+   * If true, the channel is notified whenever the agent calls a tool
+   * (e.g. "🔧 exec: ls -la"). Default: false.
+   */
+  verbose?: boolean;
+}
+
 export interface TelegramChannelConfig {
   enabled: boolean;
   token: string;
@@ -68,6 +80,8 @@ export interface TelegramChannelConfig {
     default: string;
     // future: per-chat routing
   };
+  /** Channel-level setting defaults (overridable per-session). */
+  defaults?: ChannelDefaultSettings;
 }
 
 // ---

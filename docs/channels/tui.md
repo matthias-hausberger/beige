@@ -1,0 +1,156 @@
+# TUI Channel
+
+The TUI (Terminal User Interface) channel provides the full pi experience locally while proxying tool execution to the gateway. It runs as a separate process that connects to the gateway HTTP API.
+
+## Usage
+
+Start the gateway first, then the TUI:
+
+```bash
+# Shell 1: Start the gateway
+beige
+
+# Shell 2: Start the TUI for a specific agent
+beige tui assistant
+```
+
+Or with a custom gateway URL:
+
+```bash
+beige tui assistant --gateway http://192.168.1.100:7433
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     TUI Process                              │
+├─────────────────────────────────────────────────────────────┤
+│  pi InteractiveMode                                          │
+│    ├── Full pi experience (editor, streaming, etc.)          │
+│    ├── LLM session runs locally                              │
+│    └── Extension system (custom commands)                    │
+│                                                              │
+│  Proxy Tools                                                 │
+│    ├── read  ─────────────────────┐                         │
+│    ├── write ─────────────────────┤                         │
+│    ├── patch ─────────────────────┼──▶ Gateway HTTP API     │
+│    └── exec  ─────────────────────┘                         │
+│                                                              │
+│  Beige Extension                                             │
+│    └── Registers /verbose and /v commands                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Features
+
+The TUI gives you the complete pi experience:
+
+- **Rich editor** with multi-line input, history, and autocomplete
+- **Streaming responses** with live updates
+- **Model switching** via Ctrl+P or `/model`
+- **Session management** — resume, fork, navigate tree
+- **Compaction** — automatic and manual context compression
+- **Extensions** — pi extension system fully available
+
+Tool execution happens in the gateway's sandbox, keeping the security model intact.
+
+## Commands
+
+In addition to pi's built-in commands (`/model`, `/new`, `/compact`, etc.), the TUI supports:
+
+| Command | Description |
+|---------|-------------|
+| `/verbose on\|off` | Toggle verbose mode — show tool calls as they execute |
+| `/v on\|off` | Shorthand for `/verbose` |
+
+When verbose mode is ON, tool calls are printed to stderr (appearing above the TUI frame):
+
+```
+🔧 exec: ls -la /workspace
+🔧 read: /workspace/src/main.ts
+```
+
+## Session Persistence
+
+Sessions are stored in `~/.beige/sessions/<agent>/` as `.jsonl` files. The TUI automatically:
+
+- Resumes the most recent session on startup
+- Saves conversation history after each turn
+- Preserves settings (like verbose mode) in `~/.beige/sessions/session-settings.json`
+
+## Connection Requirements
+
+The TUI requires the gateway to be running:
+
+```bash
+# Check if gateway is running
+curl http://127.0.0.1:7433/api/health
+
+# Or use the CLI
+beige gateway status
+```
+
+If the gateway is not reachable, the TUI will exit with an error.
+
+## Verbose Mode
+
+Verbose mode in the TUI works the same as Telegram:
+
+1. **System default**: `false`
+2. **No channel-level config** (TUI is local, no `config.json5` settings)
+3. **Session override**: Set via `/verbose on|off`
+
+Setting is persisted per-session in `~/.beige/sessions/session-settings.json` with key `tui:<agent>:default`.
+
+## Example Session
+
+```
+$ beige tui assistant
+[TUI] Connected to gateway at http://127.0.0.1:7433
+[TUI] Agent: assistant (anthropic/claude-sonnet-4-20250514)
+[TUI] Tools: kv
+[TUI] Verbose: off — use /verbose on|off to toggle
+
+╭──────────────────────────────────────────────────────────────╮
+│                                                              │
+│  What would you like to work on?                             │
+│                                                              │
+│  _                                                           │
+│                                                              │
+╰──────────────────────────────────────────────────────────────╯
+
+> /verbose on
+🔊 Verbose mode ON — tool calls will be shown as they execute.
+
+> List files in my workspace
+🔧 exec: ls -la /workspace
+[response streams...]
+```
+
+## Troubleshooting
+
+### Cannot connect to gateway
+
+```
+[TUI] Cannot connect to gateway at http://127.0.0.1:7433
+      Start the gateway first: beige
+```
+
+Solution: Start the gateway in another terminal.
+
+### Agent not found
+
+```
+[TUI] Unknown agent 'myagent'. Available: assistant, dev
+```
+
+Solution: Check your config and use a valid agent name.
+
+### Tool execution fails
+
+If tool calls return errors, check:
+
+1. Gateway logs: `beige logs`
+2. Sandbox status: `docker ps | grep beige`
+3. Agent config: ensure tools are listed in `agents.<name>.tools`

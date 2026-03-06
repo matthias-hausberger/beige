@@ -116,10 +116,39 @@ Any string value can reference environment variables using `${VAR_NAME}` syntax.
       agentMapping: {
         default: "assistant",                     // which agent handles messages
       },
+      // Channel-level default settings (users can override per-session)
+      defaults: {
+        verbose: false,                           // show tool-call notifications
+      },
     },
   },
 }
 ```
+
+## Channel Settings
+
+Each channel can define default settings that apply to all sessions. Users can override these per-session via commands.
+
+### Telegram Channel Settings
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `verbose` | boolean | `false` | When `true`, the bot sends a notification for every tool call the agent makes (e.g. "🔧 exec: ls -la") |
+
+Users can toggle verbose mode at runtime with:
+- `/verbose on` or `/verbose off`
+- `/v on` or `/v off` (shorthand)
+
+Session overrides are persisted in `~/.beige/sessions/session-settings.json`.
+
+### TUI Channel Settings
+
+The TUI doesn't have channel-level config defaults (it's a local process). However, verbose mode can still be toggled per-session:
+
+- `/verbose on` or `/verbose off`
+- `/v on` or `/v off`
+
+When verbose mode is ON in the TUI, tool calls are printed to stderr (appearing above the TUI frame).
 
 ## Config Schema Diagram
 
@@ -144,7 +173,8 @@ graph TD
     A1 --> ATOOLS["tools[]<br/>references tool names"]
     A1 --> SANDBOX["sandbox<br/>image, extraMounts, extraEnv"]
 
-    CHANNELS --> TELEGRAM["telegram<br/>enabled, token,<br/>allowedUsers, agentMapping"]
+    CHANNELS --> TELEGRAM["telegram<br/>enabled, token,<br/>allowedUsers, agentMapping,<br/>defaults"]
+    TELEGRAM --> TGDEFAULTS["defaults<br/>verbose"]
 
     ATOOLS -.->|references| T1
     ATOOLS -.->|references| T2
@@ -189,6 +219,7 @@ The gateway creates directories under `~/.beige/`:
 │       └── launchers/          # mounted as /tools/bin (ro)
 ├── sessions/
 │   ├── session-map.json        # maps keys → session files
+│   ├── session-settings.json   # per-session setting overrides
 │   └── <agent>/
 │       └── <id>.jsonl          # pi session files (persistent)
 ├── sockets/

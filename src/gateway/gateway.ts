@@ -7,6 +7,7 @@ import { AuditLogger } from "./audit.js";
 import { PolicyEngine } from "./policy.js";
 import { AgentManager } from "./agent-manager.js";
 import { BeigeSessionStore } from "./sessions.js";
+import { SessionSettingsStore } from "./session-settings.js";
 import { GatewayAPI } from "./api.js";
 import { SandboxManager } from "../sandbox/manager.js";
 import { AgentSocketServer } from "../socket/server.js";
@@ -30,6 +31,7 @@ export class Gateway {
   private policy: PolicyEngine;
   private toolRunner: ToolRunner;
   private sessionStore: BeigeSessionStore;
+  private settingsStore: SessionSettingsStore;
   private sandboxManager!: SandboxManager;
   private agentManager!: AgentManager;
   private api!: GatewayAPI;
@@ -48,6 +50,7 @@ export class Gateway {
     this.policy = new PolicyEngine(config);
     this.toolRunner = new ToolRunner();
     this.sessionStore = new BeigeSessionStore();
+    this.settingsStore = new SessionSettingsStore();
   }
 
   async start(): Promise<void> {
@@ -104,7 +107,8 @@ export class Gateway {
       this.telegramChannel = new TelegramChannel(
         this.config.channels.telegram,
         this.agentManager,
-        this.sessionStore
+        this.sessionStore,
+        this.settingsStore
       );
       this.telegramChannel.start().catch((err) => {
         console.error("[GATEWAY] Telegram bot error:", err);
@@ -160,7 +164,8 @@ export class Gateway {
       // Re-create stateless helpers that depend on config
       this.policy = new PolicyEngine(this.config);
       this.toolRunner = new ToolRunner();
-      // NOTE: AuditLogger and BeigeSessionStore are config-independent — reuse them.
+      // NOTE: AuditLogger, BeigeSessionStore, and SessionSettingsStore are
+      // config-independent — reuse them across restarts.
 
       await this.start();
       console.log("[GATEWAY] ── Restart complete ───────────────────────────────");

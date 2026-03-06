@@ -9,11 +9,17 @@ import {
   createExtensionRuntime,
   type ToolDefinition,
   type ResourceLoader,
+  type LoadExtensionsResult,
+  type Extension,
+  type RegisteredCommand,
 } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 import { resolve } from "path";
 import { homedir } from "os";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
+import type { OnToolStart } from "../gateway/agent-manager.js";
+import { SessionSettingsStore, resolveSessionSetting } from "../gateway/session-settings.js";
+import { BeigeSessionStore } from "../gateway/sessions.js";
 
 /**
  * TUI channel — runs in a separate process and connects to the gateway HTTP API.
@@ -26,6 +32,10 @@ import type { BeigeConfig, AgentConfig } from "../config/schema.js";
  * This gives you the best of both worlds:
  * - Full pi TUI (editor, streaming, model switching, compaction, history)
  * - Sandboxed tool execution managed by the gateway
+ *
+ * Session settings:
+ * - /v on|off  or  /verbose on|off  — toggle verbose tool-call notifications
+ * - Settings are persisted per-session in ~/.beige/sessions/session-settings.json
  */
 
 const DEFAULT_GATEWAY_URL = "http://127.0.0.1:7433";
@@ -77,8 +87,26 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
   const modelRegistry = new ModelRegistry(authStorage);
   const model = resolveModel(agentConfig, modelRegistry);
 
+  // ── Session settings (verbose mode etc.) ──────────────────
+  const settingsStore = new SessionSettingsStore();
+  const sessionKey = BeigeSessionStore.tuiKey(agentName);
+
+  // Mutable ref shared with tool proxies so we can toggle at runtime
+  const toolStartHandlerRef: { fn: OnToolStart | undefined } = { fn: undefined };
+
+  // Wire initial verbose state from settings store
+  const initialVerbose = resolveSessionSetting(
+    "verbose",
+    false,
+    undefined,  // TUI has no channel-level config defaults (no telegram-style config)
+    settingsStore.get(sessionKey, "verbose")
+  );
+  if (initialVerbose) {
+    toolStartHandlerRef.fn = makeTUIToolStartHandler();
+  }
+
   // ── Core tools that proxy to gateway API ──────────────────
-  const coreTools = createProxyTools(agentName, gatewayUrl);
+  const coreTools = createProxyTools(agentName, gatewayUrl, toolStartHandlerRef);
 
   // ── System prompt ─────────────────────────────────────────
   const toolContext = await fetchToolContext(gatewayUrl, agentName, agentInfo.tools);
@@ -93,8 +121,15 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
     sessionManager = SessionManager.create(process.cwd(), sessionsDir);
   }
 
+  // ── Beige extension (registers /v and /verbose commands) ──
+  const extensionsResult = await buildBeigeExtension(
+    sessionKey,
+    settingsStore,
+    toolStartHandlerRef
+  );
+
   const resourceLoader: ResourceLoader = {
-    getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
+    getExtensions: () => extensionsResult,
     getSkills: () => ({ skills: [], diagnostics: [] }),
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
@@ -125,14 +160,127 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
   // ── Launch pi TUI ─────────────────────────────────────────
   console.log(`[TUI] Agent: ${agentName} (${agentConfig.model.provider}/${agentConfig.model.model})`);
   console.log(`[TUI] Tools: ${agentInfo.tools.join(", ") || "(core only)"}`);
+  console.log(`[TUI] Verbose: ${initialVerbose ? "on" : "off"} — use /verbose on|off to toggle`);
 
   const mode = new InteractiveMode(session, {});
   await mode.run();
 }
 
-// ── Proxy core tools ──────────────────────────────────────────────
+// ── Beige extension factory ───────────────────────────────────────────────────
 
-function createProxyTools(agentName: string, gatewayUrl: string): ToolDefinition[] {
+/**
+ * Build the inline "beige" extension that registers /v and /verbose commands
+ * for toggling verbose mode from within the TUI.
+ *
+ * Commands are intercepted by InteractiveMode before being sent to the LLM.
+ */
+async function buildBeigeExtension(
+  sessionKey: string,
+  settingsStore: SessionSettingsStore,
+  toolStartHandlerRef: { fn: OnToolStart | undefined }
+): Promise<LoadExtensionsResult> {
+  const runtime = createExtensionRuntime();
+
+  // Command handler shared by /verbose and /v
+  const handleVerbose = async (args: string, ctx: any) => {
+    const arg = args.trim().toLowerCase();
+
+    if (!arg || (arg !== "on" && arg !== "off")) {
+      const current = settingsStore.get(sessionKey, "verbose") ?? false;
+      ctx.ui.notify(
+        `Verbose mode is currently ${current ? "ON" : "OFF"}. Usage: /verbose on|off`,
+        "info"
+      );
+      return;
+    }
+
+    const enable = arg === "on";
+    settingsStore.set(sessionKey, "verbose", enable);
+
+    // Mutate the shared ref — all proxy tool closures pick up immediately
+    toolStartHandlerRef.fn = enable ? makeTUIToolStartHandler() : undefined;
+
+    ctx.ui.notify(
+      enable
+        ? "🔊 Verbose mode ON — tool calls will be shown as they execute."
+        : "🔇 Verbose mode OFF — tool calls are hidden.",
+      "info"
+    );
+  };
+
+  // Build the extension object manually (loadExtensionFromFactory is not exported)
+  const extension: Extension = {
+    path: "<beige-tui>",
+    resolvedPath: "<beige-tui>",
+    handlers: new Map(),
+    tools: new Map(),
+    messageRenderers: new Map(),
+    commands: new Map<string, RegisteredCommand>([
+      ["verbose", {
+        name: "verbose",
+        description: "Toggle tool-call notifications: /verbose on|off",
+        handler: handleVerbose,
+      }],
+      ["v", {
+        name: "v",
+        description: "Shorthand for /verbose: /v on|off",
+        handler: handleVerbose,
+      },
+    ]]),
+    flags: new Map(),
+    shortcuts: new Map(),
+  };
+
+  return {
+    extensions: [extension],
+    errors: [],
+    runtime,
+  };
+}
+
+// ── TUI tool-start handler ────────────────────────────────────────────────────
+
+/**
+ * When verbose mode is ON in the TUI, print tool calls to stdout.
+ * This integrates with the pi TUI's existing output (the TUI captures stdout).
+ */
+function makeTUIToolStartHandler(): OnToolStart {
+  return (toolName: string, params: Record<string, unknown>) => {
+    const label = formatToolCall(toolName, params);
+    // Write directly to stderr so it doesn't interfere with TUI rendering
+    // The TUI renders on stdout; stderr messages appear above the TUI frame.
+    process.stderr.write(`\r🔧 ${label}\n`);
+  };
+}
+
+function formatToolCall(toolName: string, params: Record<string, unknown>): string {
+  switch (toolName) {
+    case "exec": {
+      const cmd = String(params.command ?? "");
+      return `exec: ${cmd.length > 100 ? cmd.slice(0, 97) + "…" : cmd}`;
+    }
+    case "read": {
+      return `read: ${params.path}`;
+    }
+    case "write": {
+      const bytes = params.bytes != null ? ` (${params.bytes} bytes)` : "";
+      return `write: ${params.path}${bytes}`;
+    }
+    case "patch": {
+      return `patch: ${params.path}`;
+    }
+    default:
+      return `${toolName}: ${JSON.stringify(params).slice(0, 100)}`;
+  }
+}
+
+// ── Proxy core tools ──────────────────────────────────────────────────────────
+
+function createProxyTools(
+  agentName: string,
+  gatewayUrl: string,
+  handlerRef: { fn: OnToolStart | undefined }
+): ToolDefinition[] {
   async function callGateway(
     tool: string,
     params: Record<string, any>
@@ -166,8 +314,10 @@ function createProxyTools(agentName: string, gatewayUrl: string): ToolDefinition
         limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
       }),
       execute: async (_toolCallId, params) => {
-        const result = await callGateway("read", params);
-        return { content: result.content, details: {}, isError: result.isError };
+        const p = params as { path: string; offset?: number; limit?: number };
+        handlerRef.fn?.("read", { path: p.path });
+        const result = await callGateway("read", p as Record<string, any>);
+        return { content: result.content as any, details: {}, isError: result.isError };
       },
     },
     {
@@ -180,8 +330,10 @@ function createProxyTools(agentName: string, gatewayUrl: string): ToolDefinition
         content: Type.String({ description: "Content to write to the file" }),
       }),
       execute: async (_toolCallId, params) => {
-        const result = await callGateway("write", params);
-        return { content: result.content, details: {}, isError: result.isError };
+        const p = params as { path: string; content: string };
+        handlerRef.fn?.("write", { path: p.path, bytes: Buffer.byteLength(p.content) });
+        const result = await callGateway("write", p as Record<string, any>);
+        return { content: result.content as any, details: {}, isError: result.isError };
       },
     },
     {
@@ -195,8 +347,10 @@ function createProxyTools(agentName: string, gatewayUrl: string): ToolDefinition
         newText: Type.String({ description: "New text to replace with" }),
       }),
       execute: async (_toolCallId, params) => {
-        const result = await callGateway("patch", params);
-        return { content: result.content, details: {}, isError: result.isError };
+        const p = params as { path: string; oldText: string; newText: string };
+        handlerRef.fn?.("patch", { path: p.path });
+        const result = await callGateway("patch", p as Record<string, any>);
+        return { content: result.content as any, details: {}, isError: result.isError };
       },
     },
     {
@@ -209,22 +363,22 @@ function createProxyTools(agentName: string, gatewayUrl: string): ToolDefinition
         timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (default: 120)" })),
       }),
       execute: async (_toolCallId, params) => {
-        const result = await callGateway("exec", params);
-        return { content: result.content, details: {}, isError: result.isError };
+        const p = params as { command: string; timeout?: number };
+        handlerRef.fn?.("exec", { command: p.command });
+        const result = await callGateway("exec", p as Record<string, any>);
+        return { content: result.content as any, details: {}, isError: result.isError };
       },
     },
   ];
 }
 
-// ── Helpers ───────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function fetchToolContext(
   gatewayUrl: string,
   agentName: string,
   toolNames: string[]
 ): Promise<string> {
-  // For now, build a simple context string from tool names.
-  // In the future, the gateway API could return full tool docs.
   if (toolNames.length === 0) return "";
 
   const lines = [
@@ -281,7 +435,7 @@ ${toolContext}
 
 function resolveModel(agentConfig: AgentConfig, modelRegistry: ModelRegistry) {
   const { provider, model: modelId } = agentConfig.model;
-  const model = getModel(provider, modelId);
+  const model = getModel(provider as any, modelId);
   if (model) return model;
   const custom = modelRegistry.find(provider, modelId);
   if (custom) return custom;

@@ -2,28 +2,47 @@ import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { AuditLogger } from "../gateway/audit.js";
 import type { SandboxManager } from "../sandbox/manager.js";
+import type { OnToolStart } from "../gateway/agent-manager.js";
+
+/**
+ * Mutable reference to an OnToolStart handler.
+ * Shared with core tool closures so the handler can be swapped at runtime
+ * (e.g. when the user toggles verbose mode) without recreating tool definitions.
+ */
+export type ToolStartHandlerRef = { fn: OnToolStart | undefined };
 
 /**
  * Create the 4 core tools that are exposed to the LLM.
  * All execute inside the agent's sandbox via docker exec.
+ *
+ * @param handlerRef  Mutable reference to the tool-start handler. Pass a
+ *                    pre-created ref (stored on ManagedSession) so callers
+ *                    can update `.fn` at runtime to toggle verbose mode.
  */
 export function createCoreTools(
   agentName: string,
   sandbox: SandboxManager,
-  audit: AuditLogger
+  audit: AuditLogger,
+  handlerRef?: ToolStartHandlerRef
 ): ToolDefinition[] {
+  // If no ref provided, create a no-op container.
+  const handler: ToolStartHandlerRef = handlerRef ?? { fn: undefined };
+
   return [
-    createReadTool(agentName, sandbox, audit),
-    createWriteTool(agentName, sandbox, audit),
-    createPatchTool(agentName, sandbox, audit),
-    createExecTool(agentName, sandbox, audit),
+    createReadTool(agentName, sandbox, audit, handler),
+    createWriteTool(agentName, sandbox, audit, handler),
+    createPatchTool(agentName, sandbox, audit, handler),
+    createExecTool(agentName, sandbox, audit, handler),
   ];
 }
+
+type HandlerRef = ToolStartHandlerRef;
 
 function createReadTool(
   agentName: string,
   sandbox: SandboxManager,
-  audit: AuditLogger
+  audit: AuditLogger,
+  handler: HandlerRef
 ): ToolDefinition {
   return {
     name: "read",
@@ -40,19 +59,21 @@ function createReadTool(
       ),
     }),
     execute: async (toolCallId, params) => {
+      const p = params as { path: string; offset?: number; limit?: number };
+      handler.fn?.("read", { path: p.path });
       const args = ["cat"];
 
       // Use sed for offset/limit support
-      if (params.offset || params.limit) {
-        const start = params.offset ?? 1;
-        const end = params.limit ? start + params.limit - 1 : "$";
+      if (p.offset || p.limit) {
+        const start = p.offset ?? 1;
+        const end = p.limit ? start + p.limit - 1 : "$";
         args.length = 0;
-        args.push("sed", "-n", `${start},${end}p`, params.path);
+        args.push("sed", "-n", `${start},${end}p`, p.path);
       } else {
-        args.push(params.path);
+        args.push(p.path);
       }
 
-      const timer = audit.start(agentName, "core_tool", "read", [params.path], "allowed");
+      const timer = audit.start(agentName, "core_tool", "read", [p.path], "allowed");
 
       try {
         const result = await sandbox.exec(agentName, args);
@@ -63,7 +84,7 @@ function createReadTool(
 
         if (result.exitCode !== 0) {
           return {
-            content: [{ type: "text", text: result.stderr || `Failed to read: ${params.path}` }],
+            content: [{ type: "text", text: result.stderr || `Failed to read: ${p.path}` }],
             details: {},
             isError: true,
           };
@@ -89,7 +110,8 @@ function createReadTool(
 function createWriteTool(
   agentName: string,
   sandbox: SandboxManager,
-  audit: AuditLogger
+  audit: AuditLogger,
+  handler: HandlerRef
 ): ToolDefinition {
   return {
     name: "write",
@@ -101,27 +123,29 @@ function createWriteTool(
       content: Type.String({ description: "Content to write to the file" }),
     }),
     execute: async (toolCallId, params) => {
+      const p = params as { path: string; content: string };
+      handler.fn?.("write", { path: p.path, bytes: Buffer.byteLength(p.content) });
       const timer = audit.start(
         agentName,
         "core_tool",
         "write",
-        [params.path, `(${Buffer.byteLength(params.content)} bytes)`],
+        [p.path, `(${Buffer.byteLength(p.content)} bytes)`],
         "allowed"
       );
 
       try {
         // Create parent dirs then write via sh -c
-        const script = `mkdir -p "$(dirname '${params.path}')" && cat > '${params.path}'`;
-        const result = await sandbox.exec(agentName, ["sh", "-c", script], params.content);
+        const script = `mkdir -p "$(dirname '${p.path}')" && cat > '${p.path}'`;
+        const result = await sandbox.exec(agentName, ["sh", "-c", script], p.content);
 
         timer.finish({
           exitCode: result.exitCode,
-          outputBytes: Buffer.byteLength(params.content),
+          outputBytes: Buffer.byteLength(p.content),
         });
 
         if (result.exitCode !== 0) {
           return {
-            content: [{ type: "text", text: result.stderr || `Failed to write: ${params.path}` }],
+            content: [{ type: "text", text: result.stderr || `Failed to write: ${p.path}` }],
             details: {},
             isError: true,
           };
@@ -131,7 +155,7 @@ function createWriteTool(
           content: [
             {
               type: "text",
-              text: `Successfully wrote ${Buffer.byteLength(params.content)} bytes to ${params.path}`,
+              text: `Successfully wrote ${Buffer.byteLength(p.content)} bytes to ${p.path}`,
             },
           ],
           details: {},
@@ -152,7 +176,8 @@ function createWriteTool(
 function createPatchTool(
   agentName: string,
   sandbox: SandboxManager,
-  audit: AuditLogger
+  audit: AuditLogger,
+  handler: HandlerRef
 ): ToolDefinition {
   return {
     name: "patch",
@@ -165,34 +190,36 @@ function createPatchTool(
       newText: Type.String({ description: "New text to replace with" }),
     }),
     execute: async (toolCallId, params) => {
+      const p = params as { path: string; oldText: string; newText: string };
+      handler.fn?.("patch", { path: p.path });
       const timer = audit.start(
         agentName,
         "core_tool",
         "patch",
-        [params.path],
+        [p.path],
         "allowed"
       );
 
       try {
         // Read current content
-        const readResult = await sandbox.exec(agentName, ["cat", params.path]);
+        const readResult = await sandbox.exec(agentName, ["cat", p.path]);
         if (readResult.exitCode !== 0) {
-          timer.finish({ exitCode: 1, error: `File not found: ${params.path}` });
+          timer.finish({ exitCode: 1, error: `File not found: ${p.path}` });
           return {
-            content: [{ type: "text", text: `File not found: ${params.path}` }],
+            content: [{ type: "text", text: `File not found: ${p.path}` }],
             details: {},
             isError: true,
           };
         }
 
         const content = readResult.stdout;
-        if (!content.includes(params.oldText)) {
+        if (!content.includes(p.oldText)) {
           timer.finish({ exitCode: 1, error: "oldText not found in file" });
           return {
             content: [
               {
                 type: "text",
-                text: `The specified oldText was not found in ${params.path}. Make sure it matches exactly.`,
+                text: `The specified oldText was not found in ${p.path}. Make sure it matches exactly.`,
               },
             ],
             details: {},
@@ -200,8 +227,8 @@ function createPatchTool(
           };
         }
 
-        const newContent = content.replace(params.oldText, params.newText);
-        const writeScript = `cat > '${params.path}'`;
+        const newContent = content.replace(p.oldText, p.newText);
+        const writeScript = `cat > '${p.path}'`;
         const writeResult = await sandbox.exec(
           agentName,
           ["sh", "-c", writeScript],
@@ -222,7 +249,7 @@ function createPatchTool(
         }
 
         return {
-          content: [{ type: "text", text: `Successfully patched ${params.path}` }],
+          content: [{ type: "text", text: `Successfully patched ${p.path}` }],
           details: {},
         };
       } catch (err) {
@@ -241,7 +268,8 @@ function createPatchTool(
 function createExecTool(
   agentName: string,
   sandbox: SandboxManager,
-  audit: AuditLogger
+  audit: AuditLogger,
+  handler: HandlerRef
 ): ToolDefinition {
   return {
     name: "exec",
@@ -259,17 +287,19 @@ function createExecTool(
       ),
     }),
     execute: async (toolCallId, params) => {
-      const args = ["sh", "-c", params.command];
+      const p = params as { command: string; timeout?: number };
+      handler.fn?.("exec", { command: p.command });
+      const args = ["sh", "-c", p.command];
       const timer = audit.start(
         agentName,
         "core_tool",
         "exec",
-        [params.command],
+        [p.command],
         "allowed"
       );
 
       try {
-        const timeout = (params.timeout ?? 120) * 1000;
+        const timeout = (p.timeout ?? 120) * 1000;
         const result = await sandbox.exec(agentName, args, undefined, timeout);
 
         const output = [result.stdout, result.stderr].filter(Boolean).join("\n");

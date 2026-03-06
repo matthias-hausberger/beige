@@ -1,0 +1,153 @@
+# Telegram Channel
+
+The Telegram channel lets users interact with Beige agents via a Telegram bot. It runs in-process within the gateway and uses the GrammY framework.
+
+## Setup
+
+### 1. Create a Telegram Bot
+
+1. Open Telegram and search for `@BotFather`
+2. Send `/newbot` and follow the prompts
+3. Save the bot token you receive
+
+### 2. Get Your User ID
+
+1. Search for `@userinfobot` on Telegram
+2. Send any message — it will reply with your user ID
+3. Add this ID to `allowedUsers` in your config
+
+### 3. Configure
+
+```json5
+{
+  channels: {
+    telegram: {
+      enabled: true,
+      token: "${TELEGRAM_BOT_TOKEN}",
+      allowedUsers: [123456789],  // your user ID
+      agentMapping: {
+        default: "assistant",
+      },
+      defaults: {
+        verbose: false,  // tool-call notifications off by default
+      },
+    },
+  },
+}
+```
+
+## Session Model
+
+- Each **chat** gets a persistent session (survives gateway restarts)
+- If a chat has **threads** (forum topics), each thread gets its own session
+- Sessions are stored in `~/.beige/sessions/<agent>/<id>.jsonl`
+- Session mapping is tracked in `~/.beige/sessions/session-map.json`
+
+## Commands
+
+Commands are handled locally by the bot and **not** sent to the LLM:
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Show welcome message and available commands |
+| `/new` | Start a fresh session (old session is preserved on disk) |
+| `/status` | Show current session info, agent, and settings |
+| `/verbose on\|off` | Toggle verbose mode for this session |
+| `/v on\|off` | Shorthand for `/verbose` |
+
+### Verbose Mode
+
+When verbose mode is ON, the bot sends a notification for every tool call:
+
+```
+🔧 exec: ls -la
+🔧 read: /workspace/src/main.ts
+🔧 write: /workspace/output.json (1234 bytes)
+```
+
+This gives you visibility into what the agent is doing in real-time.
+
+**Setting precedence** (highest wins):
+1. Session override (set via `/verbose on|off`)
+2. Channel default (from config: `defaults.verbose`)
+3. System default (`false`)
+
+Session overrides are persisted in `~/.beige/sessions/session-settings.json`.
+
+## Bot Command Registration
+
+On startup, the Telegram channel:
+
+1. **Deletes** all existing bot commands (removes stale commands from old versions)
+2. **Registers** the current command set with Telegram
+
+This ensures users always see the correct commands in the Telegram UI.
+
+## Message Handling
+
+1. User sends a text message
+2. Bot checks authorization (`allowedUsers`)
+3. Bot resolves the session key (`telegram:<chatId>` or `telegram:<chatId>:<threadId>`)
+4. Bot streams the LLM response, updating the message in place
+5. Long responses are split into multiple messages
+
+### Streaming
+
+The bot uses Telegram's "typing" chat action and live-edits the response message as tokens arrive. Updates are throttled to ~1 per second to avoid rate limits.
+
+## Security
+
+- **User allowlist**: Only users in `allowedUsers` can interact with the bot
+- **No secrets in sandbox**: API keys and config stay on the gateway host
+- **Per-chat isolation**: Each chat/thread has its own session
+
+## Example Interaction
+
+```
+User: /start
+Bot: 👋 Hello! I'm your Beige agent. Send me a message and I'll help you out.
+
+     Commands:
+     /new — Start a new conversation session
+     /status — Show current session info and settings
+     /verbose on|off — Toggle tool-call notifications
+     /v on|off — Same as /verbose (shorthand)
+
+     Current verbose mode: 🔇 off
+
+User: What files are in my workspace?
+Bot: [streaming response...]
+
+User: /verbose on
+Bot: 🔊 Verbose mode *on* — you'll see tool calls as they happen.
+
+User: List the files again
+Bot: 🔧 exec: ls -la /workspace
+     [streaming response...]
+```
+
+## Troubleshooting
+
+### Bot not responding
+
+1. Check the gateway logs: `beige logs`
+2. Verify your bot token is correct
+3. Ensure your user ID is in `allowedUsers`
+4. Make sure the gateway is running: `beige gateway status`
+
+### Commands not showing in Telegram
+
+Commands are registered on startup. Restart the gateway:
+
+```bash
+beige gateway restart
+```
+
+### Session not persisting
+
+Sessions are stored in `~/.beige/sessions/`. Check:
+
+```bash
+ls ~/.beige/sessions/
+cat ~/.beige/sessions/session-map.json
+```

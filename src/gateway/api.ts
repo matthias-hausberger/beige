@@ -4,9 +4,11 @@ import type { AgentManager } from "./agent-manager.js";
 import type { BeigeSessionStore } from "./sessions.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { AuditLogger } from "./audit.js";
+import type { Gateway } from "./gateway.js";
 
 export interface GatewayAPIOptions {
   config: BeigeConfig;
+  gateway: Gateway;
   agentManager: AgentManager;
   sessionStore: BeigeSessionStore;
   sandbox: SandboxManager;
@@ -133,6 +135,21 @@ export class GatewayAPI {
         const agentName = decodeURIComponent(sessionsMatch[1]);
         const sessions = this.opts.sessionStore.listSessions(agentName);
         return this.json(res, 200, { sessions });
+      }
+
+      // ── POST /api/gateway/restart ─────────────────────────
+      // Triggers a graceful in-place restart: drain → teardown → reload config → start.
+      // Returns 202 immediately; the restart happens asynchronously in the gateway process.
+      if (method === "POST" && path === "/api/gateway/restart") {
+        console.log("[API] Restart requested via HTTP API");
+        // Fire and forget — restart() is idempotent if already in progress
+        this.opts.gateway.restart().catch((err) => {
+          console.error("[API] Restart error:", err);
+        });
+        return this.json(res, 202, {
+          status: "restarting",
+          message: "Graceful restart initiated. Follow progress with: beige gateway logs -f",
+        });
       }
 
       // ── GET /api/config ───────────────────────────────────

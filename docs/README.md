@@ -12,6 +12,13 @@
 | [Tools](./tools.md) | Tool packages, launchers, the socket protocol, writing your own tools |
 | [Configuration](./configuration.md) | Config file reference with all options explained |
 
+## Channels
+
+| Document | Description |
+|----------|-------------|
+| [Telegram](./channels/telegram.md) | Telegram bot setup, commands, verbose mode, session model |
+| [TUI](./channels/tui.md) | Terminal UI channel, pi integration, verbose mode |
+
 ## Design Documents (project history)
 
 | Document | Description |

@@ -101,10 +101,19 @@ tools/my-tool/
 
 ### index.ts — Handler
 
-For **gateway-targeted** tools, `index.ts` exports a `createHandler` factory:
+For **gateway-targeted** tools, `index.ts` exports a `createHandler` factory.
+
+Tool packages are **self-contained** — they must not import from the beige source tree
+(`../../src/…`), because when installed via `npm install -g` the tool lives at
+`~/.beige/tools/<name>/` with no source tree nearby. Define the `ToolHandler` type
+inline (it is a pure type with no runtime footprint):
 
 ```typescript
-import type { ToolHandler } from "../../src/tools/runner.js";
+// Tool packages must be self-contained — no imports from the beige source tree.
+type ToolHandler = (
+  args: string[],
+  config?: Record<string, unknown>
+) => Promise<{ output: string; exitCode: number }>;
 
 export function createHandler(config: Record<string, unknown>): ToolHandler {
   // config comes from the tool's config in config.json5
@@ -117,15 +126,6 @@ export function createHandler(config: Record<string, unknown>): ToolHandler {
     };
   };
 }
-```
-
-The `ToolHandler` signature:
-
-```typescript
-type ToolHandler = (
-  args: string[],
-  config?: Record<string, unknown>
-) => Promise<{ output: string; exitCode: number }>;
 ```
 
 ### README.md — Documentation
@@ -231,7 +231,11 @@ tools/my-tool/
 
 ```typescript
 // tools/my-tool/index.ts
-import type { ToolHandler } from "../../src/tools/runner.js";
+// Define ToolHandler inline — no imports from the beige source tree.
+type ToolHandler = (
+  args: string[],
+  config?: Record<string, unknown>
+) => Promise<{ output: string; exitCode: number }>;
 
 export function createHandler(config: Record<string, unknown>): ToolHandler {
   return async (args) => {

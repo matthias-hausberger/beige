@@ -4,6 +4,7 @@
 
 | Document | Description |
 |----------|-------------|
+| [Installation](./installation.md) | npm global install vs source install, setup flow, detection logic |
 | [Architecture](./architecture.md) | System components, config format, directory layout, tech decisions |
 | [System Overview](./system-overview.md) | High-level architecture diagram, component responsibilities |
 | [Request Flows](./request-flows.md) | Detailed sequence diagrams for every request type |

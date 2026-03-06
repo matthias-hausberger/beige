@@ -1,0 +1,289 @@
+# Installation
+
+Beige supports two install modes that coexist cleanly:
+
+| Mode | Who it's for | How it works |
+|------|-------------|--------------|
+| **npm global** (`npm install -g`) | End users | Installs the published package; first run auto-bootstraps `~/.beige` |
+| **Source / git clone** | Contributors, power users | Clone the repo and run with `tsx`; `~/.beige` is never touched automatically |
+
+---
+
+## npm Global Install
+
+### Prerequisites
+
+- Node.js 22+
+- Docker (for sandbox execution)
+
+### Install
+
+```bash
+npm install -g matthias-hausberger/beige
+```
+
+### First run
+
+On the very first command after install, beige detects that `~/.beige/config.json5` does not yet exist and runs setup automatically:
+
+```
+$ beige gateway start
+[BEIGE] First run — setting up ~/.beige…
+[BEIGE] Created:
+  + /Users/you/.beige/tools/kv
+  + /Users/you/.beige/config.json5
+
+[BEIGE] Gateway daemon started (PID 12345)
+```
+
+You can also trigger setup explicitly at any time:
+
+```bash
+beige setup
+```
+
+### What setup creates
+
+```
+~/.beige/
+├── config.json5          # default config (see below)
+└── tools/
+    └── kv/               # bundled KV tool
+        ├── tool.json
+        ├── index.ts
+        └── README.md
+```
+
+Setup is fully **idempotent** — it only creates files that do not already exist.
+Existing files (including individual tool directories) are never overwritten.
+Re-running `beige setup` after partial failures is always safe.
+
+### Default config
+
+The generated `~/.beige/config.json5` contains:
+
+```json5
+{
+  llm: {
+    providers: {
+      anthropic: {
+        apiKey: "${ANTHROPIC_API_KEY}",
+      },
+    },
+  },
+
+  tools: {
+    kv: {
+      path: "/Users/you/.beige/tools/kv",   // absolute path, written at setup time
+      target: "gateway",
+    },
+  },
+
+  agents: {
+    beige: {
+      model: {
+        provider: "anthropic",
+        model: "claude-sonnet-4-20250514",
+        thinkingLevel: "off",
+      },
+      tools: ["kv"],
+      sandbox: {
+        image: "beige-sandbox:latest",
+      },
+    },
+  },
+}
+```
+
+The `kv` tool path is written as an absolute path at setup time so the config works
+regardless of the working directory you run `beige` from.
+
+### Set your API key
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+# or add it directly to ~/.beige/config.json5
+```
+
+### Build the sandbox image
+
+```bash
+# Still required: the sandbox Docker image is not bundled with the npm package
+beige sandbox build
+# or manually:
+# docker build -t beige-sandbox:latest <path-to-beige-sandbox-Dockerfile>
+```
+
+### Run
+
+```bash
+# Shell 1
+beige gateway start
+
+# Shell 2
+beige tui
+```
+
+---
+
+## Source Install (git clone)
+
+### Prerequisites
+
+- Node.js 22+
+- Docker
+
+### Clone and install
+
+```bash
+git clone https://github.com/matthias-hausberger/beige.git
+cd beige
+npm install          # or: pnpm install
+```
+
+### No automatic setup
+
+When beige detects it is running from a git checkout (a `.git` directory exists
+next to `package.json`), **it never touches `~/.beige` automatically**.
+No config is written, no tools are copied.
+
+This means:
+
+- `npm install` in the repo does not create any files outside the repo.
+- Running `npx tsx src/cli.ts gateway start` without a config will exit cleanly with
+  "config not found" rather than silently creating files.
+- `beige setup` without `--force` also exits with an explanation.
+
+To set up `~/.beige` deliberately from source (e.g. to use the kv tool from a dev
+build), run:
+
+```bash
+npx tsx src/cli.ts setup --force
+```
+
+Or use the config from the repo directly:
+
+```bash
+cp examples/config.json5 ~/.beige/config.json5
+# Edit to point tool paths at the repo:  path: "/path/to/beige/tools/kv"
+```
+
+### Build the sandbox image
+
+```bash
+npm run build:sandbox
+```
+
+### Run (dev mode)
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Shell 1 — gateway
+npx tsx src/cli.ts gateway start --foreground
+
+# Shell 2 — TUI
+npx tsx src/cli.ts tui
+```
+
+Or add a config path explicitly:
+
+```bash
+npx tsx src/cli.ts --config ./examples/config.json5 gateway start --foreground
+```
+
+---
+
+## How Source-Install Detection Works
+
+`src/install.ts` exposes `isSourceInstall()`:
+
+```
+Compiled output lives at:  <package-root>/dist/install.js
+                                              ↑
+import.meta.url  ──────────────────────────── resolved one level up → package root
+
+isSourceInstall() = existsSync(packageRoot + "/.git")
+```
+
+When installed via `npm install -g`, the package lands in a path like
+`/usr/local/lib/node_modules/beige/` — no `.git` directory there.
+
+When run from a git clone, `.git` is present — detection fires.
+
+This check is intentionally simple and has no edge-cases around symlinks or
+npm workspaces: `.git` is only present when the package is the actual repository.
+
+---
+
+## The `beige setup` Command
+
+```
+beige setup [--force]
+```
+
+| Flag | Behaviour |
+|------|-----------|
+| *(none)* | Runs setup only when **not** a source install. On a source install, prints an explanation. |
+| `--force` | Runs setup unconditionally — works from source installs too. Useful for contributors who want to test with `~/.beige`. |
+
+Output example (first run):
+
+```
+[BEIGE] Running setup…
+
+[BEIGE] Created:
+  + /Users/you/.beige/tools/kv
+  + /Users/you/.beige/config.json5
+
+[BEIGE] Setup complete.
+```
+
+Output example (re-run after everything exists):
+
+```
+[BEIGE] Running setup…
+
+[BEIGE] Already exists (skipped):
+  ~ /Users/you/.beige/tools/kv
+  ~ /Users/you/.beige/config.json5
+
+[BEIGE] Setup complete.
+```
+
+---
+
+## Updating
+
+### npm global
+
+```bash
+npm install -g matthias-hausberger/beige
+```
+
+Setup is not re-run automatically on update. If a new version ships new bundled
+tools, run `beige setup` manually to copy them (existing tools are never overwritten).
+
+### Source
+
+```bash
+git pull
+npm install
+```
+
+`~/.beige` is untouched.
+
+---
+
+## Uninstalling
+
+```bash
+npm uninstall -g matthias-hausberger/beige
+```
+
+`~/.beige/` is **not** removed — it holds your config, sessions, audit logs, and kv data.
+Remove it manually if you want a clean slate:
+
+```bash
+rm -rf ~/.beige
+```

@@ -1,7 +1,11 @@
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { resolve } from "path";
 import { homedir } from "os";
-import type { ToolHandler } from "../../src/tools/runner.js";
+
+// ToolHandler type is defined here inline so this file is self-contained.
+// It can be installed anywhere (e.g. ~/.beige/tools/kv/) without needing the
+// beige source tree.
+type ToolHandler = (args: string[], config?: Record<string, unknown>) => Promise<{ output: string; exitCode: number }>;
 
 /**
  * KV Tool — Simple key-value store that persists to disk.

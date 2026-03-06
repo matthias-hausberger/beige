@@ -310,6 +310,7 @@ beige/
 │   └── configuration.md        # Config reference
 ├── src/
 │   ├── cli.ts                  # CLI entry point (starts gateway, optionally with TUI channel)
+│   ├── install.ts              # First-time setup: copy tools, write default config
 │   ├── index.ts                # Programmatic exports
 │   ├── config/
 │   │   ├── schema.ts           # Config types + validation
@@ -362,3 +363,5 @@ beige/
 | Config format | JSON5 | JSON with comments. Human-readable, familiar syntax, env var interpolation. |
 | Audit format | JSONL | Append-only, streamable, parseable. |
 | Build tool | tsx (dev) / tsc (build) | Fast dev iteration with tsx, standard tsc for production. |
+| Install strategy | Lazy first-run setup (no `postinstall`) | `postinstall` runs on `npm install` in dev too and cannot distinguish `--global`. Lazy setup in `src/install.ts` fires only on first real command, skips entirely for source installs (detected via `.git` at package root). |
+| npm package contents | `dist/` + `tools/` (via `files` in `package.json`) | Tool packages must ship with the npm package so `beige setup` can copy them to `~/.beige/tools/`. |

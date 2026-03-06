@@ -10,6 +10,21 @@ The gateway looks for `~/.beige/config.json5` by default. Override with:
 beige --config /path/to/my-config.json5
 ```
 
+## Tool Paths: npm vs Source Install
+
+Tool `path` values in config are resolved relative to the config file's directory —
+unless they are absolute paths (starting with `/`).
+
+| Install mode | Typical tool path in config | Notes |
+|---|---|---|
+| **npm global** | `/Users/you/.beige/tools/kv` (absolute) | Written by `beige setup` at setup time. Never needs changing. |
+| **Source** | `./tools/kv` (relative) | Relative to `~/.beige/config.json5`, so points into the repo only if the config is inside the repo. When using `~/.beige/config.json5` with a source install, use an absolute path. |
+
+When `beige setup` generates the default config it always writes the kv tool path as
+an absolute path to `~/.beige/tools/kv`, so it works regardless of working directory.
+
+See [Installation](./installation.md) for the full picture on the two install modes.
+
 ## Environment Variable Resolution
 
 Any string value can reference environment variables using `${VAR_NAME}` syntax. Variables are resolved at startup — if a referenced variable is not set, the gateway exits with an error.

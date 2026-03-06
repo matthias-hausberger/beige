@@ -15,50 +15,60 @@ Beige is an open-source agent gateway that runs AI agents inside Docker sandboxe
 
 ## Quick Start
 
-### 1. Prerequisites
+Beige has two install modes. Pick the one that fits you.
 
-- Node.js 22+
-- Docker
+### Option A — npm global (recommended for most users)
 
-### 2. Install
+**Prerequisites:** Node.js 22+, Docker
+
+```bash
+npm install -g matthias-hausberger/beige
+```
+
+On first run, beige automatically creates `~/.beige/` with a default config and the bundled KV tool:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Shell 1 — start the gateway
+beige gateway start
+
+# Shell 2 — open the TUI
+beige tui
+```
+
+You can also run setup explicitly:
+
+```bash
+beige setup
+```
+
+### Option B — Source install (contributors / power users)
+
+**Prerequisites:** Node.js 22+, Docker
 
 ```bash
 git clone https://github.com/matthias-hausberger/beige.git
 cd beige
 npm install
+npm run build:sandbox       # build the sandbox Docker image
 ```
 
-### 3. Build sandbox image
-
-```bash
-npm run build:sandbox
-```
-
-### 4. Configure
+No files are written outside the repo. Configure manually:
 
 ```bash
 cp examples/config.json5 ~/.beige/config.json5
-# Edit ~/.beige/config.json5 with your API keys and settings
+# Edit ~/.beige/config.json5: set your API key and adjust tool paths
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Shell 1
+npx tsx src/cli.ts gateway start --foreground
+
+# Shell 2
+npx tsx src/cli.ts tui
 ```
 
-### 5. Run
-
-```bash
-# Set required env vars (or put them in config directly)
-export ANTHROPIC_API_KEY="sk-..."
-
-# Shell 1: Start the gateway (API + sandboxes + Telegram if configured)
-npm run dev:gateway
-
-# Shell 2: Connect with interactive TUI
-npm run dev:tui
-# or with a specific agent:
-# npx tsx src/cli.ts tui testo
-```
-
-The gateway runs in one shell and manages everything (sandboxes, tools, audit, policy).
-The TUI runs in another shell and connects to the gateway's HTTP API.
-Telegram also connects to the gateway (if configured).
+See [docs/installation.md](docs/installation.md) for a full comparison of both modes.
 
 ### TUI Commands
 
@@ -95,6 +105,7 @@ Channels
 ```
 
 See [docs/](docs/) for full documentation:
+- [Installation](docs/installation.md) — npm vs source install, setup flow, detection logic
 - [System Overview](docs/system-overview.md) — architecture diagrams
 - [Request Flows](docs/request-flows.md) — sequence diagrams for every request type
 - [Security Model](docs/security-model.md) — sandboxing, identity, threat model

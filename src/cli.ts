@@ -26,10 +26,10 @@ import {
   readFileSync,
   existsSync,
   openSync,
-  createReadStream,
 } from "fs";
 import { spawn } from "child_process";
 import { watch } from "fs";
+import { isSourceInstall, runSetup } from "./install.js";
 
 // ── Paths ────────────────────────────────────────────────────────────
 
@@ -62,6 +62,50 @@ function isRunning(pid: number): boolean {
 }
 
 // ── Commands ─────────────────────────────────────────────────────────
+
+async function cmdSetup(force: boolean): Promise<void> {
+  if (!force && isSourceInstall()) {
+    console.log(
+      "[BEIGE] Detected source install (git checkout). Skipping automatic setup.\n" +
+      "        Run 'beige setup --force' to set up ~/.beige anyway."
+    );
+    return;
+  }
+
+  console.log("[BEIGE] Running setup…");
+  const result = await runSetup({ force: true });
+
+  if (result.created.length > 0) {
+    console.log("\n[BEIGE] Created:");
+    for (const p of result.created) console.log(`  + ${p}`);
+  }
+  if (result.skipped.length > 0) {
+    console.log("\n[BEIGE] Already exists (skipped):");
+    for (const p of result.skipped) console.log(`  ~ ${p}`);
+  }
+  if (result.created.length === 0 && result.skipped.length === 0) {
+    console.log("[BEIGE] Nothing to do.");
+  }
+  console.log("\n[BEIGE] Setup complete.");
+}
+
+/**
+ * Auto-setup for npm-global installs: if no config exists yet and we are not
+ * running from source, silently initialise ~/.beige on the first invocation.
+ */
+async function maybeAutoSetup(): Promise<void> {
+  if (isSourceInstall()) return;
+  const configPath = resolve(homedir(), ".beige", "config.json5");
+  if (existsSync(configPath)) return;
+
+  console.log("[BEIGE] First run — setting up ~/.beige…");
+  const result = await runSetup({ force: false });
+  if (result.created.length > 0) {
+    console.log("[BEIGE] Created:");
+    for (const p of result.created) console.log(`  + ${p}`);
+    console.log();
+  }
+}
 
 async function cmdGatewayStart(configPath: string, foreground: boolean): Promise<void> {
   if (!foreground) {
@@ -204,13 +248,15 @@ type Mode =
   | { kind: "gateway-stop" }
   | { kind: "gateway-status" }
   | { kind: "gateway-logs"; follow: boolean }
-  | { kind: "tui"; agentName?: string };
+  | { kind: "tui"; agentName?: string }
+  | { kind: "setup"; force: boolean };
 
 function printHelp() {
   console.log(`
 Beige — Secure sandboxed agent system
 
 Usage:
+  beige setup                            First-time setup (copies tools, writes default config)
   beige gateway <command>                Manage the gateway daemon
   beige tui [agent]                      Connect TUI to running gateway
 
@@ -292,6 +338,11 @@ function parseArgs(): Mode {
     return { kind: "tui", agentName: sub };
   }
 
+  if (cmd === "setup") {
+    const force = args.includes("--force") || args.includes("-f");
+    return { kind: "setup", force };
+  }
+
   console.error(`[BEIGE] Unknown command: ${cmd}`);
   printHelp();
   process.exit(1);
@@ -299,9 +350,19 @@ function parseArgs(): Mode {
 
 const mode = parseArgs();
 
+// ── Auto-setup on first npm-global run ────────────────────────────────
+// Skipped for `beige setup` itself (it handles output its own way) and for
+// source installs.  For every other command, silently bootstrap ~/.beige if
+// no config exists yet.
+if (mode.kind !== "setup") {
+  await maybeAutoSetup();
+}
+
 // ── Dispatch ─────────────────────────────────────────────────────────
 
-if (mode.kind === "gateway-start") {
+if (mode.kind === "setup") {
+  await cmdSetup(mode.force);
+} else if (mode.kind === "gateway-start") {
   await cmdGatewayStart(configPath, mode.foreground);
 } else if (mode.kind === "gateway-stop") {
   cmdGatewayStop();

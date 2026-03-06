@@ -7,6 +7,10 @@
   "bin": {
     "beige": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "tools"
+  ],
   "scripts": {
     "beige": "tsx src/cli.ts",
     "build": "tsc",

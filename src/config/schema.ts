@@ -7,7 +7,7 @@ export interface BeigeConfig {
   llm: LLMConfig;
   tools: Record<string, ToolConfig>;
   agents: Record<string, AgentConfig>;
-  server?: GatewayServerConfig;
+  gateway?: GatewayServerConfig;
   channels: ChannelsConfig;
 }
 
@@ -51,8 +51,9 @@ export interface SandboxConfig {
 }
 
 export interface GatewayServerConfig {
-  host?: string;  // default: "127.0.0.1"
-  port?: number;  // default: 7433
+  host?: string;     // default: "127.0.0.1"
+  port?: number;     // default: 7433
+  logFile?: string;  // default: ~/.beige/logs/gateway.log
 }
 
 export interface ChannelsConfig {

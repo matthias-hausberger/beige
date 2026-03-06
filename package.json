@@ -8,8 +8,7 @@
     "beige": "dist/cli.js"
   },
   "scripts": {
-    "dev:gateway": "tsx src/cli.ts",
-    "dev:tui": "tsx src/cli.ts tui",
+    "beige": "tsx src/cli.ts",
     "build": "tsc",
     "start": "node dist/cli.js",
     "build:sandbox": "docker build -t beige-sandbox:latest ./sandbox"

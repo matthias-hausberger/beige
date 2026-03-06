@@ -84,6 +84,14 @@ Any string value can reference environment variables using `${VAR_NAME}` syntax.
     },
   },
 
+  // ─── Gateway Server ───────────────────────────────────────────────
+  // Optional. All fields have defaults and the block can be omitted.
+  gateway: {
+    host: "127.0.0.1",                           // bind address (default: 127.0.0.1)
+    port: 7433,                                   // HTTP API port (default: 7433)
+    logFile: "/custom/path/gateway.log",          // daemon log file (default: ~/.beige/logs/gateway.log)
+  },
+
   // ─── Channels ─────────────────────────────────────────────────────
   channels: {
     telegram: {
@@ -105,6 +113,7 @@ graph TD
     CONFIG[config.json5] --> LLM[llm]
     CONFIG --> TOOLS[tools]
     CONFIG --> AGENTS[agents]
+    CONFIG --> GW["gateway (optional)<br/>host, port, logFile"]
     CONFIG --> CHANNELS[channels]
 
     LLM --> PROVIDERS["providers{}"]
@@ -172,7 +181,8 @@ The gateway creates directories under `~/.beige/`:
 ├── data/
 │   └── kv.json                # KV tool data (example)
 └── logs/
-    └── audit.jsonl            # audit log
+    ├── audit.jsonl            # audit log
+    └── gateway.log            # daemon stdout/stderr (configurable via gateway.logFile)
 ```
 
 ## Minimal Working Config

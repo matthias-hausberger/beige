@@ -75,8 +75,8 @@ export class Gateway {
     }
 
     // 6. Start HTTP API (for TUI and other external channels)
-    const host = this.config.server?.host ?? "127.0.0.1";
-    const port = this.config.server?.port ?? 7433;
+    const host = this.config.gateway?.host ?? "127.0.0.1";
+    const port = this.config.gateway?.port ?? 7433;
 
     this.api = new GatewayAPI({
       config: this.config,

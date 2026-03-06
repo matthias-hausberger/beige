@@ -38,7 +38,20 @@ export class GatewayAPI {
   }
 
   async start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      this.server.once("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+          reject(
+            new Error(
+              `Port ${this.opts.port} is already in use — is the gateway already running?\n` +
+              `  Check: beige gateway status\n` +
+              `  Stop:  beige gateway stop`
+            )
+          );
+        } else {
+          reject(err);
+        }
+      });
       this.server.listen(this.opts.port, this.opts.host, () => {
         console.log(`[API] Listening on http://${this.opts.host}:${this.opts.port}`);
         resolve();

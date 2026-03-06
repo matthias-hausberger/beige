@@ -3,8 +3,13 @@ import { mkdirSync, writeFileSync, chmodSync } from "fs";
 import { resolve, join } from "path";
 import { homedir } from "os";
 import { PassThrough } from "stream";
+import { fileURLToPath } from "url";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { LoadedTool } from "../tools/registry.js";
+
+/** The image name prefix we build and manage. Any image starting with this is ours. */
+const BEIGE_IMAGE_PREFIX = "beige-sandbox";
+const BEIGE_IMAGE_DEFAULT = "beige-sandbox:latest";
 
 export interface ExecResult {
   stdout: string;
@@ -215,6 +220,98 @@ export class SandboxManager {
   async shutdown(): Promise<void> {
     for (const [agentName] of this.containers) {
       await this.removeSandbox(agentName);
+    }
+  }
+
+  /**
+   * Check which agents use a beige-managed image and, if any do, ensure the
+   * image is built before containers are created.
+   *
+   * - Skipped entirely when no agent references a beige-sandbox image.
+   * - Skipped when the image already exists (unless `force` is true).
+   * - Builds one image per unique beige image tag referenced across all agents.
+   */
+  async ensureSandboxImage(force = false): Promise<void> {
+    // Collect the set of beige-managed image tags that agents actually need.
+    const needed = new Set<string>();
+    for (const agentConfig of Object.values(this.config.agents)) {
+      const image = agentConfig.sandbox?.image ?? BEIGE_IMAGE_DEFAULT;
+      if (this.isBeigeImage(image)) {
+        needed.add(image);
+      }
+    }
+
+    if (needed.size === 0) {
+      console.log("[SANDBOX] No agents use a beige-sandbox image — skipping image build");
+      return;
+    }
+
+    for (const image of needed) {
+      if (!force && (await this.imageExists(image))) {
+        console.log(`[SANDBOX] Image '${image}' already exists — skipping build`);
+        continue;
+      }
+
+      await this.buildSandboxImage(image);
+    }
+  }
+
+  /**
+   * Build the beige-sandbox Docker image from the bundled Dockerfile.
+   * Streams build output to stdout so the user can see progress.
+   */
+  private async buildSandboxImage(tag: string): Promise<void> {
+    // sandbox/ lives two directories up from src/sandbox/manager.ts
+    // At runtime (dist/sandbox/manager.js) it's still two levels up from dist/.
+    // We resolve relative to this file using import.meta.url.
+    // src/sandbox/manager.ts → up to src/sandbox → up to project root
+    const projectRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+    const sandboxDir = resolve(projectRoot, "sandbox");
+
+    console.log(`[SANDBOX] Building image '${tag}' from ${sandboxDir} ...`);
+
+    const stream = await this.docker.buildImage(
+      { context: sandboxDir, src: ["Dockerfile", "tool-client.ts"] },
+      { t: tag }
+    );
+
+    // Stream build output line-by-line
+    await new Promise<void>((res, rej) => {
+      this.docker.modem.followProgress(
+        stream,
+        (err: Error | null) => (err ? rej(err) : res()),
+        (event: { stream?: string; error?: string; status?: string }) => {
+          if (event.error) {
+            process.stderr.write(`[SANDBOX BUILD] ${event.error}`);
+          } else if (event.stream) {
+            process.stdout.write(`[SANDBOX BUILD] ${event.stream}`);
+          } else if (event.status) {
+            process.stdout.write(`[SANDBOX BUILD] ${event.status}\n`);
+          }
+        }
+      );
+    });
+
+    console.log(`[SANDBOX] Image '${tag}' built successfully ✓`);
+  }
+
+  /**
+   * Returns true when `image` is a beige-managed image (i.e. one we build).
+   */
+  private isBeigeImage(image: string): boolean {
+    // Match "beige-sandbox", "beige-sandbox:latest", "beige-sandbox:custom-tag", etc.
+    return image === BEIGE_IMAGE_PREFIX || image.startsWith(`${BEIGE_IMAGE_PREFIX}:`);
+  }
+
+  /**
+   * Returns true when the given Docker image tag already exists locally.
+   */
+  private async imageExists(image: string): Promise<boolean> {
+    try {
+      await this.docker.getImage(image).inspect();
+      return true;
+    } catch {
+      return false;
     }
   }
 

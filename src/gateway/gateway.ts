@@ -69,12 +69,15 @@ export class Gateway {
       this.sessionStore
     );
 
-    // 5. Start sandboxes and socket servers for each agent
+    // 5. Build beige-sandbox image if any agent needs it (no-op otherwise)
+    await this.sandboxManager.ensureSandboxImage();
+
+    // 6. Start sandboxes and socket servers for each agent
     for (const agentName of Object.keys(this.config.agents)) {
       await this.startAgentInfra(agentName);
     }
 
-    // 6. Start HTTP API (for TUI and other external channels)
+    // 7. Start HTTP API (for TUI and other external channels)
     const host = this.config.gateway?.host ?? "127.0.0.1";
     const port = this.config.gateway?.port ?? 7433;
 
@@ -89,7 +92,7 @@ export class Gateway {
     });
     await this.api.start();
 
-    // 7. Start Telegram channel (non-blocking)
+    // 8. Start Telegram channel (non-blocking)
     if (this.config.channels?.telegram?.enabled) {
       this.telegramChannel = new TelegramChannel(
         this.config.channels.telegram,

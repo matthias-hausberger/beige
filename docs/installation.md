@@ -105,15 +105,6 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 # or add it directly to ~/.beige/config.json5
 ```
 
-### Build the sandbox image
-
-```bash
-# Still required: the sandbox Docker image is not bundled with the npm package
-beige sandbox build
-# or manually:
-# docker build -t beige-sandbox:latest <path-to-beige-sandbox-Dockerfile>
-```
-
 ### Run
 
 ```bash
@@ -123,6 +114,10 @@ beige gateway start
 # Shell 2
 beige tui
 ```
+
+On first start, if any agent config uses the `beige-sandbox` image, the gateway
+builds it automatically before starting containers. Subsequent starts skip the
+build if the image already exists.
 
 ---
 
@@ -168,12 +163,6 @@ cp examples/config.json5 ~/.beige/config.json5
 # Edit to point tool paths at the repo:  path: "/path/to/beige/tools/kv"
 ```
 
-### Build the sandbox image
-
-```bash
-npm run build:sandbox
-```
-
 ### Run (dev mode)
 
 ```bash
@@ -191,6 +180,9 @@ Or add a config path explicitly:
 ```bash
 npx tsx src/cli.ts --config ./examples/config.json5 gateway start --foreground
 ```
+
+The sandbox image is built automatically on first gateway start — no manual
+`docker build` step required.
 
 ---
 

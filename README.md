@@ -48,7 +48,7 @@ cp examples/config.json5 ~/.beige/config.json5
 export ANTHROPIC_API_KEY="sk-..."
 
 # Shell 1: Start the gateway (API + sandboxes + Telegram if configured)
-npm run dev
+npm run dev:gateway
 
 # Shell 2: Connect with interactive TUI
 npm run dev:tui

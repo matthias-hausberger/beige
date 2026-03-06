@@ -8,7 +8,7 @@
     "beige": "dist/cli.js"
   },
   "scripts": {
-    "dev": "tsx src/cli.ts",
+    "dev:gateway": "tsx src/cli.ts",
     "dev:tui": "tsx src/cli.ts tui",
     "build": "tsc",
     "start": "node dist/cli.js",

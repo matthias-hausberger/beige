@@ -20,10 +20,18 @@ import { resolveSessionSetting } from "../gateway/session-settings.js";
  * - /status        — show session info + current settings
  * - /v on|off      — toggle verbose mode for this session (shorthand)
  * - /verbose on|off — toggle verbose mode for this session
+ * - /s on|off      — toggle streaming mode for this session (shorthand)
+ * - /streaming on|off — toggle streaming mode for this session
  *
  * Verbose mode:
  * - When ON, the bot sends a small notification whenever the agent calls a tool.
  * - Default is OFF (configurable via channels.telegram.defaults.verbose in config.json5).
+ * - Persisted per-session in ~/.beige/sessions/session-settings.json.
+ *
+ * Streaming mode:
+ * - When ON (default), responses are streamed in real-time (message edits as LLM generates).
+ * - When OFF, the full response is sent once the LLM finishes.
+ * - Default is ON (configurable via channels.telegram.defaults.streaming in config.json5).
  * - Persisted per-session in ~/.beige/sessions/session-settings.json.
  *
  * Bot command registration:
@@ -59,15 +67,21 @@ export class TelegramChannel {
 
     // ── /start command ──────────────────────────────────────
     this.bot.command("start", async (ctx) => {
-      const verbose = this.resolveVerbose(this.sessionKeyFromCtx(ctx));
+      const sessionKey = this.sessionKeyFromCtx(ctx);
+      const verbose = this.resolveVerbose(sessionKey);
+      const streaming = this.resolveStreaming(sessionKey);
       await ctx.reply(
         "👋 Hello! I'm your Beige agent. Send me a message and I'll help you out.\n\n" +
         "Commands:\n" +
         "/new — Start a new conversation session\n" +
         "/status — Show current session info and settings\n" +
         "/verbose on|off — Toggle tool-call notifications\n" +
-        "/v on|off — Same as /verbose (shorthand)\n\n" +
-        `Current verbose mode: ${verbose ? "🔊 on" : "🔇 off"}`
+        "/v on|off — Same as /verbose (shorthand)\n" +
+        "/streaming on|off — Toggle real-time response streaming\n" +
+        "/s on|off — Same as /streaming (shorthand)\n\n" +
+        `Current settings:\n` +
+        `• Verbose: ${verbose ? "🔊 on" : "🔇 off"}\n` +
+        `• Streaming: ${streaming ? "⚡ on" : "📦 off"}`
       );
     });
 
@@ -97,8 +111,10 @@ export class TelegramChannel {
       const sessionFile = this.sessionStore.getSessionFile(sessionKey);
       const sessionStatus = sessionFile ? "📂 Continuing existing session" : "🆕 No session yet";
       const verbose = this.resolveVerbose(sessionKey);
+      const streaming = this.resolveStreaming(sessionKey);
       const overrides = this.settingsStore.getAll(sessionKey);
-      const hasOverrides = Object.keys(overrides).length > 0;
+      const verboseOverride = overrides.verbose !== undefined;
+      const streamingOverride = overrides.streaming !== undefined;
 
       await ctx.reply(
         `*Session Status*\n\n` +
@@ -106,8 +122,10 @@ export class TelegramChannel {
         `Chat: \`${chatId}${threadId ? ` / Thread: ${threadId}` : ""}\`\n` +
         `${sessionStatus}\n\n` +
         `*Settings*\n` +
-        `Verbose: ${verbose ? "🔊 on" : "🔇 off"}` +
-        (hasOverrides ? " _(session override)_" : " _(channel default)_"),
+        `• Verbose: ${verbose ? "🔊 on" : "🔇 off"}` +
+        (verboseOverride ? " _(session override)_" : " _(channel default)_") + "\n" +
+        `• Streaming: ${streaming ? "⚡ on" : "📦 off"}` +
+        (streamingOverride ? " _(session override)_" : " _(channel default)_"),
         { parse_mode: "Markdown" }
       );
     });
@@ -122,6 +140,16 @@ export class TelegramChannel {
       await this.handleVerboseCommand(ctx);
     });
 
+    // ── /streaming command ───────────────────────────────────
+    this.bot.command("streaming", async (ctx) => {
+      await this.handleStreamingCommand(ctx);
+    });
+
+    // ── /s command (shorthand for /streaming) ────────────────
+    this.bot.command("s", async (ctx) => {
+      await this.handleStreamingCommand(ctx);
+    });
+
     // ── Text messages ───────────────────────────────────────
     this.bot.on("message:text", async (ctx) => {
       const text = ctx.message.text;
@@ -131,6 +159,7 @@ export class TelegramChannel {
 
       const sessionKey = BeigeSessionStore.telegramKey(chatId, threadId);
       const agentName = this.resolveAgent(userId);
+      const streaming = this.resolveStreaming(sessionKey);
 
       console.log(
         `[TELEGRAM] User ${userId} → agent '${agentName}' ` +
@@ -146,55 +175,66 @@ export class TelegramChannel {
           ? this.makeToolStartHandler(sessionKey, ctx)
           : undefined;
 
-        // Stream the response
-        let currentMessage = "";
-        let sentMessage: any = null;
-        let lastUpdateTime = 0;
-        const UPDATE_INTERVAL_MS = 1000;
+        if (streaming) {
+          // Streaming mode: update message in real-time
+          let currentMessage = "";
+          let sentMessage: any = null;
+          let lastUpdateTime = 0;
+          const UPDATE_INTERVAL_MS = 1000;
 
-        const response = await this.agentManager.promptStreaming(
-          sessionKey,
-          agentName,
-          text,
-          async (delta) => {
-            currentMessage += delta;
+          const response = await this.agentManager.promptStreaming(
+            sessionKey,
+            agentName,
+            text,
+            async (delta) => {
+              currentMessage += delta;
 
-            const now = Date.now();
-            if (now - lastUpdateTime < UPDATE_INTERVAL_MS) return;
-            lastUpdateTime = now;
+              const now = Date.now();
+              if (now - lastUpdateTime < UPDATE_INTERVAL_MS) return;
+              lastUpdateTime = now;
 
-            try {
-              if (!sentMessage) {
-                sentMessage = await ctx.reply(truncateForTelegram(currentMessage), {
-                  parse_mode: undefined,
-                  ...(threadId ? { message_thread_id: threadId } : {}),
-                });
-              } else {
-                await ctx.api.editMessageText(
-                  ctx.chat.id,
-                  sentMessage.message_id,
-                  truncateForTelegram(currentMessage)
-                );
+              try {
+                if (!sentMessage) {
+                  sentMessage = await ctx.reply(truncateForTelegram(currentMessage), {
+                    parse_mode: undefined,
+                    ...(threadId ? { message_thread_id: threadId } : {}),
+                  });
+                } else {
+                  await ctx.api.editMessageText(
+                    ctx.chat.id,
+                    sentMessage.message_id,
+                    truncateForTelegram(currentMessage)
+                  );
+                }
+              } catch {
+                // Ignore edit errors
               }
-            } catch {
-              // Ignore edit errors
-            }
-          },
-          { onToolStart }
-        );
+            },
+            { onToolStart }
+          );
 
-        // Send final message
-        if (sentMessage) {
-          try {
-            await ctx.api.editMessageText(
-              ctx.chat.id,
-              sentMessage.message_id,
-              truncateForTelegram(response)
-            );
-          } catch {
+          // Send final message
+          if (sentMessage) {
+            try {
+              await ctx.api.editMessageText(
+                ctx.chat.id,
+                sentMessage.message_id,
+                truncateForTelegram(response)
+              );
+            } catch {
+              await sendLongMessage(ctx, response, threadId);
+            }
+          } else {
             await sendLongMessage(ctx, response, threadId);
           }
         } else {
+          // Non-streaming mode: send full response when complete
+          const response = await this.agentManager.prompt(
+            sessionKey,
+            agentName,
+            text,
+            { onToolStart }
+          );
           await sendLongMessage(ctx, response, threadId);
         }
       } catch (err) {
@@ -259,6 +299,53 @@ export class TelegramChannel {
     const sessionOverride = this.settingsStore.get(sessionKey, "verbose");
     const channelDefault = this.config.defaults?.verbose;
     return resolveSessionSetting("verbose", false, channelDefault, sessionOverride);
+  }
+
+  // ── Streaming mode helpers ────────────────────────────────────────────
+
+  /**
+   * Handle /streaming and /s commands.
+   * Parses "on"/"off" argument and persists the setting for this session.
+   */
+  private async handleStreamingCommand(ctx: Context): Promise<void> {
+    const chatId = ctx.chat!.id;
+    const threadId = ctx.message?.message_thread_id;
+    const sessionKey = BeigeSessionStore.telegramKey(chatId, threadId);
+
+    // Extract argument: "/streaming on" or "/s off"
+    const text = ctx.message?.text ?? "";
+    const parts = text.trim().split(/\s+/);
+    const arg = parts[1]?.toLowerCase();
+
+    if (!arg || (arg !== "on" && arg !== "off")) {
+      const current = this.resolveStreaming(sessionKey);
+      await ctx.reply(
+        `Usage: /streaming on|off\n\n` +
+        `Current: ${current ? "⚡ on" : "📦 off"}`
+      );
+      return;
+    }
+
+    const enable = arg === "on";
+    this.settingsStore.set(sessionKey, "streaming", enable);
+
+    await ctx.reply(
+      enable
+        ? "⚡ Streaming mode *on* — responses will appear in real-time as the AI generates them."
+        : "📦 Streaming mode *off* — full response will be sent once complete.",
+      { parse_mode: "Markdown" }
+    );
+
+    console.log(`[TELEGRAM] Streaming mode ${enable ? "ON" : "OFF"} for session ${sessionKey}`);
+  }
+
+  /**
+   * Resolve the effective streaming setting for a session (layered: default → config → override).
+   */
+  private resolveStreaming(sessionKey: string): boolean {
+    const sessionOverride = this.settingsStore.get(sessionKey, "streaming");
+    const channelDefault = this.config.defaults?.streaming;
+    return resolveSessionSetting("streaming", true, channelDefault, sessionOverride);
   }
 
   /**
@@ -363,6 +450,14 @@ export class TelegramChannel {
         {
           command: "v",
           description: "Shorthand for /verbose: /v on|off",
+        },
+        {
+          command: "streaming",
+          description: "Toggle real-time response streaming: /streaming on|off",
+        },
+        {
+          command: "s",
+          description: "Shorthand for /streaming: /s on|off",
         },
       ]);
 

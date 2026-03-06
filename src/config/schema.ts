@@ -70,6 +70,13 @@ export interface ChannelDefaultSettings {
    * (e.g. "🔧 exec: ls -la"). Default: false.
    */
   verbose?: boolean;
+
+  /**
+   * If true, responses are streamed to the user in real-time (message updates
+   * as the LLM generates). If false, the full response is sent once complete.
+   * Default: true.
+   */
+  streaming?: boolean;
 }
 
 export interface TelegramChannelConfig {

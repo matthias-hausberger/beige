@@ -14,6 +14,8 @@ import { homedir } from "os";
 export interface SessionSettings {
   /** Whether to forward tool-start notifications to the channel. */
   verbose?: boolean;
+  /** Whether to stream responses in real-time (vs. send when complete). */
+  streaming?: boolean;
 }
 
 /**
@@ -21,6 +23,7 @@ export interface SessionSettings {
  */
 export interface KnownSettings {
   verbose: boolean;
+  streaming: boolean;
 }
 
 export type SettingKey = keyof KnownSettings;

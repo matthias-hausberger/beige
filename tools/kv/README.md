@@ -1,6 +1,6 @@
 # KV Tool
 
-Simple key-value store. Data persists on the gateway host across sessions.
+Simple key-value store. Data persists on the gateway host at `~/.beige/data/kv.json` across sessions and gateway restarts.
 
 ## Usage
 
@@ -8,10 +8,12 @@ Simple key-value store. Data persists on the gateway host across sessions.
 /tools/bin/kv set <key> <value>   # Store a value
 /tools/bin/kv get <key>           # Retrieve a value
 /tools/bin/kv del <key>           # Delete a key
-/tools/bin/kv list                # List all keys
+/tools/bin/kv list                # List all keys with their values
 ```
 
 ## Examples
+
+### Basic Operations
 
 ```sh
 # Store a travel note
@@ -27,6 +29,47 @@ Simple key-value store. Data persists on the gateway host across sessions.
 
 # Delete
 /tools/bin/kv del trip:paris
+# → Deleted: trip:paris
+```
+
+### Using Keys with Namespaces
+
+```sh
+# Organize with colon-separated namespaces
+/tools/bin/kv set user:alice:email "alice@example.com"
+/tools/bin/kv set user:bob:email "bob@example.com"
+/tools/bin/kv set config:timezone "Europe/Berlin"
+
+# List shows all keys
+/tools/bin/kv list
+# → user:alice:email = alice@example.com
+# → user:bob:email = bob@example.com
+# → config:timezone = Europe/Berlin
+```
+
+### Storing JSON Data
+
+```sh
+# Store structured data as JSON string
+/tools/bin/kv set project:config '{"name": "beige", "version": "0.1.0"}'
+
+# Retrieve and parse with jq
+/tools/bin/kv get project:config | jq -r '.name'
+# → beige
+```
+
+### Error Handling
+
+```sh
+# Getting a non-existent key
+/tools/bin/kv get nonexistent
+# → Key not found: nonexistent
+# (exit code: 1)
+
+# Deleting a non-existent key
+/tools/bin/kv del nonexistent
+# → Key not found: nonexistent
+# (exit code: 1)
 ```
 
 ## Access Control
@@ -95,6 +138,13 @@ Permitted commands: set, get, list
 
 - Keys and values are strings.
 - Values with spaces must be passed as a single argument (the tool joins all args after the key).
-- Data is stored as JSON on the gateway host. Agents cannot access the raw storage file.
-- The same physical KV store is shared across all agents. Use `allowCommands` / `denyCommands` to
-  restrict which operations each agent can perform, not which keys it can see.
+- Data is stored as JSON on the gateway host at `~/.beige/data/kv.json`. Agents cannot access the raw storage file directly — they must use the tool commands.
+- The same physical KV store is shared across all agents. Use `allowCommands` / `denyCommands` to restrict which operations each agent can perform, not which keys it can see.
+- If you need key-level isolation between agents, create multiple tool instances with different configs (future enhancement).
+
+## Implementation Details
+
+- **Target**: Gateway (runs on the host, not in the sandbox)
+- **Storage**: `~/.beige/data/kv.json`
+- **Protocol**: Tool launcher calls back to gateway via Unix socket
+- **Type**: See `tools/kv/index.ts` for the handler implementation

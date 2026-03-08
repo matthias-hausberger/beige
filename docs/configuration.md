@@ -83,9 +83,6 @@ Any string value can reference environment variables using `${VAR_NAME}` syntax.
         model: "claude-sonnet-4-20250514",        // model ID
         thinkingLevel: "off",                     // off | minimal | low | medium | high
       },
-      fallbackModels: [                           // optional: tried if primary fails
-        { provider: "zai", model: "zai-model" },
-      ],
       tools: ["kv"],                              // tool names from the tools registry
       sandbox: {                                  // optional sandbox overrides
         image: "beige-sandbox:latest",            // Docker image (default)
@@ -169,7 +166,6 @@ graph TD
 
     AGENTS --> A1["assistant"]
     A1 --> MODEL["model<br/>provider, model, thinkingLevel"]
-    A1 --> FALLBACK["fallbackModels[]"]
     A1 --> ATOOLS["tools[]<br/>references tool names"]
     A1 --> SANDBOX["sandbox<br/>image, extraMounts, extraEnv"]
 

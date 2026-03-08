@@ -114,9 +114,6 @@ Single config file (JSON5 — JSON with comments) drives the entire system. No d
         model: "claude-sonnet-4-20250514",
         thinkingLevel: "medium",
       },
-      fallbackModels: [
-        { provider: "zai", model: "zai-model" },
-      ],
       tools: ["kv"],
       sandbox: { image: "beige-sandbox:latest" },
     },
@@ -290,13 +287,13 @@ On startup, the Telegram channel registers its commands with the bot API (deleti
 Minimal image with:
 - Deno runtime (for TypeScript execution)
 - Common utilities (curl, jq, etc.)
+- `/beige/tool-client` — socket client script (baked into image, not mounted)
 - No secrets, no env vars from host
 - Mounts:
   - `/workspace` (read-write) → `~/.beige/agents/<name>/workspace/`
   - `/tools/bin` (read-only) → generated launchers
   - `/tools/packages` (read-only) → tool source packages
   - `/beige/gateway.sock` (Unix socket)
-  - `/beige/tool-client` (read-only) → socket client binary
 
 ### 9. Identity & Auth Model
 

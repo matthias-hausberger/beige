@@ -32,7 +32,6 @@ export interface ToolConfig {
 
 export interface AgentConfig {
   model: ModelRef;
-  fallbackModels?: ModelRef[];
   /** List of tool names from the tools registry that this agent can use */
   tools: string[];
   sandbox?: SandboxConfig;

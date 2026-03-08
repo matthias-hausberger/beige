@@ -12,10 +12,12 @@ import {
   type LoadExtensionsResult,
   type Extension,
   type RegisteredCommand,
+  type AgentSession,
 } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
-import { resolve } from "path";
+import { resolve, basename } from "path";
 import { homedir } from "os";
+import { readdirSync, existsSync } from "fs";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
 import { SessionSettingsStore, resolveSessionSetting } from "../gateway/session-settings.js";
@@ -33,9 +35,13 @@ import { BeigeSessionStore } from "../gateway/sessions.js";
  * - Full pi TUI (editor, streaming, model switching, compaction, history)
  * - Sandboxed tool execution managed by the gateway
  *
- * Session settings:
- * - /v on|off  or  /verbose on|off  — toggle verbose tool-call notifications
- * - Settings are persisted per-session in ~/.beige/sessions/session-settings.json
+ * Commands:
+ * - /new           — Start a fresh session
+ * - /resume        — Pick a previous session to continue
+ * - /sessions      — List saved sessions for the current agent
+ * - /agent [name]  — Switch to a different beige agent
+ * - /v on|off      — Toggle verbose tool-call notifications
+ * - /verbose on|off — Same as /v
  */
 
 const DEFAULT_GATEWAY_URL = "http://127.0.0.1:7433";
@@ -46,8 +52,24 @@ export interface TUIOptions {
   gatewayUrl?: string;
 }
 
+/**
+ * Mutable state shared between the TUI and extension commands.
+ */
+interface TUIState {
+  agentName: string;
+  agentConfig: AgentConfig;
+  session: AgentSession | null;
+  toolStartHandlerRef: { fn: OnToolStart | undefined };
+  gatewayUrl: string;
+  config: BeigeConfig;
+  authStorage: AuthStorage;
+  modelRegistry: ModelRegistry;
+  settingsStore: SessionSettingsStore;
+  sessionStore: BeigeSessionStore;
+}
+
 export async function launchTUI(opts: TUIOptions): Promise<void> {
-  const { config, agentName } = opts;
+  const { config } = opts;
   const gatewayUrl = opts.gatewayUrl ?? DEFAULT_GATEWAY_URL;
 
   // Verify gateway is reachable
@@ -64,18 +86,24 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
     process.exit(1);
   }
 
-  // Verify agent exists
+  // Fetch available agents from gateway
   const agentsRes = await fetch(`${gatewayUrl}/api/agents`);
   const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[] }> };
-  const agentInfo = agents.find((a) => a.name === agentName);
-  if (!agentInfo) {
-    console.error(
-      `[TUI] Unknown agent '${agentName}'. Available: ${agents.map((a) => a.name).join(", ")}`
-    );
-    process.exit(1);
+  const agentNames = agents.map((a) => a.name);
+
+  let agentName = opts.agentName;
+  if (!agentName) {
+    agentName = agentNames[0];
+    if (agentNames.length > 1) {
+      console.log(`[TUI] No agent specified, using '${agentName}'. Available: ${agentNames.join(", ")}`);
+    }
   }
 
-  const agentConfig = config.agents[agentName];
+  const agentInfo = agents.find((a) => a.name === agentName);
+  if (!agentInfo) {
+    console.error(`[TUI] Unknown agent '${agentName}'. Available: ${agentNames.join(", ")}`);
+    process.exit(1);
+  }
 
   // ── Auth (LLM keys — session runs locally) ────────────────
   const authStorage = AuthStorage.create();
@@ -85,34 +113,77 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
     }
   }
   const modelRegistry = new ModelRegistry(authStorage);
-  const model = resolveModel(agentConfig, modelRegistry);
 
-  // ── Session settings (verbose mode etc.) ──────────────────
+  // ── Shared state ──────────────────────────────────────────
   const settingsStore = new SessionSettingsStore();
-  const sessionKey = BeigeSessionStore.tuiKey(agentName);
-
-  // Mutable ref shared with tool proxies so we can toggle at runtime
+  const sessionStore = new BeigeSessionStore();
   const toolStartHandlerRef: { fn: OnToolStart | undefined } = { fn: undefined };
 
-  // Wire initial verbose state from settings store
+  const state: TUIState = {
+    agentName,
+    agentConfig: config.agents[agentName],
+    session: null,
+    toolStartHandlerRef,
+    gatewayUrl,
+    config,
+    authStorage,
+    modelRegistry,
+    settingsStore,
+    sessionStore,
+  };
+
+  // Wire initial verbose state
+  const sessionKey = BeigeSessionStore.tuiKey(agentName);
   const initialVerbose = resolveSessionSetting(
     "verbose",
     false,
-    undefined,  // TUI has no channel-level config defaults (no telegram-style config)
+    undefined,
     settingsStore.get(sessionKey, "verbose")
   );
   if (initialVerbose) {
     toolStartHandlerRef.fn = makeTUIToolStartHandler();
   }
 
-  // ── Core tools that proxy to gateway API ──────────────────
-  const coreTools = createProxyTools(agentName, gatewayUrl, toolStartHandlerRef);
+  // ── Build extension with all commands ─────────────────────
+  const extensionsResult = await buildBeigeExtension(state, agentNames);
 
-  // ── System prompt ─────────────────────────────────────────
-  const toolContext = await fetchToolContext(gatewayUrl, agentName, agentInfo.tools);
+  // ── Create initial session ────────────────────────────────
+  await createSession(state, extensionsResult);
+
+  if (!state.session) {
+    console.error("[TUI] Failed to create initial session");
+    process.exit(1);
+  }
+
+  // ── Launch pi TUI ─────────────────────────────────────────
+  console.log(`[TUI] Agent: ${agentName} (${state.agentConfig.model.provider}/${state.agentConfig.model.model})`);
+  console.log(`[TUI] Tools: ${agentInfo.tools.join(", ") || "(core only)"}`);
+  console.log(`[TUI] Verbose: ${initialVerbose ? "on" : "off"} — use /verbose on|off to toggle`);
+  console.log(`[TUI] Commands: /new, /resume, /sessions, /agent <name>, /verbose on|off`);
+
+  const mode = new InteractiveMode(state.session, {});
+  await mode.run();
+}
+
+// ── Session creation ──────────────────────────────────────────────────────────
+
+/**
+ * Create a new pi session for the current agent in state.
+ */
+async function createSession(state: TUIState, extensionsResult: LoadExtensionsResult): Promise<void> {
+  const { agentName, agentConfig, gatewayUrl, authStorage, modelRegistry, toolStartHandlerRef } = state;
+
+  // Fetch agent info from gateway
+  const agentsRes = await fetch(`${gatewayUrl}/api/agents`);
+  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[] }> };
+  const agentInfo = agents.find((a) => a.name === agentName);
+  const toolNames = agentInfo?.tools ?? [];
+
+  const model = resolveModel(agentConfig, modelRegistry);
+  const coreTools = createProxyTools(agentName, gatewayUrl, toolStartHandlerRef);
+  const toolContext = buildToolContext(toolNames);
   const systemPrompt = buildSystemPrompt(agentName, toolContext);
 
-  // ── Session persistence ───────────────────────────────────
   const sessionsDir = resolve(homedir(), ".beige", "sessions", agentName);
   let sessionManager: ReturnType<typeof SessionManager.create>;
   try {
@@ -120,13 +191,6 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
   } catch {
     sessionManager = SessionManager.create(process.cwd(), sessionsDir);
   }
-
-  // ── Beige extension (registers /v and /verbose commands) ──
-  const extensionsResult = await buildBeigeExtension(
-    sessionKey,
-    settingsStore,
-    toolStartHandlerRef
-  );
 
   const resourceLoader: ResourceLoader = {
     getExtensions: () => extensionsResult,
@@ -141,7 +205,6 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
     reload: async () => {},
   };
 
-  // ── Create pi session ─────────────────────────────────────
   const { session } = await createAgentSession({
     model,
     thinkingLevel: (agentConfig.model.thinkingLevel as any) ?? "off",
@@ -157,48 +220,34 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
     modelRegistry,
   });
 
-  // ── Launch pi TUI ─────────────────────────────────────────
-  console.log(`[TUI] Agent: ${agentName} (${agentConfig.model.provider}/${agentConfig.model.model})`);
-  console.log(`[TUI] Tools: ${agentInfo.tools.join(", ") || "(core only)"}`);
-  console.log(`[TUI] Verbose: ${initialVerbose ? "on" : "off"} — use /verbose on|off to toggle`);
-
-  const mode = new InteractiveMode(session, {});
-  await mode.run();
+  state.session = session;
 }
 
 // ── Beige extension factory ───────────────────────────────────────────────────
 
 /**
- * Build the inline "beige" extension that registers /v and /verbose commands
- * for toggling verbose mode from within the TUI.
- *
- * Commands are intercepted by InteractiveMode before being sent to the LLM.
+ * Build the inline "beige" extension that registers all TUI commands.
  */
 async function buildBeigeExtension(
-  sessionKey: string,
-  settingsStore: SessionSettingsStore,
-  toolStartHandlerRef: { fn: OnToolStart | undefined }
+  state: TUIState,
+  availableAgents: string[]
 ): Promise<LoadExtensionsResult> {
   const runtime = createExtensionRuntime();
 
-  // Command handler shared by /verbose and /v
+  // ── /verbose and /v ───────────────────────────────────────
   const handleVerbose = async (args: string, ctx: any) => {
+    const sessionKey = BeigeSessionStore.tuiKey(state.agentName);
     const arg = args.trim().toLowerCase();
 
     if (!arg || (arg !== "on" && arg !== "off")) {
-      const current = settingsStore.get(sessionKey, "verbose") ?? false;
-      ctx.ui.notify(
-        `Verbose mode is currently ${current ? "ON" : "OFF"}. Usage: /verbose on|off`,
-        "info"
-      );
+      const current = state.settingsStore.get(sessionKey, "verbose") ?? false;
+      ctx.ui.notify(`Verbose mode is currently ${current ? "ON" : "OFF"}. Usage: /verbose on|off`, "info");
       return;
     }
 
     const enable = arg === "on";
-    settingsStore.set(sessionKey, "verbose", enable);
-
-    // Mutate the shared ref — all proxy tool closures pick up immediately
-    toolStartHandlerRef.fn = enable ? makeTUIToolStartHandler() : undefined;
+    state.settingsStore.set(sessionKey, "verbose", enable);
+    state.toolStartHandlerRef.fn = enable ? makeTUIToolStartHandler() : undefined;
 
     ctx.ui.notify(
       enable
@@ -208,7 +257,181 @@ async function buildBeigeExtension(
     );
   };
 
-  // Build the extension object manually (loadExtensionFromFactory is not exported)
+  // ── /new ──────────────────────────────────────────────────
+  const handleNew = async (_args: string, ctx: any) => {
+    const oldSession = state.session;
+    if (oldSession) {
+      oldSession.dispose();
+    }
+
+    // Create new session directory entry
+    const sessionsDir = resolve(homedir(), ".beige", "sessions", state.agentName);
+    const sessionManager = SessionManager.create(process.cwd(), sessionsDir);
+
+    const resourceLoader = await buildResourceLoader(state);
+    const model = resolveModel(state.agentConfig, state.modelRegistry);
+    const coreTools = createProxyTools(state.agentName, state.gatewayUrl, state.toolStartHandlerRef);
+
+    const { session } = await createAgentSession({
+      model,
+      thinkingLevel: (state.agentConfig.model.thinkingLevel as any) ?? "off",
+      tools: [],
+      customTools: coreTools,
+      sessionManager,
+      settingsManager: SettingsManager.inMemory({
+        compaction: { enabled: true },
+        retry: { enabled: true, maxRetries: 3 },
+      }),
+      resourceLoader,
+      authStorage: state.authStorage,
+      modelRegistry: state.modelRegistry,
+    });
+
+    state.session = session;
+    ctx.ui.notify("🆕 New session started.", "info");
+  };
+
+  // ── /sessions ─────────────────────────────────────────────
+  const handleSessions = async (_args: string, ctx: any) => {
+    const sessions = listSessions(state.agentName);
+    if (sessions.length === 0) {
+      ctx.ui.notify("No saved sessions for this agent.", "info");
+      return;
+    }
+
+    const lines = [`📋 Sessions for agent '${state.agentName}':`, ""];
+    for (let i = 0; i < Math.min(sessions.length, 10); i++) {
+      const s = sessions[i];
+      const date = s.timestamp.toLocaleDateString();
+      const time = s.timestamp.toLocaleTimeString();
+      lines.push(`  ${i + 1}. ${basename(s.file)} (${date} ${time})`);
+    }
+    if (sessions.length > 10) {
+      lines.push(`  ... and ${sessions.length - 10} more`);
+    }
+    lines.push("");
+    lines.push("Use /resume <number> to continue a session.");
+
+    ctx.ui.notify(lines.join("\n"), "info");
+  };
+
+  // ── /resume ───────────────────────────────────────────────
+  const handleResume = async (args: string, ctx: any) => {
+    const sessions = listSessions(state.agentName);
+    if (sessions.length === 0) {
+      ctx.ui.notify("No saved sessions to resume.", "info");
+      return;
+    }
+
+    const arg = args.trim();
+    let index = parseInt(arg, 10) - 1;
+    if (isNaN(index) || index < 0 || index >= sessions.length) {
+      if (arg === "") {
+        // Show list if no arg provided
+        ctx.ui.notify(
+          `Usage: /resume <number>\n\nSessions:\n${sessions
+            .slice(0, 5)
+            .map((s, i) => `  ${i + 1}. ${basename(s.file)}`)
+            .join("\n")}`,
+          "info"
+        );
+      } else {
+        ctx.ui.notify(`Invalid session number. Use /sessions to see available sessions.`, "error");
+      }
+      return;
+    }
+
+    const targetSession = sessions[index];
+
+    // Dispose old session
+    if (state.session) {
+      state.session.dispose();
+    }
+
+    // Resume the selected session
+    const sessionManager = SessionManager.open(targetSession.file);
+    const resourceLoader = await buildResourceLoader(state);
+    const model = resolveModel(state.agentConfig, state.modelRegistry);
+    const coreTools = createProxyTools(state.agentName, state.gatewayUrl, state.toolStartHandlerRef);
+
+    const { session } = await createAgentSession({
+      model,
+      thinkingLevel: (state.agentConfig.model.thinkingLevel as any) ?? "off",
+      tools: [],
+      customTools: coreTools,
+      sessionManager,
+      settingsManager: SettingsManager.inMemory({
+        compaction: { enabled: true },
+        retry: { enabled: true, maxRetries: 3 },
+      }),
+      resourceLoader,
+      authStorage: state.authStorage,
+      modelRegistry: state.modelRegistry,
+    });
+
+    state.session = session;
+    ctx.ui.notify(`📂 Resumed session: ${basename(targetSession.file)}`, "info");
+  };
+
+  // ── /agent ────────────────────────────────────────────────
+  const handleAgent = async (args: string, ctx: any) => {
+    const arg = args.trim();
+
+    if (!arg) {
+      ctx.ui.notify(
+        `Current agent: ${state.agentName}\n\nAvailable agents:\n${availableAgents.map((a) => `  • ${a}`).join("\n")}\n\nUsage: /agent <name>`,
+        "info"
+      );
+      return;
+    }
+
+    if (!availableAgents.includes(arg)) {
+      ctx.ui.notify(
+        `Unknown agent '${arg}'. Available: ${availableAgents.join(", ")}`,
+        "error"
+      );
+      return;
+    }
+
+    if (arg === state.agentName) {
+      ctx.ui.notify(`Already using agent '${arg}'.`, "info");
+      return;
+    }
+
+    // Switch to new agent
+    const newAgentConfig = state.config.agents[arg];
+    if (!newAgentConfig) {
+      ctx.ui.notify(`Agent '${arg}' not found in config.`, "error");
+      return;
+    }
+
+    // Dispose old session
+    if (state.session) {
+      state.session.dispose();
+    }
+
+    // Update state
+    state.agentName = arg;
+    state.agentConfig = newAgentConfig;
+
+    // Create new session for the new agent
+    const extensionsResult = await buildBeigeExtension(state, availableAgents);
+    await createSession(state, extensionsResult);
+
+    // Update verbose handler for new session key
+    const sessionKey = BeigeSessionStore.tuiKey(arg);
+    const verbose = resolveSessionSetting(
+      "verbose",
+      false,
+      undefined,
+      state.settingsStore.get(sessionKey, "verbose")
+    );
+    state.toolStartHandlerRef.fn = verbose ? makeTUIToolStartHandler() : undefined;
+
+    ctx.ui.notify(`🔄 Switched to agent '${arg}'.`, "info");
+  };
+
+  // Build the extension object
   const extension: Extension = {
     path: "<beige-tui>",
     resolvedPath: "<beige-tui>",
@@ -216,39 +439,98 @@ async function buildBeigeExtension(
     tools: new Map(),
     messageRenderers: new Map(),
     commands: new Map<string, RegisteredCommand>([
-      ["verbose", {
-        name: "verbose",
-        description: "Toggle tool-call notifications: /verbose on|off",
-        handler: handleVerbose,
-      }],
-      ["v", {
-        name: "v",
-        description: "Shorthand for /verbose: /v on|off",
-        handler: handleVerbose,
-      },
-    ]]),
+      ["verbose", { name: "verbose", description: "Toggle tool-call notifications: /verbose on|off", handler: handleVerbose }],
+      ["v", { name: "v", description: "Shorthand for /verbose: /v on|off", handler: handleVerbose }],
+      ["new", { name: "new", description: "Start a fresh session", handler: handleNew }],
+      ["sessions", { name: "sessions", description: "List saved sessions for the current agent", handler: handleSessions }],
+      ["resume", { name: "resume", description: "Resume a previous session: /resume <number>", handler: handleResume }],
+      ["agent", { name: "agent", description: "Switch to a different agent: /agent <name>", handler: handleAgent }],
+    ]),
     flags: new Map(),
     shortcuts: new Map(),
   };
 
-  return {
-    extensions: [extension],
+  return { extensions: [extension], errors: [], runtime };
+}
+
+// ── Resource loader helper ────────────────────────────────────────────────────
+
+async function buildResourceLoader(state: TUIState): Promise<ResourceLoader> {
+  // Fetch agent info from gateway
+  const agentsRes = await fetch(`${state.gatewayUrl}/api/agents`);
+  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[] }> };
+  const agentInfo = agents.find((a) => a.name === state.agentName);
+  const toolNames = agentInfo?.tools ?? [];
+
+  const toolContext = buildToolContext(toolNames);
+  const systemPrompt = buildSystemPrompt(state.agentName, toolContext);
+
+  // Build minimal extension result for resource loader
+  const runtime = createExtensionRuntime();
+  const extensionsResult: LoadExtensionsResult = {
+    extensions: [],
     errors: [],
     runtime,
   };
+
+  return {
+    getExtensions: () => extensionsResult,
+    getSkills: () => ({ skills: [], diagnostics: [] }),
+    getPrompts: () => ({ prompts: [], diagnostics: [] }),
+    getThemes: () => ({ themes: [], diagnostics: [] }),
+    getAgentsFiles: () => ({ agentsFiles: [] }),
+    getSystemPrompt: () => systemPrompt,
+    getAppendSystemPrompt: () => [],
+    getPathMetadata: () => new Map(),
+    extendResources: () => {},
+    reload: async () => {},
+  };
+}
+
+// ── Session listing helper ────────────────────────────────────────────────────
+
+interface SessionEntry {
+  file: string;
+  timestamp: Date;
+}
+
+function listSessions(agentName: string): SessionEntry[] {
+  const sessionsDir = resolve(homedir(), ".beige", "sessions", agentName);
+  if (!existsSync(sessionsDir)) return [];
+
+  const files = readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl"));
+
+  return files
+    .map((f) => ({
+      file: resolve(sessionsDir, f),
+      timestamp: extractTimestampFromFilename(f),
+    }))
+    .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+}
+
+function extractTimestampFromFilename(filename: string): Date {
+  // Format: 20260305-120000-a1b2c3.jsonl
+  const match = filename.match(/^(\d{8})-(\d{6})-/);
+  if (!match) return new Date(0);
+
+  const dateStr = match[1]; // 20260305
+  const timeStr = match[2]; // 120000
+
+  const year = parseInt(dateStr.slice(0, 4), 10);
+  const month = parseInt(dateStr.slice(4, 6), 10) - 1;
+  const day = parseInt(dateStr.slice(6, 8), 10);
+  const hour = parseInt(timeStr.slice(0, 2), 10);
+  const minute = parseInt(timeStr.slice(2, 4), 10);
+  const second = parseInt(timeStr.slice(4, 6), 10);
+
+  return new Date(year, month, day, hour, minute, second);
 }
 
 // ── TUI tool-start handler ────────────────────────────────────────────────────
 
-/**
- * When verbose mode is ON in the TUI, print tool calls to stdout.
- * This integrates with the pi TUI's existing output (the TUI captures stdout).
- */
 function makeTUIToolStartHandler(): OnToolStart {
   return (toolName: string, params: Record<string, unknown>) => {
     const label = formatToolCall(toolName, params);
-    // Write directly to stderr so it doesn't interfere with TUI rendering
-    // The TUI renders on stdout; stderr messages appear above the TUI frame.
     process.stderr.write(`\r🔧 ${label}\n`);
   };
 }
@@ -323,8 +605,7 @@ function createProxyTools(
     {
       name: "write",
       label: "Write File",
-      description:
-        "Write content to a file in the sandbox. Creates parent directories if needed.",
+      description: "Write content to a file in the sandbox. Creates parent directories if needed.",
       parameters: Type.Object({
         path: Type.String({ description: "File path to write" }),
         content: Type.String({ description: "Content to write to the file" }),
@@ -339,8 +620,7 @@ function createProxyTools(
     {
       name: "patch",
       label: "Patch File",
-      description:
-        "Apply a find-and-replace patch to a file in the sandbox. The oldText must match exactly.",
+      description: "Apply a find-and-replace patch to a file in the sandbox. The oldText must match exactly.",
       parameters: Type.Object({
         path: Type.String({ description: "File path to patch" }),
         oldText: Type.String({ description: "Exact text to find and replace" }),
@@ -356,8 +636,7 @@ function createProxyTools(
     {
       name: "exec",
       label: "Execute Command",
-      description:
-        "Execute a command in the sandbox. The command runs in /workspace by default.",
+      description: "Execute a command in the sandbox. The command runs in /workspace by default.",
       parameters: Type.Object({
         command: Type.String({ description: "The command to execute" }),
         timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (default: 120)" })),
@@ -374,11 +653,7 @@ function createProxyTools(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function fetchToolContext(
-  gatewayUrl: string,
-  agentName: string,
-  toolNames: string[]
-): Promise<string> {
+function buildToolContext(toolNames: string[]): string {
   if (toolNames.length === 0) return "";
 
   const lines = [

@@ -38,7 +38,8 @@ beige tui assistant --gateway http://192.168.1.100:7433
 │    └── exec  ─────────────────────┘                         │
 │                                                              │
 │  Beige Extension                                             │
-│    └── Registers /verbose and /v commands                    │
+│    └── Registers /new, /resume, /sessions, /agent,          │
+│        /verbose, /v commands                                 │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -57,10 +58,14 @@ Tool execution happens in the gateway's sandbox, keeping the security model inta
 
 ## Commands
 
-In addition to pi's built-in commands (`/model`, `/new`, `/compact`, etc.), the TUI supports:
+In addition to pi's built-in commands (`/model`, `/compact`, etc.), the TUI supports:
 
 | Command | Description |
 |---------|-------------|
+| `/new` | Start a fresh session (old session is preserved) |
+| `/resume <number>` | Resume a previous session (use `/sessions` to list) |
+| `/sessions` | List saved sessions for the current agent |
+| `/agent [name]` | Switch to a different agent (or show available agents) |
 | `/verbose on\|off` | Toggle verbose mode — show tool calls as they execute |
 | `/v on\|off` | Shorthand for `/verbose` |
 
@@ -78,6 +83,8 @@ Sessions are stored in `~/.beige/sessions/<agent>/` as `.jsonl` files. The TUI a
 - Resumes the most recent session on startup
 - Saves conversation history after each turn
 - Preserves settings (like verbose mode) in `~/.beige/sessions/session-settings.json`
+
+Use `/sessions` to see all saved sessions for the current agent, and `/resume <number>` to switch to a previous conversation.
 
 ## Connection Requirements
 

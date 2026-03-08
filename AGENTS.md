@@ -9,6 +9,20 @@ Beige is a secure, open-source, sandboxed agent system. AI agents write and exec
 - **Config format**: JSON5 at `~/.beige/config.json5`
 - **Branch**: `dev`
 
+## Guidelines
+
+Before making changes, review:
+- **`CONTRIBUTING.md`** — Development setup, code style, PR process
+- **`docs/architecture.md`** — System design and directory layout
+- **`docs/tools.md`** — How to write tool packages
+
+### Code Style
+- TypeScript strict mode
+- ES modules (ESNext)
+- Prefer `async/await` over raw promises
+- Meaningful variable names
+- Keep commits focused (one logical change per commit)
+
 ## Architecture (two-process model)
 
 ```
@@ -50,6 +64,7 @@ project/              # Vision + use cases
 - `docs/security-model.md` — threat model, defense layers
 - `docs/configuration.md` — full config reference, directory layout
 - `docs/tools.md` — writing tools, protocol, mounting
+- `docs/api.md` — HTTP API reference for gateway endpoints
 - `project/vision.md` — project vision and goals
 - `project/usecases.md` — use cases
 
@@ -64,12 +79,24 @@ project/              # Vision + use cases
 
 ## Current State
 
-Code is written but **not yet compiled or tested**. Next steps:
-1. `npm install` and fix dependency/type issues
-2. Fix `sandbox/tool-client.ts` for Deno compatibility (currently uses Node `net` module)
-3. Build sandbox Docker image (`npm run build:sandbox`)
-4. Test compilation (`npm run build`)
-5. Test full flow: gateway → TUI → LLM → exec → sandbox → tool → response
+Code compiles and runs. The system is functional:
+- Gateway starts and manages Docker sandboxes
+- TUI connects via HTTP API
+- Telegram bot works with streaming responses
+- KV tool is operational
+
+### Development Commands
+
+```bash
+pnpm install           # Install dependencies
+pnpm run build         # Compile TypeScript
+pnpm run beige         # Run CLI via tsx (dev mode)
+pnpm run start         # Run compiled CLI
+
+# Development workflow
+pnpm run beige gateway start --foreground   # Start gateway
+pnpm run beige tui assistant                # Start TUI
+```
 
 ---
 

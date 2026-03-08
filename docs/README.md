@@ -11,6 +11,7 @@
 | [Security Model](./security-model.md) | Sandboxing, identity, secrets isolation, threat model |
 | [Tools](./tools.md) | Tool packages, launchers, the socket protocol, writing your own tools |
 | [Configuration](./configuration.md) | Config file reference with all options explained |
+| [HTTP API](./api.md) | Gateway REST API reference for external integrations |
 
 ## Channels
 

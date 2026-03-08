@@ -10,12 +10,13 @@ import {
   type AgentSession,
   type ResourceLoader,
 } from "@mariozechner/pi-coding-agent";
-import type { BeigeConfig, AgentConfig } from "../config/schema.js";
+import type { BeigeConfig, AgentConfig, ModelRef } from "../config/schema.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { AuditLogger } from "./audit.js";
 import type { BeigeSessionStore } from "./sessions.js";
 import { createCoreTools, type ToolStartHandlerRef } from "../tools/core.js";
 import { buildToolContext, type LoadedTool } from "../tools/registry.js";
+import { ProviderHealthTracker, extractRateLimitInfo } from "./provider-health.js";
 
 /**
  * Callback fired by the gateway when the agent is about to execute a tool.
@@ -30,6 +31,8 @@ export interface ManagedSession {
   agentName: string;
   sessionKey: string;
   session: AgentSession;
+  /** The current model reference (may differ from agent's default if fallback is active) */
+  currentModel: ModelRef;
   /** Number of currently in-flight prompt calls on this session. */
   inflightCount: number;
   /** Resolvers that fire once inflightCount drops to zero. */
@@ -47,10 +50,15 @@ export interface ManagedSession {
  *
  * Each agent has one sandbox + socket. Sessions share the sandbox but have
  * independent conversation histories.
+ *
+ * Supports fallback models: if the primary model fails after retries, it tries
+ * each fallback model in order. Rate limits are tracked per-provider/model.
  */
 export class AgentManager {
   /** sessionKey → ManagedSession */
   private sessions = new Map<string, ManagedSession>();
+  /** Tracks provider health and rate limits */
+  private providerHealth = new ProviderHealthTracker();
 
   constructor(
     private config: BeigeConfig,
@@ -156,6 +164,7 @@ export class AgentManager {
       agentName,
       sessionKey,
       session,
+      currentModel: agentConfig.model,
       inflightCount: 0,
       drainResolvers: [],
       toolStartHandlerRef,
@@ -169,6 +178,8 @@ export class AgentManager {
 
   /**
    * Send a message to a session and collect the full response.
+   * Implements fallback logic: if the primary model fails after retries,
+   * tries each fallback model in order.
    */
   async prompt(
     sessionKey: string,
@@ -176,9 +187,187 @@ export class AgentManager {
     message: string,
     opts?: { onToolStart?: OnToolStart }
   ): Promise<string> {
-    const managed = await this.getOrCreateSession(sessionKey, agentName, {
-      onToolStart: opts?.onToolStart,
-    });
+    const agentConfig = this.config.agents[agentName];
+    if (!agentConfig) {
+      throw new Error(`Unknown agent: ${agentName}`);
+    }
+
+    // Build list of models to try: primary + fallbacks
+    const modelsToTry = this.getModelsToTry(agentConfig);
+
+    let lastError: Error | undefined;
+
+    for (const modelRef of modelsToTry) {
+      const { provider, model: modelId } = modelRef;
+
+      // Skip if this model is in cooldown
+      if (this.providerHealth.isCoolingDown(provider, modelId)) {
+        const remaining = this.providerHealth.getRemainingCooldown(provider, modelId);
+        console.log(
+          `[AGENT] Skipping ${provider}/${modelId} — in cooldown for ${Math.round(remaining / 1000)}s`
+        );
+        continue;
+      }
+
+      console.log(`[AGENT] Attempting prompt with ${provider}/${modelId}`);
+
+      try {
+        const result = await this.promptWithModel(
+          sessionKey,
+          agentName,
+          message,
+          modelRef,
+          opts
+        );
+
+        // Success — mark provider as healthy
+        this.providerHealth.markHealthy(provider, modelId);
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        lastError = error;
+
+        // Check if it's a rate limit
+        const rateLimitInfo = extractRateLimitInfo(err);
+        if (rateLimitInfo.isRateLimit) {
+          this.providerHealth.markRateLimited(
+            provider,
+            modelId,
+            rateLimitInfo.retryAfterMs,
+            error.message
+          );
+          console.log(
+            `[AGENT] ${provider}/${modelId} rate limited, trying next model`
+          );
+          continue;
+        }
+
+        // Non-rate-limit error — mark as failed but try next
+        this.providerHealth.markFailed(provider, modelId, error.message);
+        console.error(
+          `[AGENT] ${provider}/${modelId} failed: ${error.message}, trying next model`
+        );
+      }
+    }
+
+    // All models failed
+    throw new Error(
+      `All models failed for agent '${agentName}'. Last error: ${lastError?.message ?? "unknown"}`
+    );
+  }
+
+  /**
+   * Send a message and stream deltas via callback.
+   * Implements fallback logic: if the primary model fails after retries,
+   * tries each fallback model in order.
+   */
+  async promptStreaming(
+    sessionKey: string,
+    agentName: string,
+    message: string,
+    onDelta: (delta: string) => void,
+    opts?: { onToolStart?: OnToolStart }
+  ): Promise<string> {
+    const agentConfig = this.config.agents[agentName];
+    if (!agentConfig) {
+      throw new Error(`Unknown agent: ${agentName}`);
+    }
+
+    // Build list of models to try: primary + fallbacks
+    const modelsToTry = this.getModelsToTry(agentConfig);
+
+    let lastError: Error | undefined;
+
+    for (const modelRef of modelsToTry) {
+      const { provider, model: modelId } = modelRef;
+
+      // Skip if this model is in cooldown
+      if (this.providerHealth.isCoolingDown(provider, modelId)) {
+        const remaining = this.providerHealth.getRemainingCooldown(provider, modelId);
+        console.log(
+          `[AGENT] Skipping ${provider}/${modelId} — in cooldown for ${Math.round(remaining / 1000)}s`
+        );
+        continue;
+      }
+
+      console.log(`[AGENT] Attempting streaming prompt with ${provider}/${modelId}`);
+
+      try {
+        const result = await this.promptStreamingWithModel(
+          sessionKey,
+          agentName,
+          message,
+          onDelta,
+          modelRef,
+          opts
+        );
+
+        // Success — mark provider as healthy
+        this.providerHealth.markHealthy(provider, modelId);
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        lastError = error;
+
+        // Check if it's a rate limit
+        const rateLimitInfo = extractRateLimitInfo(err);
+        if (rateLimitInfo.isRateLimit) {
+          this.providerHealth.markRateLimited(
+            provider,
+            modelId,
+            rateLimitInfo.retryAfterMs,
+            error.message
+          );
+          console.log(
+            `[AGENT] ${provider}/${modelId} rate limited, trying next model`
+          );
+          continue;
+        }
+
+        // Non-rate-limit error — mark as failed but try next
+        this.providerHealth.markFailed(provider, modelId, error.message);
+        console.error(
+          `[AGENT] ${provider}/${modelId} failed: ${error.message}, trying next model`
+        );
+      }
+    }
+
+    // All models failed
+    throw new Error(
+      `All models failed for agent '${agentName}'. Last error: ${lastError?.message ?? "unknown"}`
+    );
+  }
+
+  /**
+   * Get the list of models to try, skipping those in cooldown.
+   * Returns primary model + fallbacks that are not currently rate-limited.
+   */
+  private getModelsToTry(agentConfig: AgentConfig): ModelRef[] {
+    const models: ModelRef[] = [agentConfig.model];
+
+    if (agentConfig.fallbackModels) {
+      models.push(...agentConfig.fallbackModels);
+    }
+
+    return models;
+  }
+
+  /**
+   * Execute a prompt with a specific model (internal).
+   */
+  private async promptWithModel(
+    sessionKey: string,
+    agentName: string,
+    message: string,
+    modelRef: ModelRef,
+    opts?: { onToolStart?: OnToolStart }
+  ): Promise<string> {
+    const managed = await this.getOrCreateSessionWithModel(
+      sessionKey,
+      agentName,
+      modelRef,
+      opts
+    );
     managed.inflightCount++;
 
     try {
@@ -210,18 +399,22 @@ export class AgentManager {
   }
 
   /**
-   * Send a message and stream deltas via callback.
+   * Execute a streaming prompt with a specific model (internal).
    */
-  async promptStreaming(
+  private async promptStreamingWithModel(
     sessionKey: string,
     agentName: string,
     message: string,
     onDelta: (delta: string) => void,
+    modelRef: ModelRef,
     opts?: { onToolStart?: OnToolStart }
   ): Promise<string> {
-    const managed = await this.getOrCreateSession(sessionKey, agentName, {
-      onToolStart: opts?.onToolStart,
-    });
+    const managed = await this.getOrCreateSessionWithModel(
+      sessionKey,
+      agentName,
+      modelRef,
+      opts
+    );
     managed.inflightCount++;
 
     try {
@@ -252,6 +445,120 @@ export class AgentManager {
     } finally {
       this.decrementInflight(managed);
     }
+  }
+
+  /**
+   * Get or create a session with a specific model.
+   * This allows switching models without creating a new session key.
+   */
+  private async getOrCreateSessionWithModel(
+    sessionKey: string,
+    agentName: string,
+    modelRef: ModelRef,
+    opts?: { onToolStart?: OnToolStart; forceNew?: boolean }
+  ): Promise<ManagedSession> {
+    // If forceNew, dispose old session and create fresh
+    if (opts?.forceNew) {
+      await this.disposeSession(sessionKey);
+    }
+
+    // Check if we need to recreate the session with a different model
+    const existing = this.sessions.get(sessionKey);
+
+    // If session exists with the same model, return it
+    if (existing) {
+      const { provider, model: modelId } = modelRef;
+      const currentRef = existing.currentModel;
+
+      if (currentRef.provider === provider && currentRef.model === modelId) {
+        return existing;
+      }
+
+      // Different model — dispose and recreate
+      console.log(
+        `[AGENT] Switching session ${sessionKey} from ${currentRef.provider}/${currentRef.model} to ${provider}/${modelId}`
+      );
+      existing.session.dispose();
+      this.sessions.delete(sessionKey);
+    }
+
+    const agentConfig = this.config.agents[agentName];
+    if (!agentConfig) {
+      throw new Error(`Unknown agent: ${agentName}`);
+    }
+
+    // Determine session file
+    let sessionFile: string | undefined;
+    if (opts?.forceNew) {
+      sessionFile = this.sessionStore.createSession(sessionKey, agentName);
+    } else {
+      sessionFile = this.sessionStore.getSessionFile(sessionKey);
+      if (!sessionFile) {
+        sessionFile = this.sessionStore.createSession(sessionKey, agentName);
+      }
+    }
+
+    console.log(`[AGENT] Creating session for '${agentName}' with model ${modelRef.provider}/${modelRef.model} (key: ${sessionKey})`);
+
+    // Build pi session
+    const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
+    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef);
+    const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
+    const systemPrompt = buildSystemPrompt(agentName, toolContext);
+
+    const model = this.resolveModelFromRef(modelRef);
+
+    const resourceLoader: ResourceLoader = {
+      getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
+      getSkills: () => ({ skills: [], diagnostics: [] }),
+      getPrompts: () => ({ prompts: [], diagnostics: [] }),
+      getThemes: () => ({ themes: [], diagnostics: [] }),
+      getAgentsFiles: () => ({ agentsFiles: [] }),
+      getSystemPrompt: () => systemPrompt,
+      getAppendSystemPrompt: () => [],
+      getPathMetadata: () => new Map(),
+      extendResources: () => {},
+      reload: async () => {},
+    };
+
+    // Use file-based session manager for persistence
+    let sessionManager: ReturnType<typeof SessionManager.create>;
+    try {
+      sessionManager = SessionManager.open(sessionFile);
+    } catch {
+      const { dir } = await import("path").then((p) => ({ dir: p.dirname(sessionFile!) }));
+      sessionManager = SessionManager.create(process.cwd(), dir);
+    }
+
+    const { session } = await createAgentSession({
+      model,
+      thinkingLevel: (modelRef.thinkingLevel as any) ?? "off",
+      tools: [],
+      customTools: coreTools,
+      sessionManager,
+      settingsManager: SettingsManager.inMemory({
+        compaction: { enabled: true },
+        retry: { enabled: true, maxRetries: 3 },
+      }),
+      resourceLoader,
+      authStorage: this.authStorage,
+      modelRegistry: this.modelRegistry,
+    });
+
+    const managed: ManagedSession = {
+      agentName,
+      sessionKey,
+      session,
+      currentModel: modelRef,
+      inflightCount: 0,
+      drainResolvers: [],
+      toolStartHandlerRef,
+    };
+
+    this.sessions.set(sessionKey, managed);
+    console.log(`[AGENT] Session ready for '${agentName}' (key: ${sessionKey})`);
+
+    return managed;
   }
 
   /**
@@ -353,7 +660,11 @@ export class AgentManager {
   }
 
   private resolveModel(agentConfig: AgentConfig) {
-    const { provider, model: modelId } = agentConfig.model;
+    return this.resolveModelFromRef(agentConfig.model);
+  }
+
+  private resolveModelFromRef(modelRef: ModelRef) {
+    const { provider, model: modelId } = modelRef;
     const model = getModel(provider as any, modelId);
     if (model) return model;
     const custom = this.modelRegistry.find(provider, modelId);

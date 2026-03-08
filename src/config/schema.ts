@@ -32,6 +32,8 @@ export interface ToolConfig {
 
 export interface AgentConfig {
   model: ModelRef;
+  /** Fallback models to try if the primary fails (after retries exhausted) */
+  fallbackModels?: ModelRef[];
   /** List of tool names from the tools registry that this agent can use */
   tools: string[];
   sandbox?: SandboxConfig;

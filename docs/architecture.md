@@ -114,6 +114,9 @@ Single config file (JSON5 — JSON with comments) drives the entire system. No d
         model: "claude-sonnet-4-20250514",
         thinkingLevel: "medium",
       },
+      fallbackModels: [
+        { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
+      ],
       tools: ["kv"],
       sandbox: { image: "beige-sandbox:latest" },
     },
@@ -136,11 +139,27 @@ Single config file (JSON5 — JSON with comments) drives the entire system. No d
 ### 2. Gateway Core (`src/gateway/`)
 
 - **Config loader**: Reads and validates `config.json5`, resolves env vars.
-- **Agent manager**: Creates/destroys agent sessions. Maps agent name → pi SDK `AgentSession` + Docker container.
+- **Agent manager**: Creates/destroys agent sessions. Maps agent name → pi SDK `AgentSession` + Docker container. Handles model fallback and rate limit tracking.
+- **Provider health tracker**: Monitors per-provider rate limits and cooldowns. Persisted to `~/.beige/data/provider-health.json`.
 - **Sandbox manager**: Creates Docker containers with correct mounts, generates tool launchers, manages lifecycle.
 - **Socket server**: One Unix domain socket per agent at `~/.beige/sockets/<agent>.sock`, mounted into container at `/beige/gateway.sock`.
 - **Policy engine**: Checks if agent is allowed to use a tool. Deny by default.
 - **Audit logger**: Logs every tool invocation with agent, tool, args, decision, timing, result summary.
+
+#### Model Fallback
+
+When an agent has `fallbackModels` configured, the gateway:
+
+1. Tries the primary model first
+2. If the request fails (after the SDK's built-in 3 retries), tries each fallback in order
+3. Skips models that are in cooldown (rate-limited)
+4. Returns the first successful response, or an error if all models fail
+
+Rate limit handling:
+- When a provider returns a 429 or rate-limit error, it's marked as "cooling down"
+- If the response includes a `retry-after` header, that time is used
+- Otherwise, a 30-minute default cooldown is applied
+- Cooldown state is persisted in `~/.beige/data/provider-health.json` and survives restarts
 
 ### 3. Core Tools (`src/tools/core/`)
 

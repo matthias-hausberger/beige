@@ -83,6 +83,9 @@ Any string value can reference environment variables using `${VAR_NAME}` syntax.
         model: "claude-sonnet-4-20250514",        // model ID
         thinkingLevel: "off",                     // off | minimal | low | medium | high
       },
+      fallbackModels: [                           // optional: tried if primary fails
+        { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
+      ],
       tools: ["kv"],                              // tool names from the tools registry
       sandbox: {                                  // optional sandbox overrides
         image: "beige-sandbox:latest",            // Docker image (default)
@@ -166,6 +169,7 @@ graph TD
 
     AGENTS --> A1["assistant"]
     A1 --> MODEL["model<br/>provider, model, thinkingLevel"]
+    A1 --> FALLBACK["fallbackModels[]<br/>(optional)"]
     A1 --> ATOOLS["tools[]<br/>references tool names"]
     A1 --> SANDBOX["sandbox<br/>image, extraMounts, extraEnv"]
 
@@ -192,6 +196,59 @@ The config is validated at startup. The gateway checks:
 | Each agent's tools exist in tool registry | Agent references unknown tool |
 | Telegram default agent exists | Agent mapping points to unknown agent |
 | All `${VAR}` references resolve | Environment variable not set |
+
+## Model Fallback
+
+When an agent has `fallbackModels` configured, the gateway automatically falls back if the primary model fails:
+
+```json5
+agents: {
+  assistant: {
+    model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+    fallbackModels: [
+      { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
+    ],
+    tools: ["kv"],
+  },
+}
+```
+
+### How It Works
+
+1. The primary model is tried first
+2. If it fails after the SDK's built-in retries (3 attempts), the first fallback is tried
+3. This continues until a model succeeds or all models have been tried
+4. Models currently in cooldown (rate-limited) are skipped
+
+### Rate Limit Handling
+
+When a provider returns a rate limit error (HTTP 429 or rate-limit error message):
+
+- The provider/model is marked as "cooling down"
+- If the response includes a `retry-after` header, that time is used
+- Otherwise, a 30-minute default cooldown is applied
+- Cooldown state persists in `~/.beige/data/provider-health.json` and survives gateway restarts
+
+```
+~/.beige/data/provider-health.json:
+{
+  "providers": {
+    "anthropic/claude-sonnet-4-20250514": {
+      "rateLimitedAt": "2026-03-06T15:00:00.000Z",
+      "retryAfter": "2026-03-06T15:30:00.000Z",
+      "consecutiveFailures": 1,
+      "lastError": "Rate limit exceeded"
+    }
+  },
+  "lastUpdated": "2026-03-06T15:00:00.000Z"
+}
+```
+
+### When to Use Fallbacks
+
+- **High availability**: Ensure the agent keeps working even if one model is rate-limited
+- **Cost optimization**: Use a cheaper fallback for non-critical requests
+- **Model migration**: Gradually shift traffic to a new model
 
 ## LLM Provider API Types
 
@@ -221,7 +278,8 @@ The gateway creates directories under `~/.beige/`:
 ├── sockets/
 │   └── <agent>.sock           # Unix socket per agent
 ├── data/
-│   └── kv.json                # KV tool data (example)
+│   ├── kv.json                # KV tool data (example)
+│   └── provider-health.json   # rate limit tracking
 └── logs/
     ├── audit.jsonl            # audit log
     └── gateway.log            # daemon stdout/stderr (configurable via gateway.logFile)

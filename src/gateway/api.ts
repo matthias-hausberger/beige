@@ -159,6 +159,7 @@ export class GatewayAPI {
         for (const [name, agentConfig] of Object.entries(this.opts.config.agents)) {
           agents[name] = {
             model: agentConfig.model,
+            fallbackModels: agentConfig.fallbackModels ?? [],
             tools: agentConfig.tools,
           };
         }

@@ -4,6 +4,13 @@
   "description": "Secure sandboxed agent system",
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "bin": {
     "beige": "dist/cli.js"
   },
@@ -30,5 +37,26 @@
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
-  }
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "sandbox",
+    "docker",
+    "llm",
+    "claude",
+    "anthropic"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/matthias-hausberger/beige.git"
+  },
+  "bugs": {
+    "url": "https://github.com/matthias-hausberger/beige/issues"
+  },
+  "homepage": "https://github.com/matthias-hausberger/beige#readme",
+  "license": "MIT"
 }

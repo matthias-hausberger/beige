@@ -369,9 +369,7 @@ beige/
 │   │   ├── policy.ts           # Permission checks
 │   │   └── audit.ts            # Audit logging
 │   ├── sandbox/
-│   │   ├── manager.ts          # Docker container lifecycle
-│   │   ├── docker.ts           # Docker API helpers
-│   │   └── launcher.ts         # Generate tool launcher scripts
+│   │   └── manager.ts          # Docker container lifecycle, tool launcher generation
 │   ├── socket/
 │   │   ├── server.ts           # Unix socket server (gateway side)
 │   │   └── protocol.ts         # Request/response types

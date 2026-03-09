@@ -61,6 +61,9 @@
         "version": "v0.0.2",
         "tabs": [
           {
+            "tab": "Introduction"
+          },
+          {
             "tab": "Get Started",
             "anchors": [
               {

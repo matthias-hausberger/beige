@@ -1,4 +1,5 @@
 import type { BeigeConfig, ToolManifest } from "../config/schema.js";
+import type { SessionContext } from "../types/session.js";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
@@ -7,7 +8,15 @@ export interface ToolResult {
   exitCode: number;
 }
 
-export type ToolHandler = (args: string[], config?: Record<string, unknown>) => Promise<ToolResult>;
+export interface ToolHandlerContext {
+  channelRegistry?: import("../channels/registry.js").ChannelRegistry;
+}
+
+export type ToolHandler = (
+  args: string[],
+  config?: Record<string, unknown>,
+  sessionContext?: SessionContext
+) => Promise<ToolResult>;
 
 /**
  * Executes tool handlers on the gateway host.
@@ -21,7 +30,7 @@ export class ToolRunner {
     console.log(`[TOOLS] Registered handler for '${toolName}'`);
   }
 
-  async run(toolName: string, args: string[]): Promise<ToolResult> {
+  async run(toolName: string, args: string[], sessionContext?: SessionContext): Promise<ToolResult> {
     const handler = this.handlers.get(toolName);
     if (!handler) {
       return {
@@ -29,7 +38,7 @@ export class ToolRunner {
         exitCode: 1,
       };
     }
-    return handler(args);
+    return handler(args, undefined, sessionContext);
   }
 
   hasHandler(toolName: string): boolean {

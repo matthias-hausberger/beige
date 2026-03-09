@@ -4,6 +4,7 @@ import type { AgentManager } from "../gateway/agent-manager.js";
 import { BeigeSessionStore } from "../gateway/sessions.js";
 import type { SessionSettingsStore } from "../gateway/session-settings.js";
 import { resolveSessionSetting } from "../gateway/session-settings.js";
+import type { ChannelRegistry, ChannelAdapter, SendMessageOptions } from "./registry.js";
 
 /**
  * Telegram channel adapter using GrammY.
@@ -37,7 +38,7 @@ import { resolveSessionSetting } from "../gateway/session-settings.js";
  * Bot command registration:
  * - On startup, the bot deletes all old commands and registers the current set.
  */
-export class TelegramChannel {
+export class TelegramChannel implements ChannelAdapter {
   private bot: Bot;
   private config: TelegramChannelConfig;
 
@@ -45,7 +46,8 @@ export class TelegramChannel {
     telegramConfig: TelegramChannelConfig,
     private agentManager: AgentManager,
     private sessionStore: BeigeSessionStore,
-    private settingsStore: SessionSettingsStore
+    private settingsStore: SessionSettingsStore,
+    private channelRegistry?: ChannelRegistry
   ) {
     this.config = telegramConfig;
     this.bot = new Bot(telegramConfig.token);
@@ -409,8 +411,48 @@ export class TelegramChannel {
 
   // ── Lifecycle ────────────────────────────────────────────────────────
 
+  supportsMessaging(): boolean {
+    return true;
+  }
+
+  async sendMessage(
+    chatId: string,
+    threadId: string | undefined,
+    text: string,
+    options?: SendMessageOptions
+  ): Promise<void> {
+    const MAX_LENGTH = 4096;
+    const chunks: string[] = [];
+
+    if (text.length <= MAX_LENGTH) {
+      chunks.push(text);
+    } else {
+      let current = "";
+      for (const line of text.split("\n")) {
+        if (current.length + line.length + 1 > MAX_LENGTH) {
+          if (current) chunks.push(current);
+          current = line;
+        } else {
+          current += (current ? "\n" : "") + line;
+        }
+      }
+      if (current) chunks.push(current);
+    }
+
+    for (const chunk of chunks) {
+      await this.bot.api.sendMessage(chatId, chunk, {
+        parse_mode: options?.parseMode === "markdown" ? "MarkdownV2" : options?.parseMode === "html" ? "HTML" : undefined,
+        ...(threadId ? { message_thread_id: parseInt(threadId, 10) } : {}),
+      });
+    }
+  }
+
   async start(): Promise<void> {
     console.log("[TELEGRAM] Starting bot...");
+
+    if (this.channelRegistry) {
+      this.channelRegistry.register("telegram", this);
+    }
 
     // Register bot commands (delete stale ones first, then set current set)
     await this.registerBotCommands();

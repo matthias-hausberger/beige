@@ -15,18 +15,10 @@ import { ToolRunner } from "../tools/runner.js";
 import { loadTools, type LoadedTool } from "../tools/registry.js";
 import { loadSkills, type LoadedSkill } from "../skills/registry.js";
 import { TelegramChannel } from "../channels/telegram.js";
+import { ChannelRegistry } from "../channels/registry.js";
 
-/**
- * Main gateway. Wires everything together and exposes an HTTP API
- * that channels (TUI, future CLI, web UI, etc.) connect to.
- *
- * Usage:
- *   Shell 1: `beige`          → starts gateway (API + Telegram)
- *   Shell 2: `beige tui`      → TUI channel connects to gateway API
- */
 export class Gateway {
   private config: BeigeConfig;
-  /** Absolute path to the config file so restart() can reload it. */
   private configPath: string;
   private audit: AuditLogger;
   private policy: PolicyEngine;
@@ -40,7 +32,7 @@ export class Gateway {
   private telegramChannel?: TelegramChannel;
   private loadedTools!: Map<string, LoadedTool>;
   private loadedSkills!: Map<string, LoadedSkill>;
-  /** True while a restart is in progress — prevents overlapping restarts. */
+  private channelRegistry!: ChannelRegistry;
   private restarting = false;
 
   constructor(config: BeigeConfig, configPath: string) {
@@ -58,22 +50,25 @@ export class Gateway {
   async start(): Promise<void> {
     console.log("[GATEWAY] Starting Beige gateway...");
 
-    // 1. Load tool packages and register handlers
-    this.loadedTools = await loadTools(this.config, this.toolRunner);
+    // 1. Create channel registry
+    this.channelRegistry = new ChannelRegistry();
+
+    // 2. Load tool packages and register handlers
+    this.loadedTools = await loadTools(this.config, this.toolRunner, this.channelRegistry);
     console.log(`[GATEWAY] Loaded ${this.loadedTools.size} tool(s)`);
 
-    // 2. Load skill packages
+    // 3. Load skill packages
     this.loadedSkills = await loadSkills(this.config);
     console.log(`[GATEWAY] Loaded ${this.loadedSkills.size} skill(s)`);
 
-    // 3. Set up auth and model registry for pi SDK
+    // 4. Set up auth and model registry for pi SDK
     const authStorage = this.setupAuth();
     const modelRegistry = new ModelRegistry(authStorage);
 
-    // 4. Create sandbox manager
+    // 5. Create sandbox manager
     this.sandboxManager = new SandboxManager(this.config, this.loadedTools, this.loadedSkills);
 
-    // 5. Create agent manager
+    // 6. Create agent manager
     this.agentManager = new AgentManager(
       this.config,
       this.sandboxManager,
@@ -85,15 +80,15 @@ export class Gateway {
       this.sessionStore
     );
 
-    // 6. Build beige-sandbox image if any agent needs it (no-op otherwise)
+    // 7. Build beige-sandbox image if any agent needs it (no-op otherwise)
     await this.sandboxManager.ensureSandboxImage();
 
-    // 7. Start sandboxes and socket servers for each agent
+    // 8. Start sandboxes and socket servers for each agent
     for (const agentName of Object.keys(this.config.agents)) {
       await this.startAgentInfra(agentName);
     }
 
-    // 8. Start HTTP API (for TUI and other external channels)
+    // 9. Start HTTP API (for TUI and other external channels)
     const host = this.config.gateway?.host ?? "127.0.0.1";
     const port = this.config.gateway?.port ?? 7433;
 
@@ -109,13 +104,14 @@ export class Gateway {
     });
     await this.api.start();
 
-    // 9. Start Telegram channel (non-blocking)
+    // 10. Start Telegram channel (non-blocking)
     if (this.config.channels?.telegram?.enabled) {
       this.telegramChannel = new TelegramChannel(
         this.config.channels.telegram,
         this.agentManager,
         this.sessionStore,
-        this.settingsStore
+        this.settingsStore,
+        this.channelRegistry
       );
       this.telegramChannel.start().catch((err) => {
         console.error("[GATEWAY] Telegram bot error:", err);
@@ -131,15 +127,6 @@ export class Gateway {
     console.log("[GATEWAY] Shutdown complete");
   }
 
-  /**
-   * Gracefully restart the gateway in-place:
-   *   1. Drain all in-flight LLM / tool calls (no hard kill).
-   *   2. Tear down sandboxes, sockets, HTTP API, and Telegram.
-   *   3. Re-read config from disk (picks up any edits).
-   *   4. Bring everything back up fresh.
-   *
-   * If a restart is already in progress the call is a no-op.
-   */
   async restart(): Promise<void> {
     if (this.restarting) {
       console.log("[GATEWAY] Restart already in progress — ignoring duplicate request");
@@ -150,15 +137,12 @@ export class Gateway {
     try {
       console.log("[GATEWAY] ── Restart requested ──────────────────────────────");
 
-      // ── Phase 1: Drain ────────────────────────────────────────────
       console.log("[GATEWAY] Phase 1/3: Draining in-flight calls...");
       await this.agentManager?.drainAll();
 
-      // ── Phase 2: Tear down ────────────────────────────────────────
       console.log("[GATEWAY] Phase 2/3: Tearing down infrastructure...");
-      await this.teardown({ drain: false }); // already drained
+      await this.teardown({ drain: false });
 
-      // ── Phase 3: Reload config & start fresh ──────────────────────
       console.log(`[GATEWAY] Phase 3/3: Reloading config from ${this.configPath}...`);
       try {
         this.config = loadConfig(this.configPath);
@@ -168,11 +152,8 @@ export class Gateway {
         return;
       }
 
-      // Re-create stateless helpers that depend on config
       this.policy = new PolicyEngine(this.config);
       this.toolRunner = new ToolRunner();
-      // NOTE: AuditLogger, BeigeSessionStore, and SessionSettingsStore are
-      // config-independent — reuse them across restarts.
 
       await this.start();
       console.log("[GATEWAY] ── Restart complete ───────────────────────────────");
@@ -181,41 +162,29 @@ export class Gateway {
     }
   }
 
-  // ── Private helpers ──────────────────────────────────────────────────
-
-  /**
-   * Tear down all live infrastructure.
-   * @param drain  If true, call drainAll() first to wait for in-flight calls.
-   */
   private async teardown(opts: { drain: boolean }): Promise<void> {
     if (opts.drain) {
       await this.agentManager?.drainAll();
     }
 
-    // Stop Telegram first — no more inbound messages
     if (this.telegramChannel) {
       await this.telegramChannel.stop();
       this.telegramChannel = undefined;
     }
 
-    // Stop HTTP API — reject new tool-exec / prompt requests from TUI
     await this.api?.stop();
 
-    // Stop all Unix socket servers
     for (const [, server] of this.socketServers) {
       await server.stop();
     }
     this.socketServers.clear();
 
-    // Dispose remaining sessions (already empty after drainAll, but safe)
     await this.agentManager?.shutdown();
 
-    // Stop + remove all sandbox containers
     await this.sandboxManager?.shutdown();
   }
 
   private async startAgentInfra(agentName: string): Promise<void> {
-    // Start socket server FIRST so the socket file exists before Docker mounts it
     const socketPath = resolve(
       homedir(),
       ".beige",
@@ -232,7 +201,6 @@ export class Gateway {
     await socketServer.start();
     this.socketServers.set(agentName, socketServer);
 
-    // Then create sandbox (which bind-mounts the now-existing socket file)
     await this.sandboxManager.createSandbox(agentName);
   }
 

@@ -1,3 +1,5 @@
+import type { SessionContext } from "../types/session.js";
+
 /**
  * Socket protocol between sandbox tool launchers and the gateway.
  * Messages are newline-delimited JSON over Unix domain socket.
@@ -7,6 +9,7 @@ export interface ToolRequest {
   type: "tool_request";
   tool: string;
   args: string[];
+  sessionContext?: SessionContext;
 }
 
 export interface ToolResponse {

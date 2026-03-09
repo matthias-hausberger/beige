@@ -3,36 +3,24 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { AuditLogger } from "../gateway/audit.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
+import type { SessionContext } from "../types/session.js";
 
-/**
- * Mutable reference to an OnToolStart handler.
- * Shared with core tool closures so the handler can be swapped at runtime
- * (e.g. when the user toggles verbose mode) without recreating tool definitions.
- */
 export type ToolStartHandlerRef = { fn: OnToolStart | undefined };
 
-/**
- * Create the 4 core tools that are exposed to the LLM.
- * All execute inside the agent's sandbox via docker exec.
- *
- * @param handlerRef  Mutable reference to the tool-start handler. Pass a
- *                    pre-created ref (stored on ManagedSession) so callers
- *                    can update `.fn` at runtime to toggle verbose mode.
- */
 export function createCoreTools(
   agentName: string,
   sandbox: SandboxManager,
   audit: AuditLogger,
-  handlerRef?: ToolStartHandlerRef
+  handlerRef?: ToolStartHandlerRef,
+  sessionContext?: SessionContext
 ): ToolDefinition[] {
-  // If no ref provided, create a no-op container.
   const handler: ToolStartHandlerRef = handlerRef ?? { fn: undefined };
 
   return [
     createReadTool(agentName, sandbox, audit, handler),
     createWriteTool(agentName, sandbox, audit, handler),
     createPatchTool(agentName, sandbox, audit, handler),
-    createExecTool(agentName, sandbox, audit, handler),
+    createExecTool(agentName, sandbox, audit, handler, sessionContext),
   ];
 }
 
@@ -63,7 +51,6 @@ function createReadTool(
       handler.fn?.("read", { path: p.path });
       const args = ["cat"];
 
-      // Use sed for offset/limit support
       if (p.offset || p.limit) {
         const start = p.offset ?? 1;
         const end = p.limit ? start + p.limit - 1 : "$";
@@ -134,7 +121,6 @@ function createWriteTool(
       );
 
       try {
-        // Create parent dirs then write via sh -c
         const script = `mkdir -p "$(dirname '${p.path}')" && cat > '${p.path}'`;
         const result = await sandbox.exec(agentName, ["sh", "-c", script], p.content);
 
@@ -201,7 +187,6 @@ function createPatchTool(
       );
 
       try {
-        // Read current content
         const readResult = await sandbox.exec(agentName, ["cat", p.path]);
         if (readResult.exitCode !== 0) {
           timer.finish({ exitCode: 1, error: `File not found: ${p.path}` });
@@ -265,11 +250,26 @@ function createPatchTool(
   };
 }
 
+function buildSessionEnvVars(ctx: SessionContext | undefined): Record<string, string> | undefined {
+  if (!ctx) return undefined;
+  
+  const env: Record<string, string> = {
+    BEIGE_SESSION_KEY: ctx.sessionKey,
+    BEIGE_CHANNEL: ctx.channel,
+  };
+  
+  if (ctx.chatId) env.BEIGE_CHAT_ID = ctx.chatId;
+  if (ctx.threadId) env.BEIGE_THREAD_ID = ctx.threadId;
+  
+  return env;
+}
+
 function createExecTool(
   agentName: string,
   sandbox: SandboxManager,
   audit: AuditLogger,
-  handler: HandlerRef
+  handler: HandlerRef,
+  sessionContext?: SessionContext
 ): ToolDefinition {
   return {
     name: "exec",
@@ -300,7 +300,8 @@ function createExecTool(
 
       try {
         const timeout = (p.timeout ?? 120) * 1000;
-        const result = await sandbox.exec(agentName, args, undefined, timeout);
+        const envVars = buildSessionEnvVars(sessionContext);
+        const result = await sandbox.exec(agentName, args, undefined, timeout, envVars);
 
         const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
         timer.finish({

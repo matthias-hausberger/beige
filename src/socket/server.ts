@@ -133,7 +133,7 @@ export class AgentSocketServer {
     );
 
     try {
-      const result = await this.toolRunner.run(tool, args);
+      const result = await this.toolRunner.run(tool, args, req.sessionContext);
       timer.finish({
         exitCode: result.exitCode,
         outputBytes: Buffer.byteLength(result.output ?? ""),

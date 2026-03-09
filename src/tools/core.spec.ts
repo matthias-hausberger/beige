@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createCoreTools, type ToolStartHandlerRef } from "./core.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { AuditLogger } from "../gateway/audit.js";
+import type { SessionContext } from "../types/session.js";
 
 // Mock types
 type MockSandbox = {
@@ -38,7 +39,8 @@ describe("createCoreTools", () => {
       "test-agent",
       mockSandbox as unknown as SandboxManager,
       mockAudit as unknown as AuditLogger,
-      handlerRef
+      handlerRef,
+      undefined
     );
   });
 

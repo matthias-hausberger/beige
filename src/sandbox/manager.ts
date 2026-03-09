@@ -124,12 +124,19 @@ export class SandboxManager {
     agentName: string,
     cmd: string[],
     stdin?: string,
-    timeout?: number
+    timeout?: number,
+    env?: Record<string, string>
   ): Promise<ExecResult> {
     const container = this.containers.get(agentName);
     if (!container) {
       throw new Error(`No sandbox running for agent: ${agentName}`);
     }
+
+    const agentConfig = this.config.agents[agentName];
+    const baseEnv = Object.entries(agentConfig?.sandbox?.extraEnv ?? {}).map(
+      ([k, v]) => `${k}=${v}`
+    );
+    const additionalEnv = env ? Object.entries(env).map(([k, v]) => `${k}=${v}`) : [];
 
     const exec = await container.exec({
       Cmd: cmd,
@@ -137,6 +144,7 @@ export class SandboxManager {
       AttachStderr: true,
       AttachStdin: !!stdin,
       WorkingDir: "/workspace",
+      Env: [...baseEnv, ...additionalEnv],
     });
 
     return new Promise((resolveExec, reject) => {

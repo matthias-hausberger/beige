@@ -18,12 +18,35 @@ if (!toolName) {
   Deno.exit(1);
 }
 
-const request =
-  JSON.stringify({
-    type: "tool_request",
-    tool: toolName,
-    args,
-  }) + "\n";
+function buildSessionContext(): Record<string, string> | undefined {
+  const sessionKey = Deno.env.get("BEIGE_SESSION_KEY");
+  const channel = Deno.env.get("BEIGE_CHANNEL");
+  const chatId = Deno.env.get("BEIGE_CHAT_ID");
+  const threadId = Deno.env.get("BEIGE_THREAD_ID");
+
+  if (!sessionKey || !channel) {
+    return undefined;
+  }
+
+  const ctx: Record<string, string> = { sessionKey, channel };
+  if (chatId) ctx.chatId = chatId;
+  if (threadId) ctx.threadId = threadId;
+  return ctx;
+}
+
+const sessionContext = buildSessionContext();
+
+const request: Record<string, unknown> = {
+  type: "tool_request",
+  tool: toolName,
+  args,
+};
+
+if (sessionContext) {
+  request.sessionContext = sessionContext;
+}
+
+const requestJson = JSON.stringify(request) + "\n";
 
 let conn: Deno.UnixConn;
 try {
@@ -40,10 +63,8 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 try {
-  // Send request
-  await conn.write(encoder.encode(request));
+  await conn.write(encoder.encode(requestJson));
 
-  // Read response (newline-delimited JSON)
   let responseText = "";
   const buf = new Uint8Array(65536);
   while (!responseText.includes("\n")) {

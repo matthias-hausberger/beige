@@ -18,6 +18,7 @@ import { createCoreTools, type ToolStartHandlerRef } from "../tools/core.js";
 import { buildToolContext, type LoadedTool } from "../tools/registry.js";
 import { buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
 import { ProviderHealthTracker, extractRateLimitInfo } from "./provider-health.js";
+import { parseSessionKey, type SessionContext } from "../types/session.js";
 
 /**
  * Callback fired by the gateway when the agent is about to execute a tool.
@@ -121,7 +122,8 @@ export class AgentManager {
     // Build pi session — wire onToolStart so channels get notified on tool calls.
     // Store the ref on the ManagedSession so it can be mutated at runtime (verbose toggle).
     const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
-    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef);
+    const sessionContext = parseSessionKey(sessionKey);
+    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
     const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
     const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
@@ -511,7 +513,8 @@ export class AgentManager {
 
     // Build pi session
     const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
-    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef);
+    const sessionContext = parseSessionKey(sessionKey);
+    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
     const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
     const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);

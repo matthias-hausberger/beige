@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { ToolRunner, loadToolManifest } from "./runner.js";
 import type { ToolHandler } from "./runner.js";
 import { writeFileSync, mkdirSync, rmSync } from "fs";

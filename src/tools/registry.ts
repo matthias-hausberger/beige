@@ -1,6 +1,6 @@
 import { resolve } from "path";
 import type { BeigeConfig, ToolManifest } from "../config/schema.js";
-import { loadToolManifest, type ToolHandler, type ToolRunner } from "./runner.js";
+import { loadToolManifest, type ToolHandler, type ToolRunner, type ToolHandlerContext } from "./runner.js";
 
 export interface LoadedTool {
   name: string;
@@ -9,12 +9,10 @@ export interface LoadedTool {
   handler?: ToolHandler;
 }
 
-/**
- * Load all tool packages from config, register gateway-targeted handlers.
- */
 export async function loadTools(
   config: BeigeConfig,
-  runner: ToolRunner
+  runner: ToolRunner,
+  channelRegistry?: import("../channels/registry.js").ChannelRegistry
 ): Promise<Map<string, LoadedTool>> {
   const tools = new Map<string, LoadedTool>();
 
@@ -26,13 +24,13 @@ export async function loadTools(
       path: toolConfig.path,
     };
 
-    // For gateway-targeted tools, dynamically import the handler
     if (toolConfig.target === "gateway") {
       const handlerPath = resolve(toolConfig.path, "index.ts");
       try {
         const mod = await import(handlerPath);
         if (typeof mod.createHandler === "function") {
-          const handler = mod.createHandler(toolConfig.config ?? {});
+          const handlerContext: ToolHandlerContext = channelRegistry ? { channelRegistry } : {};
+          const handler = mod.createHandler(toolConfig.config ?? {}, handlerContext);
           runner.registerHandler(name, handler);
           loaded.handler = handler;
         } else {

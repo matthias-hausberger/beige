@@ -1,7 +1,10 @@
 {
-  "name": "beige",
-  "version": "0.1.0",
+  "name": "@matthias-hausberger/beige",
+  "version": "0.0.1",
   "description": "Secure sandboxed agent system",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -1,13 +1,13 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'
 
 jobs:
   publish-npm:
     runs-on: ubuntu-latest
-    if: github.event.release.target_commitish == 'main'
 
     steps:
       - name: Checkout repository
@@ -34,32 +34,3 @@ jobs:
         run: pnpm publish --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  update-changelog:
-    runs-on: ubuntu-latest
-    if: github.event.release.target_commitish == 'main'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Update CHANGELOG.md with release notes
-        run: |
-          # Extract version from tag (e.g., v0.1.0 -> 0.1.0)
-          VERSION="${GITHUB_REF_NAME#v}"
-
-          # Prepend release notes to CHANGELOG.md
-          echo "Updating CHANGELOG.md for version $VERSION..."
-
-          # This is a placeholder - in practice you might use a tool
-          # or manual process to update the changelog
-
-      - name: Commit changelog update
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md || true
-          git commit -m "Update CHANGELOG.md for v${GITHUB_REF_NAME#v}" || true
-          git push origin main || true

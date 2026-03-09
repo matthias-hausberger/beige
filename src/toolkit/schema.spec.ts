@@ -20,10 +20,36 @@ function createTempToolkit(structure: {
   const toolkitDir = join(TEMP_DIR, `toolkit-${Date.now()}`);
   mkdirSync(toolkitDir, { recursive: true });
 
+  const tools = structure.tools ?? {
+    _dummy: { toolJson: { description: "Dummy tool for testing" } },
+  };
+
+  const toolsDir = join(toolkitDir, "tools");
+  mkdirSync(toolsDir, { recursive: true });
+
+  for (const [toolName, toolConfig] of Object.entries(tools)) {
+    const toolDir = join(toolsDir, toolName);
+    mkdirSync(toolDir, { recursive: true });
+
+    writeFileSync(
+      join(toolDir, "tool.json"),
+      JSON.stringify({
+        name: toolName,
+        description: `Test tool: ${toolName}`,
+        target: "gateway",
+        ...toolConfig.toolJson,
+      })
+    );
+
+    if (toolConfig.indexTs) {
+      writeFileSync(join(toolDir, "index.ts"), toolConfig.indexTs);
+    }
+  }
+
   const manifest: ToolkitManifest = {
     name: "test-toolkit",
     version: "1.0.0",
-    tools: [],
+    tools: Object.keys(tools).map((n) => `./tools/${n}`),
     ...structure.toolkitJson,
   };
 
@@ -31,36 +57,6 @@ function createTempToolkit(structure: {
     join(toolkitDir, "toolkit.json"),
     JSON.stringify(manifest, null, 2)
   );
-
-  if (structure.tools) {
-    const toolsDir = join(toolkitDir, "tools");
-    mkdirSync(toolsDir, { recursive: true });
-
-    for (const [toolName, toolConfig] of Object.entries(structure.tools)) {
-      const toolDir = join(toolsDir, toolName);
-      mkdirSync(toolDir, { recursive: true });
-
-      writeFileSync(
-        join(toolDir, "tool.json"),
-        JSON.stringify({
-          name: toolName,
-          description: `Test tool: ${toolName}`,
-          target: "gateway",
-          ...toolConfig.toolJson,
-        })
-      );
-
-      if (toolConfig.indexTs) {
-        writeFileSync(join(toolDir, "index.ts"), toolConfig.indexTs);
-      }
-    }
-
-    manifest.tools = Object.keys(structure.tools).map((n) => `./tools/${n}`);
-    writeFileSync(
-      join(toolkitDir, "toolkit.json"),
-      JSON.stringify(manifest, null, 2)
-    );
-  }
 
   return toolkitDir;
 }

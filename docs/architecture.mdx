@@ -1,4 +1,6 @@
-# Beige — Architecture
+---
+title: "Beige Architecture"
+---
 
 ## Overview
 
@@ -13,7 +15,7 @@ Beige is a secure, sandboxed agent system where:
 
 ## Data Flow
 
-```
+```text
 User (Telegram/CLI)
   │
   ▼
@@ -156,6 +158,7 @@ When an agent has `fallbackModels` configured, the gateway:
 4. Returns the first successful response, or an error if all models fail
 
 Rate limit handling:
+
 - When a provider returns a 429 or rate-limit error, it's marked as "cooling down"
 - If the response includes a `retry-after` header, that time is used
 - Otherwise, a 30-minute default cooldown is applied
@@ -176,7 +179,7 @@ All four: log first, check policy, then execute.
 
 Each tool is a directory:
 
-```
+```text
 tools/kv/
 ├── tool.json          # metadata: name, description, target
 ├── index.ts           # tool handler (runs on target)
@@ -184,6 +187,7 @@ tools/kv/
 ```
 
 `tool.json`:
+
 ```json
 {
   "name": "kv",
@@ -194,6 +198,7 @@ tools/kv/
 ```
 
 The gateway:
+
 1. Reads tool packages from config
 2. Generates a launcher script per tool per agent
 3. Mounts launchers read-only into `/tools/bin/`
@@ -212,6 +217,7 @@ exec /beige/tool-client "$TOOL_NAME" "$@"
 ```
 
 Where `/beige/tool-client` is a small binary/script (mounted read-only) that:
+
 - Connects to `/beige/gateway.sock`
 - Sends JSON request with tool name + args
 - Reads JSON response
@@ -221,6 +227,7 @@ Where `/beige/tool-client` is a small binary/script (mounted read-only) that:
 ### 6. Socket Protocol
 
 Request (sandbox → gateway):
+
 ```json
 {
   "type": "tool_request",
@@ -230,6 +237,7 @@ Request (sandbox → gateway):
 ```
 
 Response (gateway → sandbox):
+
 ```json
 {
   "type": "tool_response",
@@ -240,6 +248,7 @@ Response (gateway → sandbox):
 ```
 
 Error response:
+
 ```json
 {
   "type": "tool_response",
@@ -264,7 +273,7 @@ Channels support layered settings with three levels of precedence (highest wins)
 2. **Channel config default** — set in `config.json5` under `channels.<name>.defaults`
 3. **Session override** — set by user via commands, persisted in `~/.beige/sessions/session-settings.json`
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    Setting Resolution                        │
 ├─────────────────────────────────────────────────────────────┤
@@ -280,10 +289,10 @@ Channels support layered settings with three levels of precedence (highest wins)
 
 When verbose mode is enabled, the channel receives a callback (`onToolStart`) before each tool execution and can notify the user:
 
-| Channel | Notification Method | Example |
-|---------|---------------------|---------|
-| Telegram | Bot message in chat | `🔧 exec: ls -la` |
-| TUI | stderr output | `🔧 exec: ls -la` (appears above TUI) |
+| Channel  | Notification Method | Example                               |
+| -------- | ------------------- | ------------------------------------- |
+| Telegram | Bot message in chat | `🔧 exec: ls -la`                     |
+| TUI      | stderr output       | `🔧 exec: ls -la` (appears above TUI) |
 
 This gives users visibility into what the agent is doing without cluttering the main response.
 
@@ -291,19 +300,20 @@ This gives users visibility into what the agent is doing without cluttering the 
 
 Commands are handled locally by the channel and **not** sent to the LLM:
 
-| Command | Telegram | TUI | Description |
-|---------|----------|-----|-------------|
-| `/start` | ✅ | — | Welcome message + command list |
-| `/new` | ✅ | — | Start fresh session |
-| `/status` | ✅ | — | Show session info + settings |
-| `/verbose on\|off` | ✅ | ✅ | Toggle verbose mode |
-| `/v on\|off` | ✅ | ✅ | Shorthand for /verbose |
+| Command           | Telegram | TUI | Description                    |
+| ----------------- | -------- | --- | ------------------------------ |
+| `/start`          | ✅        | —   | Welcome message + command list |
+| `/new`            | ✅        | —   | Start fresh session            |
+| `/status`         | ✅        | —   | Show session info + settings   |
+| `/verbose on|off` | ✅        | ✅   | Toggle verbose mode            |
+| `/v on|off`       | ✅        | ✅   | Shorthand for /verbose         |
 
 On startup, the Telegram channel registers its commands with the bot API (deleting stale commands first).
 
 ### 8. Sandbox Docker Image
 
 Minimal image with:
+
 - Deno runtime (for TypeScript execution)
 - Common utilities (curl, jq, etc.)
 - `/beige/tool-client` — socket client script (baked into image, not mounted)
@@ -356,7 +366,7 @@ JSONL file at `~/.beige/logs/audit.jsonl`:
 
 ## Directory Layout
 
-```
+```text
 beige/
 ├── project/                    # Design history
 │   ├── vision.md
@@ -413,16 +423,16 @@ beige/
 
 ## Tech Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| LLM layer | pi SDK (`@mariozechner/pi-coding-agent`) | Handles providers (Anthropic, OpenAI/ZAI, etc.), streaming, sessions, auth. No need to reimplement. |
-| Gateway runtime | Node.js + TypeScript | pi SDK is Node-native. GrammY is Node-native. |
-| Sandbox runtime | Deno (inside Docker) | Native TS execution, no build step, secure-by-default permissions. |
-| Container runtime | Docker | Works on Docker Desktop (Mac) and Linux. |
-| Socket | Unix domain socket | Peer identity from connection (not payload). Simple, fast, no TCP overhead. |
-| Config format | JSON5 | JSON with comments. Human-readable, familiar syntax, env var interpolation. |
-| Audit format | JSONL | Append-only, streamable, parseable. |
-| Session settings | JSON file (`session-settings.json`) | Simple persistence for per-session overrides. Layered with channel defaults. |
-| Build tool | tsx (dev) / tsc (build) | Fast dev iteration with tsx, standard tsc for production. |
-| Install strategy | Lazy first-run setup (no `postinstall`) | `postinstall` runs on `npm install` in dev too and cannot distinguish `--global`. Lazy setup in `src/install.ts` fires only on first real command, skips entirely for source installs (detected via `.git` at package root). |
-| npm package contents | `dist/` + `tools/` (via `files` in `package.json`) | Tool packages must ship with the npm package so `beige setup` can copy them to `~/.beige/tools/`. |
+| Decision             | Choice                                             | Rationale                                                                                                                                                                                                                    |
+| -------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LLM layer            | pi SDK (`@mariozechner/pi-coding-agent`)           | Handles providers (Anthropic, OpenAI/ZAI, etc.), streaming, sessions, auth. No need to reimplement.                                                                                                                          |
+| Gateway runtime      | Node.js + TypeScript                               | pi SDK is Node-native. GrammY is Node-native.                                                                                                                                                                                |
+| Sandbox runtime      | Deno (inside Docker)                               | Native TS execution, no build step, secure-by-default permissions.                                                                                                                                                           |
+| Container runtime    | Docker                                             | Works on Docker Desktop (Mac) and Linux.                                                                                                                                                                                     |
+| Socket               | Unix domain socket                                 | Peer identity from connection (not payload). Simple, fast, no TCP overhead.                                                                                                                                                  |
+| Config format        | JSON5                                              | JSON with comments. Human-readable, familiar syntax, env var interpolation.                                                                                                                                                  |
+| Audit format         | JSONL                                              | Append-only, streamable, parseable.                                                                                                                                                                                          |
+| Session settings     | JSON file (`session-settings.json`)                | Simple persistence for per-session overrides. Layered with channel defaults.                                                                                                                                                 |
+| Build tool           | tsx (dev) / tsc (build)                            | Fast dev iteration with tsx, standard tsc for production.                                                                                                                                                                    |
+| Install strategy     | Lazy first-run setup (no `postinstall`)            | `postinstall` runs on `npm install` in dev too and cannot distinguish `--global`. Lazy setup in `src/install.ts` fires only on first real command, skips entirely for source installs (detected via `.git` at package root). |
+| npm package contents | `dist/` + `tools/` (via `files` in `package.json`) | Tool packages must ship with the npm package so `beige setup` can copy them to `~/.beige/tools/`.                                                                                                                            |

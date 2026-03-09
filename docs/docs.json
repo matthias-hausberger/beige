@@ -21,60 +21,72 @@
     ]
   },
   "navigation": {
-    "anchors": [
+    "versions": [
       {
-        "anchor": "Architecture",
-        "icon": "sitemap",
-        "href": "/architecture"
-      },
-      {
-        "anchor": "API Reference",
-        "icon": "terminal",
-        "href": "/api"
-      }
-    ],
-    "groups": [
-      {
-        "group": "Get Started",
-        "pages": [
-          "index",
-          "introduction",
-          "installation"
+        "version": "v0.0.1",
+        "tabs": [
+          {
+            "tab": "Get Started",
+            "anchors": [
+              {
+                "anchor": "Architecture",
+                "icon": "sitemap",
+                "href": "/architecture"
+              },
+              {
+                "anchor": "API Reference",
+                "icon": "terminal",
+                "href": "/api"
+              }
+            ]
+          },
+          {
+            "tab": "Gateway"
+          },
+          {
+            "tab": "Agents",
+            "pages": [
+              "test"
+            ]
+          },
+          {
+            "tab": "Channels"
+          },
+          {
+            "tab": "Tools"
+          }
         ]
       },
       {
-        "group": "Core Concepts",
-        "pages": [
-          "architecture",
-          "system-overview",
-          "security-model"
-        ]
-      },
-      {
-        "group": "Configuration",
-        "pages": [
-          "configuration"
-        ]
-      },
-      {
-        "group": "Tools & Toolkits",
-        "pages": [
-          "tools",
-          "toolkits"
-        ]
-      },
-      {
-        "group": "Channels",
-        "pages": [
-          "channels/telegram",
-          "channels/tui"
-        ]
-      },
-      {
-        "group": "Reference",
-        "pages": [
-          "api",
-          "request-flows"
+        "version": "v0.0.2",
+        "tabs": [
+          {
+            "tab": "Get Started",
+            "anchors": [
+              {
+                "anchor": "Architecture",
+                "icon": "sitemap",
+                "href": "/architecture"
+              },
+              {
+                "anchor": "API Reference",
+                "icon": "terminal",
+                "href": "/api"
+              }
+            ]
+          },
+          {
+            "tab": "Gateway"
+          },
+          {
+            "tab": "Agents"
+          },
+          {
+            "tab": "Channels"
+          },
+          {
+            "tab": "Tools"
+          }
         ]
       }
     ]

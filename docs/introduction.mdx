@@ -1,0 +1,54 @@
+---
+title: Introduction
+description: Secure, open-source, sandboxed agent system
+---
+
+# Beige
+
+Beige is a secure, open-source, sandboxed agent system. AI agents write and execute code inside Docker containers. The gateway orchestrates LLM calls, enforces policies, audit-logs every tool invocation, and routes tool execution.
+
+## Key Features
+
+- **Docker Sandboxing**: All code execution happens in isolated containers
+- **Policy Enforcement**: Fine-grained control over what agents can do
+- **Audit Logging**: Every tool invocation is logged for accountability
+- **Multi-Channel**: Support for Telegram, TUI, and custom integrations
+- **Extensible Tools**: Build custom tools and toolkits
+
+## Quick Start
+
+```bash
+# Install globally
+npm install -g beige
+
+# Or install from source
+git clone https://github.com/matthias-hausberger/beige.git
+cd beige
+pnpm install && pnpm run build
+```
+
+## Architecture Overview
+
+Beige uses a two-process model:
+
+- **Gateway**: Manages sandboxes, sockets, tools, audit logs, HTTP API, and Telegram
+- **TUI**: Connects via HTTP API, runs LLM locally using the pi SDK
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│     Gateway     │────▶│ Docker Sandbox  │
+│   (Port 7433)   │     │   (per agent)   │
+└────────┬────────┘     └─────────────────┘
+         │
+    ┌────┴────┐
+    │         │
+┌───▼───┐ ┌───▼───┐
+│  TUI  │ │Telegram│
+└───────┘ └───────┘
+```
+
+## Next Steps
+
+- [Installation Guide](/installation) - Detailed setup instructions
+- [Architecture](/architecture) - Deep dive into system design
+- [Configuration](/configuration) - Configure your agents

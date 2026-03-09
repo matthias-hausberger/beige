@@ -1,0 +1,87 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Beige",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#C2A467",
+    "light": "#D4B87A",
+    "dark": "#A08550"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/matthias-hausberger/beige"
+      }
+    ]
+  },
+  "navigation": {
+    "anchors": [
+      {
+        "anchor": "Architecture",
+        "icon": "sitemap",
+        "href": "/architecture"
+      },
+      {
+        "anchor": "API Reference",
+        "icon": "terminal",
+        "href": "/api"
+      }
+    ],
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": [
+          "index",
+          "introduction",
+          "installation"
+        ]
+      },
+      {
+        "group": "Core Concepts",
+        "pages": [
+          "architecture",
+          "system-overview",
+          "security-model"
+        ]
+      },
+      {
+        "group": "Configuration",
+        "pages": [
+          "configuration"
+        ]
+      },
+      {
+        "group": "Tools & Toolkits",
+        "pages": [
+          "tools",
+          "toolkits"
+        ]
+      },
+      {
+        "group": "Channels",
+        "pages": [
+          "channels/telegram",
+          "channels/tui"
+        ]
+      },
+      {
+        "group": "Reference",
+        "pages": [
+          "api",
+          "request-flows"
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/matthias-hausberger/beige"
+    }
+  }
+}

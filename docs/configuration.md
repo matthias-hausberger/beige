@@ -73,6 +73,18 @@ Any string value can reference environment variables using `${VAR_NAME}` syntax.
     },
   },
 
+  // ─── Skill Registry ───────────────────────────────────────────────
+  skills: {
+    // Skill name → config.
+    // Skills provide specialized knowledge mounted at /skills/<name>/.
+    "code-review": {
+      path: "./skills/code-review",  // path to skill package (relative to config file)
+    },
+    testing: {
+      path: "./skills/testing",
+    },
+  },
+
   // ─── Agents ───────────────────────────────────────────────────────
   agents: {
     // Agent name → config.
@@ -87,6 +99,7 @@ Any string value can reference environment variables using `${VAR_NAME}` syntax.
         { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
       ],
       tools: ["kv"],                              // tool names from the tools registry
+      skills: ["code-review", "testing"],         // skill names from the skills registry
       sandbox: {                                  // optional sandbox overrides
         image: "beige-sandbox:latest",            // Docker image (default)
         extraMounts: {                            // additional bind mounts

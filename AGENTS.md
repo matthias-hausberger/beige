@@ -15,6 +15,7 @@ Before making changes, review:
 - **`CONTRIBUTING.md`** — Development setup, code style, PR process
 - **`docs/architecture.md`** — System design and directory layout
 - **`docs/tools.md`** — How to write tool packages
+- **`docs/skills.md`** — How to write skill packages
 
 ### Code Style
 - TypeScript strict mode
@@ -73,6 +74,7 @@ project/              # Vision + use cases
 - `docs/security-model.md` — threat model, defense layers
 - `docs/configuration.md` — full config reference, directory layout
 - `docs/tools.md` — writing tools, protocol, mounting
+- `docs/skills.md` — writing skills, dependencies, mounting
 - `docs/toolkits.md` — creating, publishing, and installing toolkits
 - `docs/api.md` — HTTP API reference for gateway endpoints
 - `project/vision.md` — project vision and goals
@@ -86,6 +88,7 @@ project/              # Vision + use cases
 - **pi SDK for LLM** — no custom provider implementation, uses `AuthStorage.setRuntimeApiKey()`
 - **Gateway HTTP API** on port 7433 — TUI and future channels connect here
 - **Sessions persist** to `~/.beige/sessions/<agent>/` as `.jsonl` files
+- **Skills** — read-only knowledge packages mounted at `/skills/<name>/`, referenced in system prompt
 - **Toolkits** — distributable collections of tools, installable from npm, GitHub, or local paths
 
 ## Current State

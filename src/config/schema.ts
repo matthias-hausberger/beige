@@ -28,6 +28,8 @@ export interface ToolConfig {
   target: "gateway" | "sandbox";
   /** Arbitrary tool-specific configuration */
   config?: Record<string, unknown>;
+  /** Internal: marks tools auto-loaded from toolkits */
+  _toolkit?: string;
 }
 
 export interface AgentConfig {

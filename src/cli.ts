@@ -13,6 +13,8 @@
  *   beige gateway logs                 Show gateway logs
  *   beige gateway logs -f              Follow gateway logs (tail -f)
  *   beige tui [agent]                  Connect to a running gateway via TUI
+ *   beige install <source>             Install a toolkit (npm, github, local, url)
+ *   beige toolkit <command>            Manage toolkits
  *   beige --config <path>              Use a specific config file
  *
  *   Shell 1:  beige                    ← starts gateway daemon
@@ -31,6 +33,13 @@ import {
 import { spawn } from "child_process";
 import { watch } from "fs";
 import { isSourceInstall, runSetup } from "./install.js";
+import {
+  installToolkit,
+  removeToolkit,
+  listInstalledToolkits,
+  getInstalledToolkit,
+  sourceToString,
+} from "./toolkit/index.js";
 
 // ── Paths ────────────────────────────────────────────────────────────
 
@@ -281,7 +290,12 @@ type Mode =
   | { kind: "gateway-status" }
   | { kind: "gateway-logs"; follow: boolean }
   | { kind: "tui"; agentName?: string }
-  | { kind: "setup"; force: boolean };
+  | { kind: "setup"; force: boolean }
+  | { kind: "install"; source: string; force: boolean }
+  | { kind: "toolkit-list" }
+  | { kind: "toolkit-show"; name: string }
+  | { kind: "toolkit-remove"; name: string }
+  | { kind: "toolkit-update" };
 
 function printHelp() {
   console.log(`
@@ -291,6 +305,8 @@ Usage:
   beige setup                            First-time setup (copies tools, writes default config)
   beige gateway <command>                Manage the gateway daemon
   beige tui [agent]                      Connect TUI to running gateway
+  beige install <source>                 Install a toolkit (npm, github, local, url)
+  beige toolkit <command>                Manage toolkits
 
 Options:
   -c, --config <path>        Config file (default: ~/.beige/config.json5)
@@ -298,6 +314,31 @@ Options:
   -h, --help                 Show this help
 
 Run 'beige gateway' for gateway-specific commands.
+Run 'beige toolkit' for toolkit-specific commands.
+`);
+}
+
+function printToolkitHelp() {
+  console.log(`
+Beige — Toolkit commands
+
+Usage:
+  beige install <source>                 Install a toolkit
+  beige toolkit list                     List installed toolkits
+  beige toolkit show <name>              Show toolkit details
+  beige toolkit remove <name>            Remove a toolkit
+  beige toolkit update                   Update all installed toolkits
+
+Install sources:
+  npm:@scope/toolkit-name                NPM package
+  github:owner/repo                      GitHub repository
+  github:owner/repo#tag                  GitHub repository with tag/branch
+  ./path/to/toolkit                      Local directory
+  https://.../toolkit.tar.gz             URL to tarball
+
+Options:
+  --force, -f                Force install even with conflicts
+  -h, --help                 Show this help
 `);
 }
 
@@ -377,6 +418,47 @@ function parseArgs(): Mode {
     return { kind: "setup", force };
   }
 
+  if (cmd === "install") {
+    if (!sub || sub === "--help" || sub === "-h") {
+      printToolkitHelp();
+      process.exit(sub === "--help" || sub === "-h" ? 0 : 1);
+    }
+    const force = rest.includes("--force") || rest.includes("-f");
+    return { kind: "install", source: sub, force };
+  }
+
+  if (cmd === "toolkit") {
+    if (!sub || sub === "--help" || sub === "-h") {
+      printToolkitHelp();
+      process.exit(0);
+    }
+    if (sub === "list") {
+      return { kind: "toolkit-list" };
+    }
+    if (sub === "show") {
+      const name = rest[0];
+      if (!name) {
+        console.error("[BEIGE] Missing toolkit name. Usage: beige toolkit show <name>");
+        process.exit(1);
+      }
+      return { kind: "toolkit-show", name };
+    }
+    if (sub === "remove") {
+      const name = rest[0];
+      if (!name) {
+        console.error("[BEIGE] Missing toolkit name. Usage: beige toolkit remove <name>");
+        process.exit(1);
+      }
+      return { kind: "toolkit-remove", name };
+    }
+    if (sub === "update") {
+      return { kind: "toolkit-update" };
+    }
+    console.error(`[BEIGE] Unknown toolkit subcommand: ${sub}`);
+    printToolkitHelp();
+    process.exit(1);
+  }
+
   console.error(`[BEIGE] Unknown command: ${cmd}`);
   printHelp();
   process.exit(1);
@@ -448,4 +530,128 @@ if (mode.kind === "setup") {
     console.error("[BEIGE] TUI error:", err);
     process.exit(1);
   }
+} else if (mode.kind === "install") {
+  await cmdInstall(mode.source, mode.force);
+} else if (mode.kind === "toolkit-list") {
+  cmdToolkitList();
+} else if (mode.kind === "toolkit-show") {
+  cmdToolkitShow(mode.name);
+} else if (mode.kind === "toolkit-remove") {
+  cmdToolkitRemove(mode.name);
+} else if (mode.kind === "toolkit-update") {
+  await cmdToolkitUpdate();
+}
+
+async function cmdInstall(source: string, force: boolean): Promise<void> {
+  console.log(`[BEIGE] Installing toolkit from: ${source}`);
+  
+  const result = await installToolkit(source, { force });
+  
+  if (!result.success) {
+    if (result.conflicts && result.conflicts.length > 0) {
+      console.error("[BEIGE] Tool name conflicts detected:");
+      for (const conflict of result.conflicts) {
+        console.error(`  - ${conflict}`);
+      }
+      console.error("\n[BEIGE] Use --force to override.");
+    } else {
+      console.error(`[BEIGE] Failed to install toolkit: ${result.error}`);
+    }
+    process.exit(1);
+  }
+  
+  if (result.toolkit) {
+    const action = result.updated ? "Updated" : "Installed";
+    console.log(`[BEIGE] ${action} toolkit: ${result.toolkit.manifest.name} v${result.toolkit.manifest.version}`);
+    console.log(`[BEIGE] Tools available:`);
+    for (const tool of result.toolkit.tools) {
+      console.log(`  - ${tool.name}: ${tool.manifest.description}`);
+    }
+    console.log(`\n[BEIGE] Add tools to your agent's config to enable them.`);
+  }
+}
+
+function cmdToolkitList(): void {
+  const toolkits = listInstalledToolkits();
+  
+  if (toolkits.length === 0) {
+    console.log("[BEIGE] No toolkits installed.");
+    console.log("\n[BEIGE] Install a toolkit with: beige install <source>");
+    return;
+  }
+  
+  console.log("[BEIGE] Installed toolkits:\n");
+  
+  for (const toolkit of toolkits) {
+    const source = sourceToString(toolkit.source);
+    console.log(`  ${toolkit.name} v${toolkit.version}`);
+    console.log(`    Source: ${source}`);
+    console.log(`    Tools: ${toolkit.tools.join(", ")}`);
+    console.log(`    Installed: ${new Date(toolkit.installedAt).toLocaleDateString()}`);
+    console.log();
+  }
+}
+
+function cmdToolkitShow(name: string): void {
+  const toolkit = getInstalledToolkit(name);
+  
+  if (!toolkit) {
+    console.error(`[BEIGE] Toolkit '${name}' not found.`);
+    console.error("[BEIGE] Run 'beige toolkit list' to see installed toolkits.");
+    process.exit(1);
+  }
+  
+  const source = sourceToString(toolkit.source);
+  
+  console.log(`Toolkit: ${toolkit.name}`);
+  console.log(`Version: ${toolkit.version}`);
+  console.log(`Source:  ${source}`);
+  console.log(`Path:    ${toolkit.path}`);
+  console.log(`Installed: ${new Date(toolkit.installedAt).toLocaleString()}`);
+  console.log(`\nTools:`);
+  for (const toolName of toolkit.tools) {
+    console.log(`  - ${toolName}`);
+  }
+}
+
+function cmdToolkitRemove(name: string): void {
+  const result = removeToolkit(name);
+  
+  if (!result.success) {
+    console.error(`[BEIGE] ${result.error}`);
+    process.exit(1);
+  }
+  
+  console.log(`[BEIGE] Removed toolkit: ${name}`);
+}
+
+async function cmdToolkitUpdate(): Promise<void> {
+  const toolkits = listInstalledToolkits();
+  
+  if (toolkits.length === 0) {
+    console.log("[BEIGE] No toolkits installed.");
+    return;
+  }
+  
+  console.log(`[BEIGE] Updating ${toolkits.length} toolkit(s)...\n`);
+  
+  let updated = 0;
+  let failed = 0;
+  
+  for (const toolkit of toolkits) {
+    const source = sourceToString(toolkit.source);
+    console.log(`[BEIGE] Updating ${toolkit.name} from ${source}...`);
+    
+    const result = await installToolkit(source, { force: true });
+    
+    if (result.success) {
+      console.log(`[BEIGE]   Updated to v${result.toolkit?.manifest.version}`);
+      updated++;
+    } else {
+      console.error(`[BEIGE]   Failed: ${result.error}`);
+      failed++;
+    }
+  }
+  
+  console.log(`\n[BEIGE] Update complete: ${updated} updated, ${failed} failed.`);
 }

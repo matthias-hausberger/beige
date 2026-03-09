@@ -1,7 +1,58 @@
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
+import { homedir } from "os";
 import JSON5 from "json5";
-import { type BeigeConfig, validateConfig } from "./schema.js";
+import { type BeigeConfig, type ToolConfig, validateConfig } from "./schema.js";
+import { listInstalledToolkits, getToolkitsDir } from "../toolkit/registry.js";
+
+const TOOLKIT_MARK = "_toolkit";
+
+interface ToolkitRegistry {
+  version: number;
+  toolkits: Record<string, {
+    name: string;
+    path: string;
+    tools: string[];
+  }>;
+}
+
+function loadToolkitRegistry(): ToolkitRegistry | null {
+  const registryPath = resolve(homedir(), ".beige", "toolkit-registry.json");
+  if (!existsSync(registryPath)) {
+    return null;
+  }
+  try {
+    const content = readFileSync(registryPath, "utf-8");
+    return JSON.parse(content);
+  } catch {
+    return null;
+  }
+}
+
+function mergeToolkitTools(config: BeigeConfig, configDir: string): void {
+  const registry = loadToolkitRegistry();
+  if (!registry) {
+    return;
+  }
+
+  for (const [toolkitName, toolkit] of Object.entries(registry.toolkits)) {
+    for (const toolName of toolkit.tools) {
+      if (config.tools[toolName]) {
+        continue;
+      }
+      
+      const toolPath = resolve(toolkit.path, "tools", toolName);
+      
+      const toolConfig: ToolConfig & { [TOOLKIT_MARK]?: string } = {
+        path: toolPath,
+        target: "gateway",
+        [TOOLKIT_MARK]: toolkitName,
+      };
+      
+      config.tools[toolName] = toolConfig;
+    }
+  }
+}
 
 /**
  * Resolve environment variable references in strings.
@@ -54,6 +105,7 @@ export function loadConfig(configPath: string): BeigeConfig {
 
   const config = validateConfig(resolved);
   resolveToolPaths(config, configDir);
+  mergeToolkitTools(config, configDir);
 
   return config;
 }

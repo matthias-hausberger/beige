@@ -315,3 +315,24 @@ The smallest config that will start:
 ```
 
 This creates an agent with no tools — it can still use the 4 core tools (`read`, `write`, `patch`, `exec`) to work inside its sandbox.
+
+## Toolkit Tools
+
+Tools from installed toolkits are automatically discovered and added to your configuration. You don't need to manually add their paths — just enable them in your agents:
+
+```json5
+{
+  // Tools from toolkits are auto-discovered
+  tools: {
+    // Built-in or manually configured tools go here
+    kv: { path: "~/.beige/tools/kv", target: "gateway" },
+  },
+  agents: {
+    assistant: {
+      tools: ["kv", "slack", "github"],  // slack and github from installed toolkits
+    },
+  },
+}
+```
+
+See [Toolkits](./toolkits.md) for installing and managing toolkits.

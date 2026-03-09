@@ -46,6 +46,7 @@ src/
 ├── sandbox/          # Docker container lifecycle (manager.ts)
 ├── socket/           # Unix socket server + protocol (server.ts, protocol.ts)
 ├── tools/            # Tool registry, runner, core tools (registry.ts, runner.ts, core.ts)
+├── toolkit/          # Toolkit system (schema.ts, registry.ts, installer.ts)
 ├── cli.ts            # CLI entry point
 └── index.ts          # Programmatic exports
 sandbox/              # Dockerfile + tool-client for sandbox containers
@@ -64,6 +65,7 @@ project/              # Vision + use cases
 - `docs/security-model.md` — threat model, defense layers
 - `docs/configuration.md` — full config reference, directory layout
 - `docs/tools.md` — writing tools, protocol, mounting
+- `docs/toolkits.md` — creating, publishing, and installing toolkits
 - `docs/api.md` — HTTP API reference for gateway endpoints
 - `project/vision.md` — project vision and goals
 - `project/usecases.md` — use cases
@@ -76,6 +78,7 @@ project/              # Vision + use cases
 - **pi SDK for LLM** — no custom provider implementation, uses `AuthStorage.setRuntimeApiKey()`
 - **Gateway HTTP API** on port 7433 — TUI and future channels connect here
 - **Sessions persist** to `~/.beige/sessions/<agent>/` as `.jsonl` files
+- **Toolkits** — distributable collections of tools, installable from npm, GitHub, or local paths
 
 ## Current State
 

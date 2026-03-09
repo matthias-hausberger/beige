@@ -329,9 +329,23 @@ The same tool package can be registered multiple times with different names, tar
       config: { allowedChannels: ["*"] },
     },
   },
-  agents: {
-    intern: { tools: ["slack"] },            // restricted
-    admin:  { tools: ["slack-unrestricted"] }, // full access
-  },
-}
+   agents: {
+     intern: { tools: ["slack"] },            // restricted
+     admin:  { tools: ["slack-unrestricted"] }, // full access
+   },
+ }
 ```
+
+## Distributing Tools via Toolkits
+
+For sharing tools with others or managing multiple related tools, use **toolkits**. A toolkit is a collection of tools that can be installed from npm, GitHub, or local paths.
+
+```bash
+# Install a toolkit
+beige install @myorg/communication-tools
+
+# List installed toolkits
+beige toolkit list
+```
+
+See [Toolkits](./toolkits.md) for the full guide on creating, publishing, and installing toolkits.

@@ -16,6 +16,7 @@ import type { AuditLogger } from "./audit.js";
 import type { BeigeSessionStore } from "./sessions.js";
 import { createCoreTools, type ToolStartHandlerRef } from "../tools/core.js";
 import { buildToolContext, type LoadedTool } from "../tools/registry.js";
+import { buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
 import { ProviderHealthTracker, extractRateLimitInfo } from "./provider-health.js";
 
 /**
@@ -65,6 +66,7 @@ export class AgentManager {
     private sandbox: SandboxManager,
     private audit: AuditLogger,
     private loadedTools: Map<string, LoadedTool>,
+    private loadedSkills: Map<string, LoadedSkill>,
     private authStorage: AuthStorage,
     private modelRegistry: ModelRegistry,
     private sessionStore: BeigeSessionStore
@@ -113,12 +115,16 @@ export class AgentManager {
 
     console.log(`[AGENT] Creating session for '${agentName}' (key: ${sessionKey})`);
 
+    // Validate skill dependencies
+    validateSkillDeps(agentConfig.skills ?? [], agentConfig.tools, this.loadedSkills);
+
     // Build pi session — wire onToolStart so channels get notified on tool calls.
     // Store the ref on the ManagedSession so it can be mutated at runtime (verbose toggle).
     const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
     const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef);
     const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
-    const systemPrompt = buildSystemPrompt(agentName, toolContext);
+    const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
+    const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
 
     const model = this.resolveModel(agentConfig);
 
@@ -500,11 +506,15 @@ export class AgentManager {
 
     console.log(`[AGENT] Creating session for '${agentName}' with model ${modelRef.provider}/${modelRef.model} (key: ${sessionKey})`);
 
+    // Validate skill dependencies
+    validateSkillDeps(agentConfig.skills ?? [], agentConfig.tools, this.loadedSkills);
+
     // Build pi session
     const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
     const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef);
     const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
-    const systemPrompt = buildSystemPrompt(agentName, toolContext);
+    const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
+    const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
 
     const model = this.resolveModelFromRef(modelRef);
 
@@ -673,7 +683,7 @@ export class AgentManager {
   }
 }
 
-export function buildSystemPrompt(agentName: string, toolContext: string): string {
+export function buildSystemPrompt(agentName: string, toolContext: string, skillContext: string = ""): string {
   return `You are an AI agent named "${agentName}" running inside a secure sandbox managed by the Beige agent system.
 
 ## Environment
@@ -700,7 +710,7 @@ To write and run a script:
 Scripts can call tools by executing \`/tools/bin/<tool-name>\` as subprocesses.
 
 ${toolContext}
-
+${skillContext}
 ## Guidelines
 
 - Be helpful and proactive.

@@ -13,6 +13,7 @@ import { SandboxManager } from "../sandbox/manager.js";
 import { AgentSocketServer } from "../socket/server.js";
 import { ToolRunner } from "../tools/runner.js";
 import { loadTools, type LoadedTool } from "../tools/registry.js";
+import { loadSkills, type LoadedSkill } from "../skills/registry.js";
 import { TelegramChannel } from "../channels/telegram.js";
 
 /**
@@ -38,6 +39,7 @@ export class Gateway {
   private socketServers = new Map<string, AgentSocketServer>();
   private telegramChannel?: TelegramChannel;
   private loadedTools!: Map<string, LoadedTool>;
+  private loadedSkills!: Map<string, LoadedSkill>;
   /** True while a restart is in progress — prevents overlapping restarts. */
   private restarting = false;
 
@@ -60,33 +62,38 @@ export class Gateway {
     this.loadedTools = await loadTools(this.config, this.toolRunner);
     console.log(`[GATEWAY] Loaded ${this.loadedTools.size} tool(s)`);
 
-    // 2. Set up auth and model registry for pi SDK
+    // 2. Load skill packages
+    this.loadedSkills = await loadSkills(this.config);
+    console.log(`[GATEWAY] Loaded ${this.loadedSkills.size} skill(s)`);
+
+    // 3. Set up auth and model registry for pi SDK
     const authStorage = this.setupAuth();
     const modelRegistry = new ModelRegistry(authStorage);
 
-    // 3. Create sandbox manager
-    this.sandboxManager = new SandboxManager(this.config, this.loadedTools);
+    // 4. Create sandbox manager
+    this.sandboxManager = new SandboxManager(this.config, this.loadedTools, this.loadedSkills);
 
-    // 4. Create agent manager
+    // 5. Create agent manager
     this.agentManager = new AgentManager(
       this.config,
       this.sandboxManager,
       this.audit,
       this.loadedTools,
+      this.loadedSkills,
       authStorage,
       modelRegistry,
       this.sessionStore
     );
 
-    // 5. Build beige-sandbox image if any agent needs it (no-op otherwise)
+    // 6. Build beige-sandbox image if any agent needs it (no-op otherwise)
     await this.sandboxManager.ensureSandboxImage();
 
-    // 6. Start sandboxes and socket servers for each agent
+    // 7. Start sandboxes and socket servers for each agent
     for (const agentName of Object.keys(this.config.agents)) {
       await this.startAgentInfra(agentName);
     }
 
-    // 7. Start HTTP API (for TUI and other external channels)
+    // 8. Start HTTP API (for TUI and other external channels)
     const host = this.config.gateway?.host ?? "127.0.0.1";
     const port = this.config.gateway?.port ?? 7433;
 
@@ -102,7 +109,7 @@ export class Gateway {
     });
     await this.api.start();
 
-    // 8. Start Telegram channel (non-blocking)
+    // 9. Start Telegram channel (non-blocking)
     if (this.config.channels?.telegram?.enabled) {
       this.telegramChannel = new TelegramChannel(
         this.config.channels.telegram,

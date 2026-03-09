@@ -22,6 +22,7 @@ import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
 import { SessionSettingsStore, resolveSessionSetting } from "../gateway/session-settings.js";
 import { BeigeSessionStore } from "../gateway/sessions.js";
+import { loadSkills, buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
 
 /**
  * TUI channel — runs in a separate process and connects to the gateway HTTP API.
@@ -66,6 +67,7 @@ interface TUIState {
   modelRegistry: ModelRegistry;
   settingsStore: SessionSettingsStore;
   sessionStore: BeigeSessionStore;
+  loadedSkills: Map<string, LoadedSkill>;
 }
 
 export async function launchTUI(opts: TUIOptions): Promise<void> {
@@ -88,7 +90,7 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
 
   // Fetch available agents from gateway
   const agentsRes = await fetch(`${gatewayUrl}/api/agents`);
-  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[] }> };
+  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[]; skills: string[] }> };
   const agentNames = agents.map((a) => a.name);
 
   let agentName = opts.agentName;
@@ -114,6 +116,9 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
   }
   const modelRegistry = new ModelRegistry(authStorage);
 
+  // ── Load skills ────────────────────────────────────────────
+  const loadedSkills = await loadSkills(config);
+
   // ── Shared state ──────────────────────────────────────────
   const settingsStore = new SessionSettingsStore();
   const sessionStore = new BeigeSessionStore();
@@ -130,6 +135,7 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
     modelRegistry,
     settingsStore,
     sessionStore,
+    loadedSkills,
   };
 
   // Wire initial verbose state
@@ -171,18 +177,23 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
  * Create a new pi session for the current agent in state.
  */
 async function createSession(state: TUIState, extensionsResult: LoadExtensionsResult): Promise<void> {
-  const { agentName, agentConfig, gatewayUrl, authStorage, modelRegistry, toolStartHandlerRef } = state;
+  const { agentName, agentConfig, gatewayUrl, authStorage, modelRegistry, toolStartHandlerRef, loadedSkills } = state;
 
   // Fetch agent info from gateway
   const agentsRes = await fetch(`${gatewayUrl}/api/agents`);
-  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[] }> };
+  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[]; skills: string[] }> };
   const agentInfo = agents.find((a) => a.name === agentName);
   const toolNames = agentInfo?.tools ?? [];
+  const skillNames = agentInfo?.skills ?? [];
+
+  // Validate skill dependencies
+  validateSkillDeps(skillNames, toolNames, loadedSkills);
 
   const model = resolveModel(agentConfig, modelRegistry);
   const coreTools = createProxyTools(agentName, gatewayUrl, toolStartHandlerRef);
   const toolContext = buildToolContext(toolNames);
-  const systemPrompt = buildSystemPrompt(agentName, toolContext);
+  const skillContext = buildSkillContext(skillNames, loadedSkills);
+  const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
 
   const sessionsDir = resolve(homedir(), ".beige", "sessions", agentName);
   let sessionManager: ReturnType<typeof SessionManager.create>;
@@ -458,12 +469,14 @@ async function buildBeigeExtension(
 async function buildResourceLoader(state: TUIState): Promise<ResourceLoader> {
   // Fetch agent info from gateway
   const agentsRes = await fetch(`${state.gatewayUrl}/api/agents`);
-  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[] }> };
+  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[]; skills: string[] }> };
   const agentInfo = agents.find((a) => a.name === state.agentName);
   const toolNames = agentInfo?.tools ?? [];
+  const skillNames = agentInfo?.skills ?? [];
 
   const toolContext = buildToolContext(toolNames);
-  const systemPrompt = buildSystemPrompt(state.agentName, toolContext);
+  const skillContext = buildSkillContext(skillNames, state.loadedSkills);
+  const systemPrompt = buildSystemPrompt(state.agentName, toolContext, skillContext);
 
   // Build minimal extension result for resource loader
   const runtime = createExtensionRuntime();
@@ -672,7 +685,7 @@ function buildToolContext(toolNames: string[]): string {
   return lines.join("\n");
 }
 
-function buildSystemPrompt(agentName: string, toolContext: string): string {
+function buildSystemPrompt(agentName: string, toolContext: string, skillContext: string = ""): string {
   return `You are an AI agent named "${agentName}" running inside a secure sandbox managed by the Beige agent system.
 
 ## Environment
@@ -698,7 +711,7 @@ To write and run a script:
 Scripts can call tools by executing \`/tools/bin/<tool-name>\` as subprocesses.
 
 ${toolContext}
-
+${skillContext}
 ## Guidelines
 
 - Be helpful and proactive.

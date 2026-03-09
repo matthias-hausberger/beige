@@ -127,6 +127,39 @@ describe("validateConfig", () => {
       });
       expect(() => validateConfig(config)).toThrow("unknown tool 'nonexistent-tool'");
     });
+
+    it("throws when agent references unknown skill", () => {
+      const config = createMinimalConfig({
+        skills: {
+          "code-review": { path: "/skills/code-review" },
+        },
+        agents: {
+          assistant: {
+            model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+            tools: [],
+            skills: ["nonexistent-skill"],
+          },
+        },
+      });
+      expect(() => validateConfig(config)).toThrow("unknown skill 'nonexistent-skill'");
+    });
+
+    it("accepts config with skills", () => {
+      const config = createMinimalConfig({
+        skills: {
+          "code-review": { path: "/skills/code-review" },
+          "testing": { path: "/skills/testing" },
+        },
+        agents: {
+          assistant: {
+            model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+            tools: [],
+            skills: ["code-review", "testing"],
+          },
+        },
+      });
+      expect(() => validateConfig(config)).not.toThrow();
+    });
   });
 
   describe("channel validation", () => {

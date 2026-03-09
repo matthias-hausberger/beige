@@ -6,6 +6,7 @@
 export interface BeigeConfig {
   llm: LLMConfig;
   tools: Record<string, ToolConfig>;
+  skills?: Record<string, SkillConfig>;
   agents: Record<string, AgentConfig>;
   gateway?: GatewayServerConfig;
   channels: ChannelsConfig;
@@ -32,12 +33,30 @@ export interface ToolConfig {
   _toolkit?: string;
 }
 
+export interface SkillConfig {
+  /** Path to the skill package directory (relative to config file) */
+  path: string;
+}
+
+export interface SkillManifest {
+  name: string;
+  description: string;
+  /** Default: "README.md" */
+  contextFile?: string;
+  requires?: {
+    tools?: string[];
+    skills?: string[];
+  };
+}
+
 export interface AgentConfig {
   model: ModelRef;
   /** Fallback models to try if the primary fails (after retries exhausted) */
   fallbackModels?: ModelRef[];
   /** List of tool names from the tools registry that this agent can use */
   tools: string[];
+  /** List of skill names from the skills registry that this agent can use */
+  skills?: string[];
   sandbox?: SandboxConfig;
 }
 
@@ -125,6 +144,14 @@ export function validateConfig(config: unknown): BeigeConfig {
       if (!c.tools[toolName]) {
         throw new Error(
           `Config: agent '${agentName}' references unknown tool '${toolName}'`
+        );
+      }
+    }
+    // Validate agent skill references
+    for (const skillName of agent.skills ?? []) {
+      if (!c.skills?.[skillName]) {
+        throw new Error(
+          `Config: agent '${agentName}' references unknown skill '${skillName}'`
         );
       }
     }

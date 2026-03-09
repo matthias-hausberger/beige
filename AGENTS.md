@@ -23,6 +23,12 @@ Before making changes, review:
 - Meaningful variable names
 - Keep commits focused (one logical change per commit)
 
+### Testing
+- **Always add tests** for new functionality
+- Place tests alongside source files: `src/module/foo.spec.ts` tests `src/module/foo.ts`
+- Use the existing test framework patterns in the codebase
+- Run tests with `pnpm test` or `pnpm run test`
+
 ## Architecture (two-process model)
 
 ```
@@ -44,6 +50,7 @@ src/
 ├── channels/         # Channel adapters (telegram.ts, tui.ts)
 ├── config/           # Config loading + schema (loader.ts, schema.ts)
 ├── sandbox/          # Docker container lifecycle (manager.ts)
+├── skills/           # Skill loading and context building (registry.ts)
 ├── socket/           # Unix socket server + protocol (server.ts, protocol.ts)
 ├── tools/            # Tool registry, runner, core tools (registry.ts, runner.ts, core.ts)
 ├── toolkit/          # Toolkit system (schema.ts, registry.ts, installer.ts)
@@ -51,6 +58,7 @@ src/
 └── index.ts          # Programmatic exports
 sandbox/              # Dockerfile + tool-client for sandbox containers
 tools/kv/             # Example gateway-targeted tool (key-value store)
+skills/               # Example skills (code-review)
 docs/                 # Full documentation suite (architecture, flows, security, config, tools)
 examples/             # Example config
 project/              # Vision + use cases

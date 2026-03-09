@@ -6,6 +6,7 @@ import { PassThrough } from "stream";
 import { fileURLToPath } from "url";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { LoadedTool } from "../tools/registry.js";
+import type { LoadedSkill } from "../skills/registry.js";
 
 /** The image name prefix we build and manage. Any image starting with this is ours. */
 const BEIGE_IMAGE_PREFIX = "beige-sandbox";
@@ -27,7 +28,8 @@ export class SandboxManager {
 
   constructor(
     private config: BeigeConfig,
-    private loadedTools: Map<string, LoadedTool>
+    private loadedTools: Map<string, LoadedTool>,
+    private loadedSkills: Map<string, LoadedSkill>
   ) {
     this.docker = new Docker();
     this.beigeDir = resolve(homedir(), ".beige");
@@ -70,6 +72,14 @@ export class SandboxManager {
       const tool = this.loadedTools.get(toolName);
       if (tool) {
         binds.push(`${tool.path}:/tools/packages/${toolName}:ro`);
+      }
+    }
+
+    // Mount skill packages (read-only)
+    for (const skillName of agentConfig.skills ?? []) {
+      const skill = this.loadedSkills.get(skillName);
+      if (skill) {
+        binds.push(`${skill.path}:/skills/${skillName}:ro`);
       }
     }
 

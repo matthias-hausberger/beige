@@ -84,6 +84,7 @@ export class GatewayAPI {
           name,
           model: config.model,
           tools: config.tools,
+          skills: config.skills ?? [],
         }));
         return this.json(res, 200, { agents });
       }
@@ -161,6 +162,7 @@ export class GatewayAPI {
             model: agentConfig.model,
             fallbackModels: agentConfig.fallbackModels ?? [],
             tools: agentConfig.tools,
+            skills: agentConfig.skills ?? [],
           };
         }
 

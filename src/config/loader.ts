@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { homedir } from "os";
 import JSON5 from "json5";
-import { type BeigeConfig, type ToolConfig, validateConfig } from "./schema.js";
+import { type BeigeConfig, type ToolConfig, type SkillConfig, validateConfig } from "./schema.js";
 import { listInstalledToolkits, getToolkitsDir } from "../toolkit/registry.js";
 
 const TOOLKIT_MARK = "_toolkit";
@@ -93,6 +93,19 @@ function resolveToolPaths(config: BeigeConfig, configDir: string): void {
 }
 
 /**
+ * Resolve relative skill paths against the config file directory.
+ */
+function resolveSkillPaths(config: BeigeConfig, configDir: string): void {
+  if (!config.skills) return;
+  
+  for (const skill of Object.values(config.skills)) {
+    if (skill.path && !skill.path.startsWith("/")) {
+      skill.path = resolve(configDir, skill.path);
+    }
+  }
+}
+
+/**
  * Load and validate a beige config file (JSON5 format).
  */
 export function loadConfig(configPath: string): BeigeConfig {
@@ -105,6 +118,7 @@ export function loadConfig(configPath: string): BeigeConfig {
 
   const config = validateConfig(resolved);
   resolveToolPaths(config, configDir);
+  resolveSkillPaths(config, configDir);
   mergeToolkitTools(config, configDir);
 
   return config;

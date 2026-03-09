@@ -3,7 +3,7 @@
  * Import from './test/fixtures.js' (relative to src/).
  */
 
-import type { BeigeConfig, AgentConfig, ToolConfig, LLMProviderConfig } from "../config/schema.js";
+import type { BeigeConfig, AgentConfig, ToolConfig, LLMProviderConfig, SkillConfig } from "../config/schema.js";
 
 /**
  * Minimal valid config for testing.
@@ -105,6 +105,16 @@ export function createToolConfig(overrides: Partial<ToolConfig> = {}): ToolConfi
 export function createProviderConfig(overrides: Partial<LLMProviderConfig> = {}): LLMProviderConfig {
   return {
     apiKey: "test-key",
+    ...overrides,
+  };
+}
+
+/**
+ * Create a mock skill config.
+ */
+export function createSkillConfig(overrides: Partial<SkillConfig> = {}): SkillConfig {
+  return {
+    path: "/skills/test",
     ...overrides,
   };
 }

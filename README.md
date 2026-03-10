@@ -2,6 +2,8 @@
 
 Secure, sandboxed agent system. Let agents write and execute code — safely.
 
+**📚 [Documentation](https://beige.mintlify.app)** — Full docs at beige.mintlify.app
+
 ## What is Beige?
 
 Beige is an open-source agent gateway that runs AI agents inside Docker sandboxes. Agents have 4 core tools (`read`, `write`, `patch`, `exec`) and can use additional tools exposed as executables. All tool calls route through the gateway for policy enforcement and audit logging.
@@ -104,13 +106,38 @@ Channels
   Policy Engine → Audit Logger → Tool Runner
 ```
 
-See [docs/](docs/) for full documentation:
-- [Installation](docs/installation.md) — npm vs source install, setup flow, detection logic
-- [System Overview](docs/system-overview.md) — architecture diagrams
-- [Request Flows](docs/request-flows.md) — sequence diagrams for every request type
-- [Security Model](docs/security-model.md) — sandboxing, identity, threat model
-- [Tools](docs/tools.md) — how to write and use tools
-- [Configuration](docs/configuration.md) — full config reference
+## Documentation
+
+Full documentation is available at **[beige.mintlify.app](https://beige.mintlify.app)**:
+
+| Section | Description |
+|---------|-------------|
+| [**Introduction**](https://beige.mintlify.app/introduction) | What Beige is, why we built it, and how it works |
+| [**Getting Started**](https://beige.mintlify.app/getting-started) | Install and run your first agent |
+| [**The Gateway**](https://beige.mintlify.app/gateway) | Deep dive into architecture and security |
+| [**Agents**](https://beige.mintlify.app/agents) | Configure providers, models, tools, and skills |
+| [**Channels & Tools**](https://beige.mintlify.app/channels-and-tools) | TUI, Telegram, HTTP API, and extensibility |
+
+### Reference Documentation
+
+- [Configuration Reference](docs/configuration.mdx) — Complete config file reference
+- [Tools Reference](docs/tools.mdx) — Tool packages, launchers, socket protocol
+- [Toolkits Reference](docs/toolkits.mdx) — Installing and creating toolkits
+- [Skills Reference](docs/skills.mdx) — Creating knowledge packages
+- [HTTP API Reference](docs/api.mdx) — Full REST API reference
+- [Security Model](docs/security-model.mdx) — Threat model and defense in depth
+
+### Design Documents
+
+- [Vision](project/vision.md) — Original design goals
+- [Use Cases](project/usecases.md) — Personal use cases that motivated the project
+
+### External Resources
+
+- [pi SDK](https://pi.dev) — The LLM SDK that powers Beige
+- [OpenClaw](https://openclaw.ai) — Inspiration for personal agents
+- ["What if you don't need MCP?"](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/) — Why CLI tools beat MCP bloat
+- ["Code Mode"](https://blog.cloudflare.com/code-mode/) — Why LLMs are better at writing code than calling tools
 
 ## Configuration
 

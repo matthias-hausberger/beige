@@ -1,28 +1,71 @@
+---
+title: "Documentation"
+description: "Beige documentation overview"
+---
+
 # Beige Documentation
 
-## Overview
+Welcome to the Beige documentation. This guide will help you understand, install, and extend Beige.
+
+## Main Sections
+
+| Tab | Description |
+|-----|-------------|
+| [**Introduction**](/introduction) | What Beige is, why we built it, and how it works |
+| [**Getting Started**](/getting-started) | Install and run your first agent |
+| [**The Gateway**](/gateway) | Deep dive into architecture and security |
+| [**Agents**](/agents) | Configure providers, models, tools, and skills |
+| [**Channels & Tools**](/channels-and-tools) | TUI, Telegram, HTTP API, and extensibility |
+
+---
+
+## Quick Navigation
+
+### I want to...
+
+- **Get started quickly** → [Getting Started](/getting-started)
+- **Understand the architecture** → [The Gateway](/gateway#architecture)
+- **Learn about security** → [The Gateway → Security Model](/gateway#security-model)
+- **Configure an LLM provider** → [Agents → Providers](/agents#llm-providers)
+- **Set up Telegram** → [Channels & Tools → Telegram](/channels-and-tools#telegram-channel)
+- **Use the TUI** → [Channels & Tools → TUI](/channels-and-tools#tui-channel)
+- **Create a custom tool** → [Channels & Tools → Tools](/channels-and-tools#part-b-tools)
+- **Install a toolkit** → [Channels & Tools → Toolkits](/channels-and-tools#part-b-toolkits)
+- **Create a skill** → [Channels & Tools → Skills](/channels-and-tools#part-c-skills)
+- **Build a custom integration** → [Channels & Tools → HTTP API](/channels-and-tools#part-b-http-api)
+
+---
+
+## Reference Documentation
+
+These detailed reference docs complement the main sections:
 
 | Document | Description |
 |----------|-------------|
-| [Installation](./installation.md) | npm global install vs source install, setup flow, detection logic |
-| [Architecture](./architecture.md) | System components, config format, directory layout, tech decisions |
-| [System Overview](./system-overview.md) | High-level architecture diagram, component responsibilities |
-| [Request Flows](./request-flows.md) | Detailed sequence diagrams for every request type |
-| [Security Model](./security-model.md) | Sandboxing, identity, secrets isolation, threat model |
-| [Tools](./tools.md) | Tool packages, launchers, the socket protocol, writing your own tools |
-| [Configuration](./configuration.md) | Config file reference with all options explained |
-| [HTTP API](./api.md) | Gateway REST API reference for external integrations |
+| [Configuration Reference](/configuration) | Complete config file reference with all options |
+| [Tools Reference](/tools) | Tool packages, launchers, socket protocol |
+| [Toolkits Reference](/toolkits) | Creating, publishing, and installing toolkits |
+| [Skills Reference](/skills) | Creating and mounting skill packages |
+| [HTTP API Reference](/api) | Full REST API reference |
+| [Telegram Channel](/channels/telegram) | Detailed Telegram setup and commands |
+| [TUI Channel](/channels/tui) | Detailed TUI usage and commands |
 
-## Channels
+---
 
-| Document | Description |
-|----------|-------------|
-| [Telegram](./channels/telegram.md) | Telegram bot setup, commands, verbose mode, session model |
-| [TUI](./channels/tui.md) | Terminal UI channel, pi integration, verbose mode |
+## Design Documents
 
-## Design Documents (project history)
+Historical design documents that shaped the project:
 
 | Document | Description |
 |----------|-------------|
-| [Vision](../project/vision.md) | Original design goals, constraints, and success criteria |
+| [Vision](../project/vision.md) | Original design goals and constraints |
 | [Use Cases](../project/usecases.md) | Personal use cases that motivated the project |
+
+---
+
+## External Resources
+
+- **[pi SDK](https://pi.dev)** — The LLM SDK that powers Beige
+- **[OpenClaw](https://openclaw.ai)** — Inspiration for what a personal agent can be
+- **["What if you don't need MCP?"](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/)** — Why CLI tools beat MCP bloat
+- **["Code Mode"](https://blog.cloudflare.com/code-mode/)** — Why LLMs are better at writing code than calling tools

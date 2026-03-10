@@ -1,0 +1,731 @@
+import { Type } from "@sinclair/typebox";
+import {
+  createAgentSession,
+  InteractiveMode,
+  AuthStorage,
+  ModelRegistry,
+  SessionManager,
+  SettingsManager,
+  createExtensionRuntime,
+  type ToolDefinition,
+  type ResourceLoader,
+  type LoadExtensionsResult,
+  type Extension,
+  type RegisteredCommand,
+  type AgentSession,
+} from "@mariozechner/pi-coding-agent";
+import { getModel } from "@mariozechner/pi-ai";
+import { resolve, basename } from "path";
+import { homedir } from "os";
+import { readdirSync, existsSync } from "fs";
+import type { BeigeConfig, AgentConfig } from "../config/schema.js";
+import type { OnToolStart } from "../gateway/agent-manager.js";
+import { SessionSettingsStore, resolveSessionSetting } from "../gateway/session-settings.js";
+import { BeigeSessionStore } from "../gateway/sessions.js";
+import { loadSkills, buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
+
+/**
+ * TUI channel — runs in a separate process and connects to the gateway HTTP API.
+ *
+ * Architecture:
+ * - The LLM session runs locally (pi InteractiveMode — full pi experience)
+ * - Core tool execution (read/write/patch/exec) is proxied to the gateway API
+ * - The gateway owns the sandboxes, audit, and policy enforcement
+ *
+ * This gives you the best of both worlds:
+ * - Full pi TUI (editor, streaming, model switching, compaction, history)
+ * - Sandboxed tool execution managed by the gateway
+ *
+ * Commands:
+ * - /new           — Start a fresh session
+ * - /resume        — Pick a previous session to continue
+ * - /sessions      — List saved sessions for the current agent
+ * - /agent [name]  — Switch to a different beige agent
+ * - /v on|off      — Toggle verbose tool-call notifications
+ * - /verbose on|off — Same as /v
+ */
+
+const DEFAULT_GATEWAY_URL = "http://127.0.0.1:7433";
+
+export interface TUIOptions {
+  config: BeigeConfig;
+  agentName: string;
+  gatewayUrl?: string;
+}
+
+/**
+ * Mutable state shared between the TUI and extension commands.
+ */
+interface TUIState {
+  agentName: string;
+  agentConfig: AgentConfig;
+  session: AgentSession | null;
+  toolStartHandlerRef: { fn: OnToolStart | undefined };
+  gatewayUrl: string;
+  config: BeigeConfig;
+  authStorage: AuthStorage;
+  modelRegistry: ModelRegistry;
+  settingsStore: SessionSettingsStore;
+  sessionStore: BeigeSessionStore;
+  loadedSkills: Map<string, LoadedSkill>;
+}
+
+export async function launchTUI(opts: TUIOptions): Promise<void> {
+  const { config } = opts;
+  const gatewayUrl = opts.gatewayUrl ?? DEFAULT_GATEWAY_URL;
+
+  // Verify gateway is reachable
+  try {
+    const res = await fetch(`${gatewayUrl}/api/health`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    console.log(`[TUI] Connected to gateway at ${gatewayUrl}`);
+  } catch (err) {
+    console.error(
+      `[TUI] Cannot connect to gateway at ${gatewayUrl}\n` +
+      `      Start the gateway first: beige\n` +
+      `      Error: ${err instanceof Error ? err.message : err}`
+    );
+    process.exit(1);
+  }
+
+  // Fetch available agents from gateway
+  const agentsRes = await fetch(`${gatewayUrl}/api/agents`);
+  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[]; skills: string[] }> };
+  const agentNames = agents.map((a) => a.name);
+
+  let agentName = opts.agentName;
+  if (!agentName) {
+    agentName = agentNames[0];
+    if (agentNames.length > 1) {
+      console.log(`[TUI] No agent specified, using '${agentName}'. Available: ${agentNames.join(", ")}`);
+    }
+  }
+
+  const agentInfo = agents.find((a) => a.name === agentName);
+  if (!agentInfo) {
+    console.error(`[TUI] Unknown agent '${agentName}'. Available: ${agentNames.join(", ")}`);
+    process.exit(1);
+  }
+
+  // ── Auth (LLM keys — session runs locally) ────────────────
+  const authStorage = AuthStorage.create();
+  for (const [provider, providerConfig] of Object.entries(config.llm.providers)) {
+    if (providerConfig.apiKey) {
+      authStorage.setRuntimeApiKey(provider, providerConfig.apiKey);
+    }
+  }
+  const modelRegistry = new ModelRegistry(authStorage);
+
+  // ── Load skills ────────────────────────────────────────────
+  const loadedSkills = await loadSkills(config);
+
+  // ── Shared state ──────────────────────────────────────────
+  const settingsStore = new SessionSettingsStore();
+  const sessionStore = new BeigeSessionStore();
+  const toolStartHandlerRef: { fn: OnToolStart | undefined } = { fn: undefined };
+
+  const state: TUIState = {
+    agentName,
+    agentConfig: config.agents[agentName],
+    session: null,
+    toolStartHandlerRef,
+    gatewayUrl,
+    config,
+    authStorage,
+    modelRegistry,
+    settingsStore,
+    sessionStore,
+    loadedSkills,
+  };
+
+  // Wire initial verbose state
+  const sessionKey = BeigeSessionStore.tuiKey(agentName);
+  const initialVerbose = resolveSessionSetting(
+    "verbose",
+    false,
+    undefined,
+    settingsStore.get(sessionKey, "verbose")
+  );
+  if (initialVerbose) {
+    toolStartHandlerRef.fn = makeTUIToolStartHandler();
+  }
+
+  // ── Build extension with all commands ─────────────────────
+  const extensionsResult = await buildBeigeExtension(state, agentNames);
+
+  // ── Create initial session ────────────────────────────────
+  await createSession(state, extensionsResult);
+
+  if (!state.session) {
+    console.error("[TUI] Failed to create initial session");
+    process.exit(1);
+  }
+
+  // ── Launch pi TUI ─────────────────────────────────────────
+  console.log(`[TUI] Agent: ${agentName} (${state.agentConfig.model.provider}/${state.agentConfig.model.model})`);
+  console.log(`[TUI] Tools: ${agentInfo.tools.join(", ") || "(core only)"}`);
+  console.log(`[TUI] Verbose: ${initialVerbose ? "on" : "off"} — use /verbose on|off to toggle`);
+  console.log(`[TUI] Commands: /new, /resume, /sessions, /agent <name>, /verbose on|off`);
+
+  const mode = new InteractiveMode(state.session, {});
+  await mode.run();
+}
+
+// ── Session creation ──────────────────────────────────────────────────────────
+
+/**
+ * Create a new pi session for the current agent in state.
+ */
+async function createSession(state: TUIState, extensionsResult: LoadExtensionsResult): Promise<void> {
+  const { agentName, agentConfig, gatewayUrl, authStorage, modelRegistry, toolStartHandlerRef, loadedSkills } = state;
+
+  // Fetch agent info from gateway
+  const agentsRes = await fetch(`${gatewayUrl}/api/agents`);
+  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[]; skills: string[] }> };
+  const agentInfo = agents.find((a) => a.name === agentName);
+  const toolNames = agentInfo?.tools ?? [];
+  const skillNames = agentInfo?.skills ?? [];
+
+  // Validate skill dependencies
+  validateSkillDeps(skillNames, toolNames, loadedSkills);
+
+  const model = resolveModel(agentConfig, modelRegistry);
+  const coreTools = createProxyTools(agentName, gatewayUrl, toolStartHandlerRef);
+  const toolContext = buildToolContext(toolNames);
+  const skillContext = buildSkillContext(skillNames, loadedSkills);
+  const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
+
+  const sessionsDir = resolve(homedir(), ".beige", "sessions", agentName);
+  let sessionManager: ReturnType<typeof SessionManager.create>;
+  try {
+    sessionManager = SessionManager.continueRecent(process.cwd(), sessionsDir);
+  } catch {
+    sessionManager = SessionManager.create(process.cwd(), sessionsDir);
+  }
+
+  const resourceLoader: ResourceLoader = {
+    getExtensions: () => extensionsResult,
+    getSkills: () => ({ skills: [], diagnostics: [] }),
+    getPrompts: () => ({ prompts: [], diagnostics: [] }),
+    getThemes: () => ({ themes: [], diagnostics: [] }),
+    getAgentsFiles: () => ({ agentsFiles: [] }),
+    getSystemPrompt: () => systemPrompt,
+    getAppendSystemPrompt: () => [],
+    getPathMetadata: () => new Map(),
+    extendResources: () => {},
+    reload: async () => {},
+  };
+
+  const { session } = await createAgentSession({
+    model,
+    thinkingLevel: (agentConfig.model.thinkingLevel as any) ?? "off",
+    tools: [],
+    customTools: coreTools,
+    sessionManager,
+    settingsManager: SettingsManager.inMemory({
+      compaction: { enabled: true },
+      retry: { enabled: true, maxRetries: 3 },
+    }),
+    resourceLoader,
+    authStorage,
+    modelRegistry,
+  });
+
+  state.session = session;
+}
+
+// ── Beige extension factory ───────────────────────────────────────────────────
+
+/**
+ * Build the inline "beige" extension that registers all TUI commands.
+ */
+async function buildBeigeExtension(
+  state: TUIState,
+  availableAgents: string[]
+): Promise<LoadExtensionsResult> {
+  const runtime = createExtensionRuntime();
+
+  // ── /verbose and /v ───────────────────────────────────────
+  const handleVerbose = async (args: string, ctx: any) => {
+    const sessionKey = BeigeSessionStore.tuiKey(state.agentName);
+    const arg = args.trim().toLowerCase();
+
+    if (!arg || (arg !== "on" && arg !== "off")) {
+      const current = state.settingsStore.get(sessionKey, "verbose") ?? false;
+      ctx.ui.notify(`Verbose mode is currently ${current ? "ON" : "OFF"}. Usage: /verbose on|off`, "info");
+      return;
+    }
+
+    const enable = arg === "on";
+    state.settingsStore.set(sessionKey, "verbose", enable);
+    state.toolStartHandlerRef.fn = enable ? makeTUIToolStartHandler() : undefined;
+
+    ctx.ui.notify(
+      enable
+        ? "🔊 Verbose mode ON — tool calls will be shown as they execute."
+        : "🔇 Verbose mode OFF — tool calls are hidden.",
+      "info"
+    );
+  };
+
+  // ── /new ──────────────────────────────────────────────────
+  const handleNew = async (_args: string, ctx: any) => {
+    const oldSession = state.session;
+    if (oldSession) {
+      oldSession.dispose();
+    }
+
+    // Create new session directory entry
+    const sessionsDir = resolve(homedir(), ".beige", "sessions", state.agentName);
+    const sessionManager = SessionManager.create(process.cwd(), sessionsDir);
+
+    const resourceLoader = await buildResourceLoader(state);
+    const model = resolveModel(state.agentConfig, state.modelRegistry);
+    const coreTools = createProxyTools(state.agentName, state.gatewayUrl, state.toolStartHandlerRef);
+
+    const { session } = await createAgentSession({
+      model,
+      thinkingLevel: (state.agentConfig.model.thinkingLevel as any) ?? "off",
+      tools: [],
+      customTools: coreTools,
+      sessionManager,
+      settingsManager: SettingsManager.inMemory({
+        compaction: { enabled: true },
+        retry: { enabled: true, maxRetries: 3 },
+      }),
+      resourceLoader,
+      authStorage: state.authStorage,
+      modelRegistry: state.modelRegistry,
+    });
+
+    state.session = session;
+    ctx.ui.notify("🆕 New session started.", "info");
+  };
+
+  // ── /sessions ─────────────────────────────────────────────
+  const handleSessions = async (_args: string, ctx: any) => {
+    const sessions = listSessions(state.agentName);
+    if (sessions.length === 0) {
+      ctx.ui.notify("No saved sessions for this agent.", "info");
+      return;
+    }
+
+    const lines = [`📋 Sessions for agent '${state.agentName}':`, ""];
+    for (let i = 0; i < Math.min(sessions.length, 10); i++) {
+      const s = sessions[i];
+      const date = s.timestamp.toLocaleDateString();
+      const time = s.timestamp.toLocaleTimeString();
+      lines.push(`  ${i + 1}. ${basename(s.file)} (${date} ${time})`);
+    }
+    if (sessions.length > 10) {
+      lines.push(`  ... and ${sessions.length - 10} more`);
+    }
+    lines.push("");
+    lines.push("Use /resume <number> to continue a session.");
+
+    ctx.ui.notify(lines.join("\n"), "info");
+  };
+
+  // ── /resume ───────────────────────────────────────────────
+  const handleResume = async (args: string, ctx: any) => {
+    const sessions = listSessions(state.agentName);
+    if (sessions.length === 0) {
+      ctx.ui.notify("No saved sessions to resume.", "info");
+      return;
+    }
+
+    const arg = args.trim();
+    let index = parseInt(arg, 10) - 1;
+    if (isNaN(index) || index < 0 || index >= sessions.length) {
+      if (arg === "") {
+        // Show list if no arg provided
+        ctx.ui.notify(
+          `Usage: /resume <number>\n\nSessions:\n${sessions
+            .slice(0, 5)
+            .map((s, i) => `  ${i + 1}. ${basename(s.file)}`)
+            .join("\n")}`,
+          "info"
+        );
+      } else {
+        ctx.ui.notify(`Invalid session number. Use /sessions to see available sessions.`, "error");
+      }
+      return;
+    }
+
+    const targetSession = sessions[index];
+
+    // Dispose old session
+    if (state.session) {
+      state.session.dispose();
+    }
+
+    // Resume the selected session
+    const sessionManager = SessionManager.open(targetSession.file);
+    const resourceLoader = await buildResourceLoader(state);
+    const model = resolveModel(state.agentConfig, state.modelRegistry);
+    const coreTools = createProxyTools(state.agentName, state.gatewayUrl, state.toolStartHandlerRef);
+
+    const { session } = await createAgentSession({
+      model,
+      thinkingLevel: (state.agentConfig.model.thinkingLevel as any) ?? "off",
+      tools: [],
+      customTools: coreTools,
+      sessionManager,
+      settingsManager: SettingsManager.inMemory({
+        compaction: { enabled: true },
+        retry: { enabled: true, maxRetries: 3 },
+      }),
+      resourceLoader,
+      authStorage: state.authStorage,
+      modelRegistry: state.modelRegistry,
+    });
+
+    state.session = session;
+    ctx.ui.notify(`📂 Resumed session: ${basename(targetSession.file)}`, "info");
+  };
+
+  // ── /agent ────────────────────────────────────────────────
+  const handleAgent = async (args: string, ctx: any) => {
+    const arg = args.trim();
+
+    if (!arg) {
+      ctx.ui.notify(
+        `Current agent: ${state.agentName}\n\nAvailable agents:\n${availableAgents.map((a) => `  • ${a}`).join("\n")}\n\nUsage: /agent <name>`,
+        "info"
+      );
+      return;
+    }
+
+    if (!availableAgents.includes(arg)) {
+      ctx.ui.notify(
+        `Unknown agent '${arg}'. Available: ${availableAgents.join(", ")}`,
+        "error"
+      );
+      return;
+    }
+
+    if (arg === state.agentName) {
+      ctx.ui.notify(`Already using agent '${arg}'.`, "info");
+      return;
+    }
+
+    // Switch to new agent
+    const newAgentConfig = state.config.agents[arg];
+    if (!newAgentConfig) {
+      ctx.ui.notify(`Agent '${arg}' not found in config.`, "error");
+      return;
+    }
+
+    // Dispose old session
+    if (state.session) {
+      state.session.dispose();
+    }
+
+    // Update state
+    state.agentName = arg;
+    state.agentConfig = newAgentConfig;
+
+    // Create new session for the new agent
+    const extensionsResult = await buildBeigeExtension(state, availableAgents);
+    await createSession(state, extensionsResult);
+
+    // Update verbose handler for new session key
+    const sessionKey = BeigeSessionStore.tuiKey(arg);
+    const verbose = resolveSessionSetting(
+      "verbose",
+      false,
+      undefined,
+      state.settingsStore.get(sessionKey, "verbose")
+    );
+    state.toolStartHandlerRef.fn = verbose ? makeTUIToolStartHandler() : undefined;
+
+    ctx.ui.notify(`🔄 Switched to agent '${arg}'.`, "info");
+  };
+
+  // Build the extension object
+  const extension: Extension = {
+    path: "<beige-tui>",
+    resolvedPath: "<beige-tui>",
+    handlers: new Map(),
+    tools: new Map(),
+    messageRenderers: new Map(),
+    commands: new Map<string, RegisteredCommand>([
+      ["verbose", { name: "verbose", description: "Toggle tool-call notifications: /verbose on|off", handler: handleVerbose }],
+      ["v", { name: "v", description: "Shorthand for /verbose: /v on|off", handler: handleVerbose }],
+      ["new", { name: "new", description: "Start a fresh session", handler: handleNew }],
+      ["sessions", { name: "sessions", description: "List saved sessions for the current agent", handler: handleSessions }],
+      ["resume", { name: "resume", description: "Resume a previous session: /resume <number>", handler: handleResume }],
+      ["agent", { name: "agent", description: "Switch to a different agent: /agent <name>", handler: handleAgent }],
+    ]),
+    flags: new Map(),
+    shortcuts: new Map(),
+  };
+
+  return { extensions: [extension], errors: [], runtime };
+}
+
+// ── Resource loader helper ────────────────────────────────────────────────────
+
+async function buildResourceLoader(state: TUIState): Promise<ResourceLoader> {
+  // Fetch agent info from gateway
+  const agentsRes = await fetch(`${state.gatewayUrl}/api/agents`);
+  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[]; skills: string[] }> };
+  const agentInfo = agents.find((a) => a.name === state.agentName);
+  const toolNames = agentInfo?.tools ?? [];
+  const skillNames = agentInfo?.skills ?? [];
+
+  const toolContext = buildToolContext(toolNames);
+  const skillContext = buildSkillContext(skillNames, state.loadedSkills);
+  const systemPrompt = buildSystemPrompt(state.agentName, toolContext, skillContext);
+
+  // Build minimal extension result for resource loader
+  const runtime = createExtensionRuntime();
+  const extensionsResult: LoadExtensionsResult = {
+    extensions: [],
+    errors: [],
+    runtime,
+  };
+
+  return {
+    getExtensions: () => extensionsResult,
+    getSkills: () => ({ skills: [], diagnostics: [] }),
+    getPrompts: () => ({ prompts: [], diagnostics: [] }),
+    getThemes: () => ({ themes: [], diagnostics: [] }),
+    getAgentsFiles: () => ({ agentsFiles: [] }),
+    getSystemPrompt: () => systemPrompt,
+    getAppendSystemPrompt: () => [],
+    getPathMetadata: () => new Map(),
+    extendResources: () => {},
+    reload: async () => {},
+  };
+}
+
+// ── Session listing helper ────────────────────────────────────────────────────
+
+interface SessionEntry {
+  file: string;
+  timestamp: Date;
+}
+
+function listSessions(agentName: string): SessionEntry[] {
+  const sessionsDir = resolve(homedir(), ".beige", "sessions", agentName);
+  if (!existsSync(sessionsDir)) return [];
+
+  const files = readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl"));
+
+  return files
+    .map((f) => ({
+      file: resolve(sessionsDir, f),
+      timestamp: extractTimestampFromFilename(f),
+    }))
+    .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+}
+
+function extractTimestampFromFilename(filename: string): Date {
+  // Format: 20260305-120000-a1b2c3.jsonl
+  const match = filename.match(/^(\d{8})-(\d{6})-/);
+  if (!match) return new Date(0);
+
+  const dateStr = match[1]; // 20260305
+  const timeStr = match[2]; // 120000
+
+  const year = parseInt(dateStr.slice(0, 4), 10);
+  const month = parseInt(dateStr.slice(4, 6), 10) - 1;
+  const day = parseInt(dateStr.slice(6, 8), 10);
+  const hour = parseInt(timeStr.slice(0, 2), 10);
+  const minute = parseInt(timeStr.slice(2, 4), 10);
+  const second = parseInt(timeStr.slice(4, 6), 10);
+
+  return new Date(year, month, day, hour, minute, second);
+}
+
+// ── TUI tool-start handler ────────────────────────────────────────────────────
+
+function makeTUIToolStartHandler(): OnToolStart {
+  return (toolName: string, params: Record<string, unknown>) => {
+    const label = formatToolCall(toolName, params);
+    process.stderr.write(`\r🔧 ${label}\n`);
+  };
+}
+
+function formatToolCall(toolName: string, params: Record<string, unknown>): string {
+  switch (toolName) {
+    case "exec": {
+      const cmd = String(params.command ?? "");
+      return `exec: ${cmd.length > 100 ? cmd.slice(0, 97) + "…" : cmd}`;
+    }
+    case "read": {
+      return `read: ${params.path}`;
+    }
+    case "write": {
+      const bytes = params.bytes != null ? ` (${params.bytes} bytes)` : "";
+      return `write: ${params.path}${bytes}`;
+    }
+    case "patch": {
+      return `patch: ${params.path}`;
+    }
+    default:
+      return `${toolName}: ${JSON.stringify(params).slice(0, 100)}`;
+  }
+}
+
+// ── Proxy core tools ──────────────────────────────────────────────────────────
+
+function createProxyTools(
+  agentName: string,
+  gatewayUrl: string,
+  handlerRef: { fn: OnToolStart | undefined }
+): ToolDefinition[] {
+  async function callGateway(
+    tool: string,
+    params: Record<string, any>
+  ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    const res = await fetch(`${gatewayUrl}/api/agents/${encodeURIComponent(agentName)}/exec`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tool, params }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return {
+        content: [{ type: "text", text: `Gateway error (${res.status}): ${text}` }],
+        isError: true,
+      };
+    }
+
+    return (await res.json()) as any;
+  }
+
+  return [
+    {
+      name: "read",
+      label: "Read File",
+      description:
+        "Read the contents of a file in the sandbox. Paths are relative to /workspace or absolute within the sandbox.",
+      parameters: Type.Object({
+        path: Type.String({ description: "File path to read" }),
+        offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
+        limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
+      }),
+      execute: async (_toolCallId, params) => {
+        const p = params as { path: string; offset?: number; limit?: number };
+        handlerRef.fn?.("read", { path: p.path });
+        const result = await callGateway("read", p as Record<string, any>);
+        return { content: result.content as any, details: {}, isError: result.isError };
+      },
+    },
+    {
+      name: "write",
+      label: "Write File",
+      description: "Write content to a file in the sandbox. Creates parent directories if needed.",
+      parameters: Type.Object({
+        path: Type.String({ description: "File path to write" }),
+        content: Type.String({ description: "Content to write to the file" }),
+      }),
+      execute: async (_toolCallId, params) => {
+        const p = params as { path: string; content: string };
+        handlerRef.fn?.("write", { path: p.path, bytes: Buffer.byteLength(p.content) });
+        const result = await callGateway("write", p as Record<string, any>);
+        return { content: result.content as any, details: {}, isError: result.isError };
+      },
+    },
+    {
+      name: "patch",
+      label: "Patch File",
+      description: "Apply a find-and-replace patch to a file in the sandbox. The oldText must match exactly.",
+      parameters: Type.Object({
+        path: Type.String({ description: "File path to patch" }),
+        oldText: Type.String({ description: "Exact text to find and replace" }),
+        newText: Type.String({ description: "New text to replace with" }),
+      }),
+      execute: async (_toolCallId, params) => {
+        const p = params as { path: string; oldText: string; newText: string };
+        handlerRef.fn?.("patch", { path: p.path });
+        const result = await callGateway("patch", p as Record<string, any>);
+        return { content: result.content as any, details: {}, isError: result.isError };
+      },
+    },
+    {
+      name: "exec",
+      label: "Execute Command",
+      description: "Execute a command in the sandbox. The command runs in /workspace by default.",
+      parameters: Type.Object({
+        command: Type.String({ description: "The command to execute" }),
+        timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (default: 120)" })),
+      }),
+      execute: async (_toolCallId, params) => {
+        const p = params as { command: string; timeout?: number };
+        handlerRef.fn?.("exec", { command: p.command });
+        const result = await callGateway("exec", p as Record<string, any>);
+        return { content: result.content as any, details: {}, isError: result.isError };
+      },
+    },
+  ];
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function buildToolContext(toolNames: string[]): string {
+  if (toolNames.length === 0) return "";
+
+  const lines = [
+    "## Available Tools",
+    "",
+    "The following tools are available via `/tools/bin/` in the sandbox:",
+    "",
+  ];
+
+  for (const name of toolNames) {
+    lines.push(`- **${name}** — run with \`exec: /tools/bin/${name} <args>\``);
+  }
+
+  lines.push("");
+  lines.push("Read tool documentation: `exec: cat /tools/packages/<name>/README.md`");
+  return lines.join("\n");
+}
+
+function buildSystemPrompt(agentName: string, toolContext: string, skillContext: string = ""): string {
+  return `You are an AI agent named "${agentName}" running inside a secure sandbox managed by the Beige agent system.
+
+## Environment
+
+- You run inside a Docker container with a writable workspace at \`/workspace\`.
+- You have 4 core tools: \`read\`, \`write\`, \`patch\`, and \`exec\`.
+- Additional tools are available as executables in \`/tools/bin/\`. Run them with \`exec\`.
+- Tool documentation is available in \`/tools/packages/<name>/\`.
+- Your working directory is \`/workspace\`. Files you create persist here.
+- You can write and execute scripts (TypeScript via Deno, shell scripts, Python, etc.).
+
+## How to Use Tools
+
+To call a tool, use the \`exec\` core tool:
+\`\`\`
+exec: /tools/bin/<tool-name> <args...>
+\`\`\`
+
+To write and run a script:
+1. Use \`write\` to create a script file in \`/workspace\`
+2. Use \`exec\` to run it (e.g., \`exec deno run --allow-all /workspace/script.ts\`)
+
+Scripts can call tools by executing \`/tools/bin/<tool-name>\` as subprocesses.
+
+${toolContext}
+${skillContext}
+## Guidelines
+
+- Be helpful and proactive.
+- When tasks require multiple steps, write scripts to chain tool calls.
+- If you're unsure about a tool, read its documentation in \`/tools/packages/<name>/\`.
+- Always handle errors gracefully.
+`;
+}
+
+function resolveModel(agentConfig: AgentConfig, modelRegistry: ModelRegistry) {
+  const { provider, model: modelId } = agentConfig.model;
+  const model = getModel(provider as any, modelId);
+  if (model) return model;
+  const custom = modelRegistry.find(provider, modelId);
+  if (custom) return custom;
+  throw new Error(`Model not found: ${provider}/${modelId}`);
+}

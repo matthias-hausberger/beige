@@ -1,0 +1,11 @@
+{
+  "name": "message",
+  "description": "Send messages to users through configured channels (Telegram). Can reply to the current session or send proactively to any chat.",
+  "commands": [
+    "--to-current-session -- <text>              — Send to the current session's channel/chat/thread",
+    "telegram <chatId> -- <text>                 — Send to a specific Telegram chat",
+    "telegram <chatId> <threadId> -- <text>      — Send to a specific Telegram thread",
+    "telegram <chatId> -- --parse-mode <mode> -- <text> — Send with formatting (html|markdown)"
+  ],
+  "target": "gateway"
+}

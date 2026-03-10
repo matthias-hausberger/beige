@@ -1,0 +1,349 @@
+# Request Flows
+
+Detailed sequence diagrams for every type of request in the system.
+
+## 1. User Message → Agent Response
+
+The end-to-end flow from a Telegram message to a response.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant TG as Telegram Bot
+    participant AM as Agent Manager
+    participant PI as pi SDK
+    participant LLM as LLM API<br/>(Anthropic/OpenAI)
+
+    User->>TG: "Store my flight info"
+    TG->>TG: check allowedUsers
+    TG->>AM: promptStreaming("travel", message)
+    AM->>PI: session.prompt(message)
+    PI->>LLM: API call with system prompt + tools
+    LLM-->>PI: streaming response
+    PI-->>AM: text_delta events
+    AM-->>TG: onDelta callback
+    TG-->>User: streaming message updates
+
+    Note over PI,LLM: If the LLM calls a tool,<br/>the flow continues below
+```
+
+## 2. Core Tool Call — Direct Sandbox Execution
+
+When the LLM calls `read`, `write`, `patch`, or `exec` with a regular command (not a tool launcher).
+
+**Example:** `exec curl https://example.com`
+
+```mermaid
+sequenceDiagram
+    participant LLM as LLM
+    participant PI as pi SDK
+    participant CT as Core Tool (exec)
+    participant AL as Audit Logger
+    participant SM as Sandbox Manager
+    participant SB as Docker Sandbox
+
+    LLM->>PI: tool_call: exec("curl https://example.com")
+    PI->>CT: execute(params)
+    CT->>AL: log(agent, "core_tool", "exec", args, "allowed")
+    CT->>SM: exec(agent, ["sh", "-c", "curl ..."])
+    SM->>SB: docker exec beige-travel sh -c "curl ..."
+    SB-->>SM: stdout + stderr + exit code
+    SM-->>CT: ExecResult
+    CT->>AL: finish(exitCode, outputBytes)
+    CT-->>PI: ToolResult
+    PI-->>LLM: tool result in next turn
+```
+
+> **Key point:** The command runs entirely inside the sandbox. The gateway only logs and routes — it never executes `curl` itself.
+
+## 3. Core Tool Call — File Operations
+
+`read`, `write`, and `patch` all follow the same pattern: gateway runs `docker exec` to operate on files inside the sandbox.
+
+**Example:** `write("/workspace/script.ts", "console.log('hello')")`
+
+```mermaid
+sequenceDiagram
+    participant LLM as LLM
+    participant CT as Core Tool (write)
+    participant AL as Audit Logger
+    participant SM as Sandbox Manager
+    participant SB as Docker Sandbox
+
+    LLM->>CT: write(path, content)
+    CT->>AL: log(agent, "core_tool", "write", [path], "allowed")
+    CT->>SM: exec(agent, ["sh", "-c", "mkdir -p ... && cat > path"], stdin=content)
+    SM->>SB: docker exec (with stdin pipe)
+    SB->>SB: write file to /workspace/script.ts
+    SB-->>SM: exit code 0
+    CT->>AL: finish(exitCode=0, bytes)
+    CT-->>LLM: "Successfully wrote 24 bytes to /workspace/script.ts"
+```
+
+## 4. Tool Launcher Call — Double Routing
+
+The most important flow. When `exec` runs a tool from `/tools/bin/`, the request bounces back to the gateway through the Unix socket.
+
+**Example:** `exec /tools/bin/kv set trip:paris "March 15"`
+
+```mermaid
+sequenceDiagram
+    participant LLM as LLM
+    participant CT as Core Tool (exec)
+    participant AL as Audit Logger
+    participant SM as Sandbox Manager
+    participant SB as Docker Sandbox
+    participant TC as tool-client<br/>(in sandbox)
+    participant SS as Socket Server
+    participant PE as Policy Engine
+    participant TR as Tool Runner
+    participant KV as KV Handler<br/>(on gateway)
+
+    Note over LLM,KV: Phase 1: Core tool exec → sandbox
+
+    LLM->>CT: exec("/tools/bin/kv set trip:paris March 15")
+    CT->>AL: log(agent, "core_tool", "exec", [...], "allowed")
+    CT->>SM: exec(agent, ["sh", "-c", "/tools/bin/kv ..."])
+    SM->>SB: docker exec
+
+    Note over SB,KV: Phase 2: Launcher → gateway socket → tool execution
+
+    SB->>SB: /tools/bin/kv runs (generated launcher script)
+    SB->>TC: exec /beige/tool-client "kv" "set" "trip:paris" "March 15"
+    TC->>SS: connect to /beige/gateway.sock
+    TC->>SS: {"type":"tool_request","tool":"kv","args":["set","trip:paris","March 15"]}
+
+    SS->>PE: isToolAllowed("travel", "kv")?
+    PE-->>SS: ✓ allowed
+
+    SS->>AL: log(agent, "tool", "kv", args, "allowed", "gateway")
+    SS->>TR: run("kv", args)
+    TR->>KV: handler(["set", "trip:paris", "March 15"])
+    KV->>KV: write to ~/.beige/data/kv.json
+    KV-->>TR: {output: "OK", exitCode: 0}
+    TR-->>SS: ToolResult
+    SS->>AL: finish(exitCode=0, outputBytes)
+
+    Note over SB,KV: Phase 3: Response flows back
+
+    SS-->>TC: {"type":"tool_response","success":true,"output":"OK","exitCode":0}
+    TC-->>SB: stdout: "OK", exit 0
+    SB-->>SM: stdout + exit code
+    SM-->>CT: ExecResult
+    CT->>AL: finish(exitCode=0)
+    CT-->>LLM: "Exit code: 0\nOK"
+```
+
+> **Two audit log entries** are created:
+> 1. `core_tool/exec` — the exec call itself
+> 2. `tool/kv` — the actual tool invocation through the socket
+
+## 5. Tool Call — Permission Denied
+
+When an agent tries to use a tool it's not allowed to access.
+
+```mermaid
+sequenceDiagram
+    participant SB as Docker Sandbox
+    participant TC as tool-client
+    participant SS as Socket Server
+    participant PE as Policy Engine
+    participant AL as Audit Logger
+
+    SB->>TC: /tools/bin/slack send "hello"
+    TC->>SS: {"type":"tool_request","tool":"slack","args":["send","hello"]}
+
+    SS->>PE: isToolAllowed("travel", "slack")?
+    PE-->>SS: ✗ denied
+
+    SS->>AL: log(agent, "tool", "slack", args, "denied")
+
+    SS-->>TC: {"type":"tool_response","success":false,"error":"Permission denied","exitCode":1}
+    TC-->>SB: stderr: "Permission denied", exit 1
+```
+
+> **Note:** The tool launcher for `slack` would only exist in the sandbox if the agent's config includes `slack` in its tools list. In practice, a denied call means the agent config was changed after container creation, or there's a bug. But the policy engine is the last line of defense regardless.
+
+## 6. Script Toolchain — Agent Writes and Executes Code
+
+The agent can write scripts that chain multiple tool calls. This is the "let agents write code" principle in action.
+
+```mermaid
+sequenceDiagram
+    participant LLM as LLM
+    participant CT as Core Tools
+    participant SB as Sandbox
+    participant GW as Gateway (via socket)
+
+    Note over LLM,GW: Step 1: Agent writes a script
+
+    LLM->>CT: write("/workspace/backup.ts", script_content)
+    CT->>SB: create file
+
+    Note over LLM,GW: Step 2: Agent executes the script
+
+    LLM->>CT: exec("deno run --allow-all /workspace/backup.ts")
+    CT->>SB: docker exec deno run ...
+
+    Note over SB,GW: Step 3: Script calls tools internally
+
+    SB->>SB: script runs /tools/bin/kv list
+    SB->>GW: socket: tool_request(kv, ["list"])
+    GW-->>SB: tool_response(keys)
+    SB->>SB: script processes keys
+    SB->>SB: script runs /tools/bin/kv set backup:timestamp ...
+    SB->>GW: socket: tool_request(kv, ["set", ...])
+    GW-->>SB: tool_response(OK)
+    SB-->>CT: script output
+    CT-->>LLM: combined output
+```
+
+> **Each `/tools/bin/` call inside the script** still routes through the gateway socket, gets policy-checked, and is audit-logged. There's no way to bypass this from within the sandbox.
+
+## 7. Telegram Streaming Flow
+
+How responses are streamed back to the user in Telegram.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant TG as Telegram Bot
+    participant AM as Agent Manager
+    participant PI as pi SDK
+    participant LLM as LLM
+
+    User->>TG: "What's stored in my kv?"
+
+    TG->>AM: promptStreaming(agent, message, onDelta)
+
+    PI->>LLM: API call
+    LLM-->>PI: text_delta "Let me"
+    PI-->>TG: onDelta("Let me")
+    TG->>User: reply("Let me")
+
+    LLM-->>PI: text_delta " check..."
+    PI-->>TG: onDelta(" check...")
+    Note over TG: rate limit: skip edit (< 1s)
+
+    LLM->>LLM: tool_call: exec /tools/bin/kv list
+    Note over TG: typing indicator
+
+    LLM-->>PI: text_delta "Here are your keys:\n..."
+    PI-->>TG: onDelta(final text)
+    TG->>User: editMessage(full response)
+```
+
+> Telegram edits are rate-limited to ~1/second to avoid API errors. The final message is always sent as a complete edit.
+
+## 8. TUI Channel — Interactive Terminal Session
+
+The TUI runs as a separate process (`beige tui`) and connects to the gateway's HTTP API. The LLM session runs locally in the TUI (full pi experience), but tool execution is proxied through the gateway.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant TUI as TUI process<br/>(pi InteractiveMode)
+    participant LLM as LLM (via pi SDK)
+    participant API as Gateway HTTP API
+    participant SM as Sandbox Manager
+    participant SB as Docker Sandbox
+
+    Note over User,SB: Gateway is running in another shell
+
+    User->>TUI: type message in editor
+    TUI->>LLM: session.prompt(message)
+    LLM-->>TUI: tool_use: exec("ls /workspace")
+
+    TUI->>API: POST /api/agents/testo/exec<br/>{tool: "exec", params: {command: "ls"}}
+    API->>SM: sandbox.exec("testo", ["sh","-c","ls"])
+    SM->>SB: docker exec
+    SB-->>SM: file listing
+    SM-->>API: result
+    API-->>TUI: {content: [{type:"text", text:"..."}]}
+
+    TUI->>LLM: tool_result
+    LLM-->>TUI: streaming text_delta
+    TUI-->>User: rendered in terminal
+```
+
+> The TUI process needs the config file (for LLM API keys) but all tool execution goes through the gateway. This means audit logging, policy enforcement, and sandbox management are always centralized in the gateway.
+
+## 9. Session Lifecycle
+
+Sessions persist across gateway restarts. Each conversation gets its own `.jsonl` file.
+
+### Telegram Session Model
+
+```mermaid
+flowchart TD
+    MSG[Incoming Telegram message] --> THREAD{Has thread ID?}
+    THREAD -->|yes| KEY_T["key = telegram:<chatId>:<threadId>"]
+    THREAD -->|no| KEY_C["key = telegram:<chatId>"]
+    KEY_T --> LOOKUP
+    KEY_C --> LOOKUP
+    LOOKUP{Session exists<br/>for this key?}
+    LOOKUP -->|yes| CONTINUE[Continue existing session]
+    LOOKUP -->|no| CREATE[Create new session file<br/>~/.beige/sessions/<agent>/...]
+    CREATE --> CONTINUE
+
+    NEW["/new command"] --> RESET["Create new session file<br/>(old one kept for history)"]
+    RESET --> CONTINUE
+
+    style CREATE fill:#ccffcc
+    style RESET fill:#ccffcc
+```
+
+### TUI Session Commands
+
+```mermaid
+flowchart LR
+    subgraph Commands
+        NEW["/new"]
+        RESUME["/resume"]
+        SESSIONS["/sessions"]
+        AGENT["/agent"]
+    end
+
+    NEW --> N_ACT["Create fresh session<br/>Old session saved"]
+    RESUME --> R_ACT["Pick any session<br/>across all agents"]
+    SESSIONS --> S_ACT["List sessions for<br/>current agent"]
+    AGENT --> A_ACT["Switch agent<br/>(tears down + restarts<br/>with new agent's session)"]
+```
+
+### Session Storage Layout
+
+```
+~/.beige/
+├── sessions/
+│   ├── session-map.json          # Maps keys → session files
+│   ├── assistant/
+│   │   ├── 20260305-120000-a1b2c3.jsonl
+│   │   └── 20260305-143000-d4e5f6.jsonl
+│   └── travel/
+│       └── 20260304-091500-g7h8i9.jsonl
+```
+
+## 10. Gateway Startup → Ready
+
+```mermaid
+flowchart TD
+    A[Load config.json5] --> B[Resolve env vars]
+    B --> C[Validate config]
+    C --> D[Load tool packages]
+    D --> E[Register gateway tool handlers]
+
+    E --> F{For each agent}
+    F --> G[Create workspace dir]
+    G --> H[Generate launcher scripts]
+    H --> I[Create Docker container]
+    I --> J[Start container]
+    J --> K[Start Unix socket server]
+    K --> F
+
+    F -->|all done| L{Telegram enabled?}
+    L -->|yes| M[Start Telegram bot]
+    L -->|no| N[Gateway ready ✓]
+    M --> N
+
+    style N fill:#90EE90
+```

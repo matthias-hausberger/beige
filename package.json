@@ -1,0 +1,76 @@
+{
+  "name": "@matthias-hausberger/beige",
+  "version": "0.0.1",
+  "description": "Secure sandboxed agent system",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "beige": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "tools"
+  ],
+  "scripts": {
+    "beige": "tsx src/cli.ts",
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "build:sandbox": "docker build -t beige-sandbox:latest ./sandbox",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "docs:dev": "cd docs && mintlify dev --port 3333",
+    "docs:build": "cd docs && mintlify build",
+    "docs:deploy": "cd docs && mintlify deploy"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "^0.56.1",
+    "@mariozechner/pi-coding-agent": "latest",
+    "@sinclair/typebox": "^0.34.0",
+    "dockerode": "^4.0.5",
+    "grammy": "^1.35.0",
+    "json5": "^2.2.3",
+    "tar": "^7.5.11"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.38",
+    "@types/node": "^22.0.0",
+    "@types/tar": "^7.0.87",
+    "@vitest/coverage-v8": "^4.0.18",
+    "mintlify": "^4.2.417",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "sandbox",
+    "docker",
+    "llm",
+    "claude",
+    "anthropic"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/matthias-hausberger/beige.git"
+  },
+  "bugs": {
+    "url": "https://github.com/matthias-hausberger/beige/issues"
+  },
+  "homepage": "https://github.com/matthias-hausberger/beige#readme",
+  "license": "MIT"
+}

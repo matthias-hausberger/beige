@@ -1,0 +1,68 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Beige",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#C2A467",
+    "light": "#D4B87A",
+    "dark": "#A08550"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/matthias-hausberger/beige"
+      }
+    ]
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Introduction",
+        "pages": ["introduction"]
+      },
+      {
+        "tab": "Get Started",
+        "pages": ["installation"],
+        "anchors": [
+          {
+            "anchor": "Architecture",
+            "icon": "sitemap",
+            "href": "/architecture"
+          },
+          {
+            "anchor": "API Reference",
+            "icon": "terminal",
+            "href": "/api"
+          }
+        ]
+      },
+      {
+        "tab": "Gateway",
+        "pages": ["gateway", "configuration"]
+      },
+      {
+        "tab": "Agents",
+        "pages": ["agents", "skills"]
+      },
+      {
+        "tab": "Channels",
+        "pages": ["channels-and-tools"]
+      },
+      {
+        "tab": "Tools",
+        "pages": ["tools", "toolkits"]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/matthias-hausberger/beige"
+    }
+  }
+}

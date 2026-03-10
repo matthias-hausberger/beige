@@ -1,0 +1,311 @@
+---
+title: "Toolkits"
+description: "Install, create, and share collections of tools"
+---
+
+> **导航 / Navigation:** [← Back to Channels & Tools](/channels-and-tools) | [Introduction](/introduction)
+
+For a beginner-friendly guide, see [Channels & Tools → Toolkits](/channels-and-tools#part-b-toolkits).
+
+---
+
+# Toolkits
+
+Toolkits are distributable collections of tools. They make it easy to share, install, and manage groups of related tools.
+
+## Quick Start
+
+```bash
+# Install a toolkit from npm
+beige install @myorg/communication-tools
+
+# Install from GitHub
+beige install github:user/beige-toolkit-slack
+
+# List installed toolkits
+beige toolkit list
+
+# Show toolkit details
+beige toolkit show @myorg/communication-tools
+
+# Update all toolkits
+beige toolkit update
+
+# Remove a toolkit
+beige toolkit remove @myorg/communication-tools
+```
+
+## Toolkit Structure
+
+A toolkit is a directory with a `toolkit.json` manifest and one or more tool packages:
+
+```
+my-toolkit/
+├── toolkit.json              # Manifest (required)
+├── README.md                 # Toolkit documentation
+├── tools/
+│   ├── slack/
+│   │   ├── tool.json
+│   │   ├── index.ts
+│   │   └── README.md
+│   └── discord/
+│       ├── tool.json
+│       ├── index.ts
+│       └── README.md
+└── package.json              # For npm publishing
+```
+
+### toolkit.json
+
+```json
+{
+  "name": "my-communication-toolkit",
+  "version": "1.0.0",
+  "description": "Communication tools for Slack, Discord, and more",
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": "github:user/my-communication-toolkit",
+  "tools": [
+    "./tools/slack",
+    "./tools/discord"
+  ]
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Unique toolkit identifier |
+| `version` | Yes | Semver version string |
+| `description` | No | Short description |
+| `author` | No | Author name or organization |
+| `license` | No | SPDX license identifier |
+| `repository` | No | Repository URL or shorthand |
+| `tools` | Yes | Array of paths to tool directories |
+
+## Installing Toolkits
+
+### From npm
+
+```bash
+beige install @scope/toolkit-name
+beige install my-toolkit
+```
+
+The toolkit is downloaded from npm and installed to `~/.beige/toolkits/`.
+
+### From GitHub
+
+```bash
+beige install github:owner/repo
+beige install github:owner/repo#v1.2.0
+beige install github:owner/repo#main
+```
+
+Downloads the repository tarball from GitHub. Supports tags and branches.
+
+### From Local Path
+
+```bash
+beige install ./path/to/toolkit
+beige install /absolute/path/to/toolkit
+```
+
+Creates a symlink (or copies if symlinking fails) to the local toolkit. Useful for development.
+
+### From URL
+
+```bash
+beige install https://example.com/toolkit.tar.gz
+```
+
+Downloads and extracts a tarball. Must be a `.tar.gz` or `.tgz` file.
+
+## Managing Toolkits
+
+### List Installed Toolkits
+
+```bash
+beige toolkit list
+```
+
+Shows all installed toolkits with their versions, sources, and available tools.
+
+### Show Toolkit Details
+
+```bash
+beige toolkit show toolkit-name
+```
+
+Displays detailed information about a specific toolkit.
+
+### Update Toolkits
+
+```bash
+beige toolkit update
+```
+
+Re-installs all toolkits from their original sources, pulling the latest versions.
+
+### Remove a Toolkit
+
+```bash
+beige toolkit remove toolkit-name
+```
+
+Removes the toolkit and its tools. Tools from this toolkit will no longer be available.
+
+## Using Toolkit Tools
+
+After installing a toolkit, its tools are automatically available in your configuration. Add them to your agents:
+
+```json5
+{
+  agents: {
+    assistant: {
+      model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+      tools: ["slack", "discord"],  // Tools from installed toolkits
+    },
+  },
+}
+```
+
+The gateway automatically discovers tools from installed toolkits at startup.
+
+## Conflict Resolution
+
+If two toolkits contain tools with the same name, installation will fail:
+
+```
+[BEIGE] Tool name conflicts detected:
+  - Tool 'slack' already exists from toolkit '@other/slack-tools'
+
+[BEIGE] Use --force to override.
+```
+
+Use `--force` to replace the conflicting tool:
+
+```bash
+beige install @neworg/slack-tools --force
+```
+
+## Creating a Toolkit
+
+### Step 1: Create the Directory Structure
+
+```bash
+mkdir -p my-toolkit/tools/{tool1,tool2}
+```
+
+### Step 2: Create Each Tool
+
+Each tool needs a `tool.json`, `index.ts`, and optional `README.md`. See [Writing a New Tool](./tools.md#writing-a-new-tool).
+
+### Step 3: Create toolkit.json
+
+```json
+{
+  "name": "my-toolkit",
+  "version": "1.0.0",
+  "description": "My useful tools",
+  "tools": [
+    "./tools/tool1",
+    "./tools/tool2"
+  ]
+}
+```
+
+### Step 4: Test Locally
+
+```bash
+beige install ./my-toolkit
+```
+
+### Step 5: Publish
+
+**Via npm:**
+
+```bash
+cd my-toolkit
+npm init -y  # Ensure package.json exists
+npm publish --access public
+```
+
+**Via GitHub:**
+
+Just push to a public repository. Users can install with:
+
+```bash
+beige install github:yourname/my-toolkit
+```
+
+## Best Practices
+
+### Naming
+
+- Use descriptive, unique names
+- For npm packages, use your scope: `@yourorg/toolkit-name`
+- Avoid generic names like "tools" or "beige-tools"
+
+### Versioning
+
+- Follow semantic versioning
+- Increment version when:
+  - Adding new tools (minor)
+  - Breaking changes to existing tools (major)
+  - Bug fixes (patch)
+
+### Documentation
+
+- Include a README.md with:
+  - What tools are included
+  - What each tool does
+  - Any required configuration
+  - Examples of usage
+
+### Tool Isolation
+
+- Tools should be self-contained
+- Don't import from the beige source tree
+- Define types inline or include them in the package
+
+## Directory Layout
+
+After installation, toolkits are stored in:
+
+```
+~/.beige/
+├── toolkits/
+│   ├── @scope/
+│   │   └── toolkit-name/
+│   │       ├── toolkit.json
+│   │       └── tools/
+│   └── another-toolkit/
+│       └── ...
+├── toolkit-registry.json      # Tracks installed toolkits
+└── config.json5
+```
+
+## Programmatic Access
+
+The toolkit system is also available programmatically:
+
+```typescript
+import {
+  installToolkit,
+  removeToolkit,
+  listInstalledToolkits,
+  getInstalledToolkit,
+} from "beige/toolkit";
+
+// Install a toolkit
+const result = await installToolkit("@myorg/toolkit");
+if (result.success) {
+  console.log("Installed:", result.toolkit?.manifest.name);
+}
+
+// List installed
+const toolkits = listInstalledToolkits();
+
+// Remove
+removeToolkit("toolkit-name");
+```

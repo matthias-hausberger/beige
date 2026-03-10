@@ -1,0 +1,484 @@
+---
+title: "The Gateway"
+description: "Deep dive into the Beige gateway architecture and security model"
+---
+
+# What is the Gateway?
+
+The gateway is the orchestrator process at the heart of Beige. It's a Node.js process that:
+
+- **Manages sandboxes** — Creates and monitors Docker containers for each agent
+- **Routes tool calls** — Receives requests via Unix sockets, executes them safely
+- **Enforces policies** — Checks permissions before every tool invocation
+- **Logs everything** — Audit trail of every action for accountability
+- **Exposes APIs** — HTTP API for external channels like the TUI
+
+The gateway is always running. Everything else connects to it.
+
+```mermaid
+graph TB
+    subgraph "Gateway Process"
+        AM[Agent Manager]
+        SM[Sandbox Manager]
+        SS[Socket Server]
+        PE[Policy Engine]
+        AL[Audit Logger]
+        API[HTTP API]
+        TG[Telegram Bot]
+    end
+    
+    subgraph "Docker Sandboxes"
+        SB1[Agent 1]
+        SB2[Agent 2]
+    end
+    
+    subgraph "External"
+        TUI[TUI Process]
+        PHONE[Phone]
+    end
+    
+    AM --> SM
+    SM --> SB1
+    SM --> SB2
+    SB1 -->|socket| SS
+    SB2 -->|socket| SS
+    SS --> PE
+    PE --> AL
+    
+    TUI -->|HTTP| API
+    PHONE -->|Telegram| TG
+    API --> AM
+    TG --> AM
+```
+
+---
+
+## Architecture
+
+### Core Components
+
+| Component | Responsibility |
+|-----------|---------------|
+| **Agent Manager** | Creates agent sessions, maps agent name → LLM session + Docker container |
+| **Sandbox Manager** | Creates Docker containers, generates tool launchers, manages lifecycle |
+| **Socket Server** | Listens on Unix sockets (one per agent), receives tool requests from sandboxes |
+| **Policy Engine** | Checks if agent is allowed to use a tool (deny by default) |
+| **Audit Logger** | Logs every tool invocation with agent, tool, args, timing, decision |
+| **HTTP API** | REST endpoints for external channels (TUI, custom integrations) |
+
+### Data Flow
+
+```mermaid
+flowchart TD
+    subgraph "User Input"
+        MSG[Message from Telegram/TUI]
+    end
+    
+    subgraph "Gateway"
+        CHANNEL[Channel Adapter]
+        AM[Agent Manager]
+        PI[pi SDK]
+        CT[Core Tools]
+        PE[Policy Engine]
+        AL[Audit Logger]
+    end
+    
+    subgraph "Sandbox"
+        EXEC[docker exec]
+        SB[Sandbox Process]
+    end
+    
+    MSG --> CHANNEL
+    CHANNEL --> AM
+    AM --> PI
+    PI -->|tool call| CT
+    CT --> PE
+    PE -->|allowed| AL
+    AL --> EXEC
+    EXEC --> SB
+    SB -->|result| EXEC
+    EXEC --> CT
+    CT --> PI
+    PI -->|response| CHANNEL
+```
+
+### Tool Call Flow
+
+When an agent wants to use a tool (e.g., `exec /tools/bin/kv set mykey myvalue`):
+
+```mermaid
+sequenceDiagram
+    participant LLM
+    participant GW as Gateway
+    participant SB as Sandbox
+    participant TC as tool-client
+    participant SOCK as Unix Socket
+    participant TR as Tool Runner
+    
+    LLM->>GW: exec /tools/bin/kv set mykey myvalue
+    Note over GW: Gateway receives core tool call
+    
+    GW->>GW: Log: core_tool, exec, allowed
+    GW->>SB: docker exec /tools/bin/kv set mykey myvalue
+    
+    Note over SB: Inside container
+    SB->>TC: Launcher runs tool-client
+    TC->>SOCK: connect /beige/gateway.sock
+    TC->>SOCK: {"type":"tool_request","tool":"kv","args":["set","mykey","myvalue"]}
+    
+    SOCK->>GW: Request received on agent's socket
+    GW->>GW: Identify agent from socket
+    GW->>GW: Log: tool, kv, allowed
+    GW->>GW: Policy check: agent allowed to use kv?
+    
+    GW->>TR: Execute kv handler on gateway host
+    TR->>GW: {output: "OK", exitCode: 0}
+    
+    GW->>SOCK: {"type":"tool_response","success":true,"output":"OK","exitCode":0}
+    SOCK->>TC: Response received
+    TC->>SB: Print "OK" to stdout, exit 0
+    
+    SB->>GW: docker exec returns
+    GW->>LLM: Tool result: "OK"
+```
+
+---
+
+## Socket Protocol
+
+Tools communicate with the gateway over a simple newline-delimited JSON protocol.
+
+### Request Format (Sandbox → Gateway)
+
+```json
+{
+  "type": "tool_request",
+  "tool": "kv",
+  "args": ["set", "mykey", "myvalue"]
+}
+```
+
+### Response Format (Gateway → Sandbox)
+
+**Success:**
+```json
+{
+  "type": "tool_response",
+  "success": true,
+  "output": "OK: mykey = myvalue",
+  "exitCode": 0
+}
+```
+
+**Error:**
+```json
+{
+  "type": "tool_response",
+  "success": false,
+  "error": "Permission denied: tool 'kv' not allowed for agent 'intern'",
+  "exitCode": 1
+}
+```
+
+### Socket Identity
+
+Each agent has its own Unix socket at `~/.beige/sockets/<agent>.sock`. The gateway mounts this into the container at `/beige/gateway.sock`.
+
+**Key security property:** The gateway identifies the agent by which socket received the connection — not by any field in the request payload. An agent cannot impersonate another agent.
+
+---
+
+## Security Model
+
+Beige is designed with the assumption that **an agent might go rogue**. Every layer contains damage.
+
+### Defense in Depth
+
+```mermaid
+graph TB
+    subgraph L1["Layer 1: Docker Isolation"]
+        direction TB
+        L1A[Separate container per agent]
+        L1B[No host env vars passed]
+        L1C[No host filesystem access]
+        L1D[No Docker socket access]
+    end
+    
+    subgraph L2["Layer 2: Read-Only Mounts"]
+        direction TB
+        L2A[Tool launchers — read-only]
+        L2B[Tool packages — read-only]
+        L2C[tool-client binary — read-only]
+        L2D[Only /workspace is writable]
+    end
+    
+    subgraph L3["Layer 3: Socket Identity"]
+        direction TB
+        L3A[One socket per agent]
+        L3B[Identity from connection, not payload]
+        L3C[Agent cannot impersonate another agent]
+    end
+    
+    subgraph L4["Layer 4: Policy Engine"]
+        direction TB
+        L4A[Deny by default]
+        L4B[Explicit tool allowlist per agent]
+        L4C[Checked on every invocation]
+    end
+    
+    subgraph L5["Layer 5: Audit Logging"]
+        direction TB
+        L5A[Every tool call logged]
+        L5B[Args, timing, decision recorded]
+        L5C[Append-only JSONL]
+    end
+    
+    L1 --> L2 --> L3 --> L4 --> L5
+```
+
+### What an Agent CAN Do
+
+| Action | Allowed? | Mechanism |
+|--------|----------|-----------|
+| Read/write files in `/workspace` | ✅ | Writable bind mount |
+| Execute code (any language) | ✅ | Deno, sh, python, etc. in sandbox |
+| Call allowed tools via `/tools/bin/` | ✅ | Launcher → socket → policy → execute |
+| Access the internet | ✅ | Container has network access |
+| Read tool documentation | ✅ | Read-only mount at `/tools/packages/` |
+| Install packages in sandbox | ✅ | Can run `apt-get`, `npm`, etc. inside container |
+| Persist data across sessions | ✅ | `/workspace` is a persistent bind mount |
+
+### What an Agent CANNOT Do
+
+| Action | Prevented By |
+|--------|-------------|
+| Read gateway env vars / API keys | Docker isolation — no host env passed |
+| Access host filesystem | Docker isolation — only explicit bind mounts |
+| Modify tool code or launchers | Read-only mounts |
+| Use tools not in its allowlist | Policy engine (deny by default) |
+| Impersonate another agent | Socket identity (one socket per agent) |
+| Access another agent's workspace | Separate containers, separate bind mounts |
+| Access the Docker daemon | No Docker socket mount |
+| Modify gateway config | Config lives on host, not in sandbox |
+| Access audit logs | Logs are on host, not mounted |
+| Bypass tool logging | All `/tools/bin/` calls route through gateway socket |
+
+---
+
+### Threat Model
+
+#### Threat: Agent tries to read API keys
+
+```mermaid
+flowchart LR
+    A[Agent tries] --> B{How?}
+    B -->|env vars| C[Empty — not passed to container]
+    B -->|read /proc| D[Only sees container's own processes]
+    B -->|read host files| E[No host mounts except /workspace]
+    B -->|inspect tool code| F[Tools don't contain secrets]
+    
+    C --> G[❌ Blocked]
+    D --> G
+    E --> G
+    F --> G
+    
+    style G fill:#ffcccc
+```
+
+#### Threat: Agent spoofs identity to use another agent's tools
+
+```mermaid
+flowchart LR
+    A[Agent sends<br/>tool_request with<br/>fake agent_id] --> B[Socket server<br/>receives request]
+    B --> C[Server identifies agent<br/>from WHICH SOCKET<br/>received the connection]
+    C --> D[Payload agent_id<br/>is IGNORED]
+    D --> E[Real agent identity<br/>used for policy check]
+    
+    style D fill:#ccffcc
+    style E fill:#ccffcc
+```
+
+Each agent has its own Unix socket file. The gateway knows which agent sent a request by which socket server received it — not by any field in the request payload.
+
+#### Threat: Agent modifies tool launcher to skip gateway
+
+```mermaid
+flowchart LR
+    A[Agent tries to<br/>modify /tools/bin/kv] --> B[Write fails:<br/>read-only mount]
+    A2[Agent tries to<br/>create /tools/bin/fake] --> B2[Write fails:<br/>read-only mount]
+    A3[Agent copies launcher<br/>to /workspace and edits] --> C[Edited copy can still<br/>only connect to<br/>/beige/gateway.sock]
+    C --> D[Gateway still enforces<br/>policy on the socket]
+    
+    style B fill:#ffcccc
+    style B2 fill:#ffcccc
+    style D fill:#ccffcc
+```
+
+#### Threat: Agent escapes Docker container
+
+This is a Docker-level concern, not Beige-specific. Mitigations:
+
+- Use rootless Docker or Podman (future)
+- Don't run containers as root (future hardening)
+- Keep Docker and kernel updated
+- Don't mount the Docker socket into containers (enforced)
+
+---
+
+### Secrets Flow
+
+```mermaid
+flowchart TD
+    subgraph Host["Gateway Host"]
+        ENV["Environment Variables<br/>ANTHROPIC_API_KEY<br/>TELEGRAM_BOT_TOKEN"]
+        CONF["config.json5<br/>${ANTHROPIC_API_KEY}"]
+        GW["Gateway Process<br/>(resolves env vars at startup)"]
+        PI["pi SDK<br/>(API key via AuthStorage)"]
+        GRAM["GrammY<br/>(bot token)"]
+        
+        ENV --> CONF
+        CONF --> GW
+        GW --> PI
+        GW --> GRAM
+    end
+    
+    subgraph Sandbox["Docker Sandbox"]
+        AGENT["Agent Code"]
+        TOOL_BIN["/tools/bin/"]
+        WORKSPACE["/workspace/"]
+    end
+    
+    GW ---|docker exec| Sandbox
+    PI -.-x Sandbox
+    GRAM -.-x Sandbox
+    
+    style Host fill:#f5f0e0,stroke:#c9b97a
+    style Sandbox fill:#e0e8f0,stroke:#7a9cc9
+```
+
+> Secrets exist **only** in the gateway process memory. They are resolved from environment variables at startup and **never** passed to any sandbox container.
+
+---
+
+## Audit Logging
+
+Every tool invocation produces a JSONL audit entry at `~/.beige/logs/audit.jsonl`:
+
+```json
+{"ts":"2026-03-05T12:00:00.000Z","agent":"assistant","type":"core_tool","tool":"exec","args":["/tools/bin/kv","set","trip","Paris"],"decision":"allowed","durationMs":45,"exitCode":0,"outputBytes":23}
+{"ts":"2026-03-05T12:00:00.050Z","agent":"assistant","type":"tool","tool":"kv","args":["set","trip","Paris"],"decision":"allowed","target":"gateway","durationMs":12,"exitCode":0,"outputBytes":2}
+```
+
+### Log Fields
+
+| Field | Description |
+|-------|-------------|
+| `ts` | ISO 8601 timestamp |
+| `agent` | Agent name (derived from socket identity) |
+| `type` | `core_tool` (LLM→gateway) or `tool` (sandbox→gateway socket) |
+| `tool` | Tool name |
+| `args` | Arguments (future: redaction rules for sensitive values) |
+| `decision` | `allowed` or `denied` |
+| `target` | Where the tool executes (`gateway` or `sandbox`) |
+| `durationMs` | Execution time in milliseconds |
+| `exitCode` | Process exit code |
+| `outputBytes` | Size of output returned |
+| `error` | Error message (if any) |
+
+---
+
+## Gateway Configuration
+
+Configure the gateway in `config.json5`:
+
+```json5
+{
+  gateway: {
+    host: "127.0.0.1",  // Bind address (default: 127.0.0.1)
+    port: 7433,          // HTTP API port (default: 7433)
+    logFile: "~/.beige/logs/gateway.log",  // Daemon log file
+  },
+}
+```
+
+All fields are optional with sensible defaults.
+
+---
+
+## HTTP API
+
+The gateway exposes an HTTP API on port 7433 (configurable). This is used by the TUI and can be used for custom integrations.
+
+### Quick Reference
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Health check |
+| `/api/agents` | GET | List all agents |
+| `/api/config` | GET | Get config (without API keys) |
+| `/api/agents/:name/exec` | POST | Execute a core tool |
+| `/api/agents/:name/prompt` | POST | Send a message to an agent |
+| `/api/agents/:name/sessions` | GET | List saved sessions |
+| `/api/gateway/restart` | POST | Graceful restart |
+
+### Example: Execute a Tool
+
+```bash
+curl -X POST http://127.0.0.1:7433/api/agents/assistant/exec \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "exec", "params": {"command": "ls -la /workspace"}}'
+```
+
+Response:
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "total 8\ndrwxr-xr-x  2 root root 4096 Mar  5 12:00 .\ndrwxr-xr-x  1 root root 4096 Mar  5 12:00 .."
+    }
+  ],
+  "isError": false
+}
+```
+
+For the full API reference, see [Channels & Tools → HTTP API](/channels-and-tools#http-api).
+
+---
+
+## Directory Structure
+
+The gateway creates and manages these directories under `~/.beige/`:
+
+```
+~/.beige/
+├── config.json5                # Main config file
+├── agents/
+│   └── <agent>/
+│       ├── workspace/          # Mounted as /workspace (rw)
+│       └── launchers/          # Mounted as /tools/bin (ro)
+├── sessions/
+│   ├── session-map.json        # Maps keys → session files
+│   ├── session-settings.json   # Per-session setting overrides
+│   └── <agent>/
+│       └── <id>.jsonl          # pi session files (persistent)
+├── sockets/
+│   └── <agent>.sock           # Unix socket per agent
+├── data/
+│   ├── kv.json                # KV tool data (example)
+│   └── provider-health.json   # Rate limit tracking
+├── toolkits/                   # Installed toolkits
+│   └── @scope/toolkit-name/
+├── toolkit-registry.json       # Tracks installed toolkits
+└── logs/
+    ├── audit.jsonl            # Audit log
+    └── gateway.log            # Daemon stdout/stderr
+```
+
+---
+
+## Next Steps
+
+- **[Agents](/agents)** — Configure providers, models, tools, and skills
+- **[Channels & Tools](/channels-and-tools)** — TUI, Telegram, HTTP API, and extensibility
+- **[Getting Started](/getting-started)** — Installation and first run

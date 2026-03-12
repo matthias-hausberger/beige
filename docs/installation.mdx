@@ -15,10 +15,10 @@ npm install -g matthias-hausberger/beige
 # Set your API key
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Start the gateway (first run auto-creates ~/.beige/)
+# Shell 1: Start the gateway daemon (first run auto-creates ~/.beige/)
 beige gateway start
 
-# In another terminal, start the TUI
+# Shell 2: Start the TUI
 beige tui
 ```
 
@@ -165,10 +165,10 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 ### Run
 
 ```bash
-# Shell 1
+# Shell 1: start the gateway daemon
 beige gateway start
 
-# Shell 2
+# Shell 2: interactive TUI
 beige tui
 ```
 
@@ -219,11 +219,21 @@ cp examples/config.json5 ~/.beige/config.json5
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Shell 1 — gateway
+# Shell 1 — gateway (foreground so you can see logs)
 npx tsx src/cli.ts gateway start --foreground
 
 # Shell 2 — TUI
 npx tsx src/cli.ts tui
+```
+
+Or use `pnpm run beige` as a shorthand for `npx tsx src/cli.ts`:
+
+```bash
+# Shell 1
+pnpm run beige gateway start --foreground
+
+# Shell 2
+pnpm run beige tui
 ```
 
 ---

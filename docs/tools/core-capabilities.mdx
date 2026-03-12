@@ -1,23 +1,23 @@
 ---
 title: "Core Capabilities"
-description: "The 4 built-in tools every agent has, the tool package format, and how to write your own"
+description: "The 4 built-in tools every agent has: read, write, patch, exec"
 ---
 
-Every agent has exactly 4 core tools. Everything else composes through `exec`.
+Every agent has exactly 4 core tools. These are the only tools the LLM calls directly — everything else composes through `exec`.
 
 ```mermaid
 graph LR
-    LLM -->|direct tool call| CT[Core Tools<br/>read, write, patch, exec]
-    LLM -->|exec /tools/bin/kv| CT
+    LLM -->|direct tool call| CT[Core Tools<br/>read · write · patch · exec]
     CT -->|docker exec| SB[Sandbox]
-    SB -->|/tools/bin/kv calls| TC[tool-client]
+    SB -->|exec /tools/bin/kv| TC[tool-client]
     TC -->|Unix socket| GW[Gateway Socket Server]
-    GW --> TR[Tool Runner]
-    TR --> HANDLER[Tool Handler]
+    GW --> TR[Tool Handler]
 
     style CT fill:#ffe0cc
-    style HANDLER fill:#cce0ff
+    style TR fill:#cce0ff
 ```
+
+---
 
 ## The 4 Core Tools
 
@@ -28,12 +28,12 @@ Read a file from the sandbox filesystem.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `path` | string | File path (relative to `/workspace` or absolute) |
-| `offset` | number? | Start line (1-indexed) |
-| `limit` | number? | Max lines to read |
+| `offset` | number? | Start line, 1-indexed |
+| `limit` | number? | Maximum lines to read |
 
 ### `write`
 
-Write content to a file. Creates parent directories automatically.
+Write content to a file. Parent directories are created automatically.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -42,7 +42,7 @@ Write content to a file. Creates parent directories automatically.
 
 ### `patch`
 
-Find-and-replace in a file. The `oldText` must match exactly.
+Find-and-replace in a file. The `oldText` must match exactly — the call fails if no exact match is found.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -52,231 +52,82 @@ Find-and-replace in a file. The `oldText` must match exactly.
 
 ### `exec`
 
-Execute any command in the sandbox.
+Execute any command inside the sandbox. The command runs via `sh -c`, so shell syntax works.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `command` | string | Shell command (runs via `sh -c`) |
+| `command` | string | Shell command |
 | `timeout` | number? | Timeout in seconds (default: 120) |
 
 ---
 
-## Tool Package Format
+## How Core Tools Execute
 
-A tool package is a directory with a standard structure:
+Core tools run via `docker exec` — the gateway never executes commands on the host directly. All computation happens inside the sandbox container.
 
-```
-tools/my-tool/
-├── tool.json     # Manifest: name, description, commands, target
-├── index.ts      # Handler implementation (gateway-targeted tools)
-└── README.md     # Documentation (mounted into sandbox for agent context)
-```
+```mermaid
+sequenceDiagram
+    participant LLM
+    participant CT as Core Tool (exec)
+    participant AL as Audit Logger
+    participant SM as Sandbox Manager
+    participant SB as Docker Sandbox
 
-### tool.json — Manifest
-
-```json
-{
-  "name": "kv",
-  "description": "Simple key-value store. Store and retrieve values by key.",
-  "commands": [
-    "set <key> <value>  — Store a value",
-    "get <key>          — Retrieve a value",
-    "del <key>          — Delete a key",
-    "list               — List all keys"
-  ],
-  "target": "gateway"
-}
-```
-
-| Field | Description |
-|-------|-------------|
-| `name` | Tool identifier (used in config, launchers, audit logs) |
-| `description` | Short description (included in LLM system prompt) |
-| `commands` | List of available commands with usage hints |
-| `target` | Where the handler executes: `"gateway"` or `"sandbox"` |
-
-### index.ts — Handler
-
-For **gateway-targeted** tools, `index.ts` exports a `createHandler` factory. Tool packages must be **self-contained** — no imports from the beige source tree, since installed tools live at `~/.beige/tools/<name>/` with no source tree nearby:
-
-```typescript
-// Define ToolHandler inline — no imports from the beige source tree.
-type ToolHandler = (
-  args: string[],
-  config?: Record<string, unknown>
-) => Promise<{ output: string; exitCode: number }>;
-
-export function createHandler(config: Record<string, unknown>): ToolHandler {
-  return async (args: string[]) => {
-    const command = args[0];
-    switch (command) {
-      case "hello":
-        return { output: `Hello, ${args[1] || "world"}!`, exitCode: 0 };
-      default:
-        return { output: `Unknown command: ${command}`, exitCode: 1 };
-    }
-  };
-}
-```
-
-### README.md — Documentation
-
-The README is mounted into the sandbox at `/tools/packages/<name>/README.md`. The agent reads it to learn how to use the tool:
-
-```
-exec cat /tools/packages/kv/README.md
+    LLM->>CT: exec("ls -la /workspace")
+    CT->>AL: log(agent, "core_tool", "exec", args, "allowed")
+    CT->>SM: exec(agent, ["sh", "-c", "ls -la /workspace"])
+    SM->>SB: docker exec beige-<agent> sh -c "ls -la ..."
+    SB-->>SM: stdout + exit code
+    SM-->>CT: ExecResult
+    CT->>AL: finish(exitCode, outputBytes)
+    CT-->>LLM: tool result
 ```
 
 ---
 
-## How Tools Are Mounted
+## Calling Tools via `exec`
 
-```mermaid
-flowchart TD
-    subgraph Host["Gateway Host"]
-        TP["tools/kv/<br/>tool.json, index.ts, README.md"]
-        GL["~/.beige/agents/assistant/launchers/<br/>kv (generated script)"]
-    end
-
-    subgraph Sandbox["Docker Sandbox"]
-        BIN["/tools/bin/kv<br/>(read-only)"]
-        PKG["/tools/packages/kv/<br/>(read-only)"]
-    end
-
-    GL -->|bind mount ro| BIN
-    TP -->|bind mount ro| PKG
-
-    style Host fill:#f5f0e0,stroke:#c9b97a
-    style Sandbox fill:#e0e8f0,stroke:#7a9cc9
-```
-
-For each tool in an agent's config, the gateway generates a launcher script:
+Custom tools (like `kv`) are not called directly by the LLM — they're invoked via `exec`:
 
 ```bash
-#!/bin/sh
-# Auto-generated by beige gateway. DO NOT EDIT.
-# Tool: kv | Target: gateway
-exec /beige/tool-client "kv" "$@"
+exec /tools/bin/kv set mykey myvalue
+exec /tools/bin/kv get mykey
+exec cat /tools/packages/kv/README.md   # read tool documentation
 ```
 
-The launcher calls `tool-client`, a Deno script that connects to the gateway Unix socket, sends a JSON request, and returns the result.
+When the sandbox runs `/tools/bin/kv`, it triggers the double-routing flow:
+
+1. The launcher script calls `tool-client` inside the container
+2. `tool-client` connects to the Unix socket at `/beige/gateway.sock`
+3. The gateway socket server receives the request, identifies the agent, policy-checks, and executes the handler
+4. The result flows back through the socket to stdout in the sandbox
+5. `docker exec` returns the output to the LLM
+
+This means **every** custom tool call is policy-checked and audit-logged, regardless of how it's invoked inside the sandbox.
 
 ---
 
 ## Socket Protocol
 
-Tool launchers communicate with the gateway over newline-delimited JSON.
+Tool launchers communicate with the gateway over newline-delimited JSON on the Unix socket.
 
 **Request (sandbox → gateway):**
 ```json
 {"type":"tool_request","tool":"kv","args":["set","mykey","myvalue"]}
 ```
 
-**Response (gateway → sandbox):**
+**Response (gateway → sandbox) — success:**
 ```json
 {"type":"tool_response","success":true,"output":"OK: mykey = myvalue","exitCode":0}
 ```
 
----
-
-## Writing a New Tool
-
-### Step 1: Create the package
-
-```
-tools/my-tool/
-├── tool.json
-├── index.ts
-└── README.md
-```
-
-### Step 2: Implement the handler
-
-```typescript
-// tools/my-tool/index.ts
-type ToolHandler = (
-  args: string[],
-  config?: Record<string, unknown>
-) => Promise<{ output: string; exitCode: number }>;
-
-export function createHandler(config: Record<string, unknown>): ToolHandler {
-  return async (args) => {
-    const [command, ...rest] = args;
-    switch (command) {
-      case "run":
-        return { output: `Running with: ${rest.join(" ")}`, exitCode: 0 };
-      default:
-        return { output: `Unknown command: ${command}`, exitCode: 1 };
-    }
-  };
-}
-```
-
-### Step 3: Register in config
-
-```json5
-{
-  tools: {
-    "my-tool": {
-      path: "./tools/my-tool",
-      target: "gateway",
-    },
-  },
-  agents: {
-    assistant: {
-      tools: ["my-tool"],
-    },
-  },
-}
-```
-
-### Step 4: Restart the gateway
-
-```bash
-beige gateway restart
-```
-
-The agent can now invoke it:
-
-```
-exec /tools/bin/my-tool run hello
-→ Running with: hello
+**Response — error:**
+```json
+{"type":"tool_response","success":false,"error":"Permission denied: tool 'kv' not in allowlist","exitCode":1}
 ```
 
 ---
 
-## Config-Driven Tool Variants
+## Writing Your Own Tools
 
-The same tool package can be registered multiple times with different configs:
-
-```json5
-{
-  tools: {
-    "slack": {
-      path: "./tools/slack",
-      target: "gateway",
-      config: { allowedChannels: ["#general"] },
-    },
-    "slack-unrestricted": {
-      path: "./tools/slack",
-      target: "gateway",
-      config: { allowedChannels: ["*"] },
-    },
-  },
-  agents: {
-    intern: { tools: ["slack"] },
-    admin:  { tools: ["slack-unrestricted"] },
-  },
-}
-```
-
----
-
-## Execution Targets
-
-| Target | Where it runs | Status |
-|--------|--------------|--------|
-| `gateway` | On the gateway host process | ✅ Available |
-| `sandbox` | Inside the agent's Docker container | 🔮 Future |
-
-Gateway-targeted tools are appropriate for tools that need access to host resources (databases, APIs, filesystem) that shouldn't be exposed to the sandbox directly.
+To create a custom tool, see [Writing Tools](/tools/writing-tools).

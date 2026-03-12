@@ -1,0 +1,236 @@
+---
+title: "CLI Reference"
+description: "All beige commands, flags, and usage patterns"
+icon: "terminal"
+---
+
+The `beige` CLI controls the gateway daemon, launches the TUI, and manages toolkits.
+
+```bash
+beige <command> [subcommand] [flags]
+```
+
+Running `beige` with no arguments prints help and exits.
+
+---
+
+## Gateway Commands
+
+The gateway is the always-running process that manages sandboxes, routes tool calls, and enforces policies.
+
+### `beige gateway start`
+
+Start the gateway as a background daemon.
+
+```bash
+beige gateway start
+beige gateway start --foreground    # Run in foreground (stdout/stderr visible)
+```
+
+On first run (npm install), if `~/.beige/config.json5` does not exist, the gateway automatically runs setup before starting.
+
+The daemon writes its PID to `~/.beige/gateway.pid` and logs to `~/.beige/logs/gateway.log`.
+
+On startup, the gateway:
+1. Loads and validates `config.json5`
+2. Builds the sandbox Docker image if it doesn't exist
+3. Creates a Docker container for each configured agent
+4. Starts a Unix socket server for each agent
+5. Starts the HTTP API on port 7433
+6. Starts the Telegram bot (if configured)
+
+### `beige gateway stop`
+
+Stop the running gateway daemon.
+
+```bash
+beige gateway stop
+```
+
+Sends `SIGTERM` to the daemon process. In-flight requests are not gracefully drained — for a graceful stop, use `restart`.
+
+### `beige gateway restart`
+
+Gracefully restart the gateway without losing state.
+
+```bash
+beige gateway restart
+```
+
+Sends `SIGHUP` to the daemon. The gateway:
+1. Drains all in-flight LLM and tool calls
+2. Tears down sandboxes, sockets, API, and channels
+3. Reloads `config.json5` from disk
+4. Restarts everything fresh
+
+Use this after editing `config.json5` to apply changes without killing active sessions.
+
+### `beige gateway status`
+
+Check whether the gateway daemon is running.
+
+```bash
+beige gateway status
+```
+
+Output examples:
+```
+[BEIGE] Gateway: running (PID 12345)
+[BEIGE] Gateway: stopped
+```
+
+### `beige gateway logs`
+
+View the gateway log file.
+
+```bash
+beige gateway logs           # Print full log and exit
+beige gateway logs -f        # Follow (live tail)
+beige gateway logs --follow  # Same as -f
+```
+
+Logs are stored at `~/.beige/logs/gateway.log` (configurable via `gateway.logFile` in config).
+
+---
+
+## TUI Command
+
+### `beige tui [agent]`
+
+Launch the interactive TUI, connecting to the running gateway.
+
+```bash
+beige tui                    # Connect using the first agent in config
+beige tui assistant          # Connect as a specific agent
+beige tui assistant --gateway http://192.168.1.100:7433
+```
+
+The TUI:
+- Reads `config.json5` locally (for LLM API keys — the LLM session runs in the TUI process)
+- Connects to the gateway HTTP API for tool execution (sandbox operations)
+- Provides the full pi experience: rich editor, streaming, model switching, session management
+
+The gateway **must be running** before starting the TUI.
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `[agent]` | Agent name (defaults to first agent in config) |
+| `--gateway`, `-g` | Gateway URL (default: `http://127.0.0.1:7433`) |
+| `--config`, `-c` | Config file path (default: `~/.beige/config.json5`) |
+
+---
+
+## Setup Command
+
+### `beige setup`
+
+Initialize `~/.beige/` with the default config and bundled tools.
+
+```bash
+beige setup           # Run setup (skips if already done, no-op on source installs)
+beige setup --force   # Run setup unconditionally (works on source installs too)
+```
+
+Setup creates:
+```
+~/.beige/
+├── config.json5          # Default config with Anthropic provider + kv tool
+└── tools/
+    └── kv/               # Bundled KV store tool
+```
+
+Setup is **idempotent** — it only creates files that don't already exist. Existing files are never overwritten.
+
+**Source install behavior:** When running from a git checkout (a `.git` directory next to `package.json`), setup is skipped unless `--force` is passed. This prevents accidentally writing to `~/.beige` when developing Beige itself.
+
+---
+
+## Toolkit Commands
+
+### `beige install <source>`
+
+Install a toolkit.
+
+```bash
+beige install @myorg/toolkit-name          # From npm
+beige install github:owner/repo            # From GitHub
+beige install github:owner/repo#v1.2.0    # Specific tag/branch
+beige install ./path/to/toolkit            # Local directory
+beige install https://example.com/tk.tgz  # From URL (.tar.gz)
+
+beige install @myorg/toolkit --force       # Override tool name conflicts
+```
+
+Toolkits are installed to `~/.beige/toolkits/`. After installation, add the toolkit's tools to your agent config.
+
+### `beige toolkit list`
+
+List all installed toolkits.
+
+```bash
+beige toolkit list
+```
+
+Shows toolkit name, version, source, available tools, and install date.
+
+### `beige toolkit show <name>`
+
+Show details about an installed toolkit.
+
+```bash
+beige toolkit show my-toolkit
+```
+
+### `beige toolkit remove <name>`
+
+Uninstall a toolkit.
+
+```bash
+beige toolkit remove my-toolkit
+```
+
+Removes the toolkit and its tools. Agent configs referencing removed tools will fail validation at next gateway start.
+
+### `beige toolkit update`
+
+Re-install all toolkits from their original sources, pulling the latest versions.
+
+```bash
+beige toolkit update
+```
+
+---
+
+## Global Flags
+
+These flags apply to all commands:
+
+| Flag | Description |
+|------|-------------|
+| `--config`, `-c` | Config file path (default: `~/.beige/config.json5`) |
+| `--gateway`, `-g` | Gateway URL for TUI commands (default: `http://127.0.0.1:7433`) |
+| `--help`, `-h` | Show help for the current command |
+
+---
+
+## Typical Workflow
+
+```bash
+# First time (npm global install)
+beige setup                          # Initialize ~/.beige
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Every time
+beige gateway start                  # Shell 1: start gateway daemon
+beige tui                            # Shell 2: interactive TUI
+
+# After editing config
+beige gateway restart                # Reload config without losing sessions
+
+# Debugging
+beige gateway logs -f                # Follow logs live
+beige gateway status                 # Check if daemon is running
+docker ps | grep beige               # Check sandbox containers
+```

@@ -369,63 +369,6 @@ JSONL file at `~/.beige/logs/audit.jsonl`:
 }
 ```
 
-## Directory Layout
-
-```text
-beige/
-├── project/                    # Design history
-│   ├── vision.md
-│   └── usecases.md
-├── docs/                       # Documentation
-│   ├── README.md               # Doc index
-│   ├── architecture.md         # This file
-│   ├── system-overview.md      # Component diagrams
-│   ├── request-flows.md        # Sequence diagrams
-│   ├── security-model.md       # Threat model + defenses
-│   ├── tools.md                # Tool packages + protocol
-│   └── configuration.md        # Config reference
-├── src/
-│   ├── cli.ts                  # CLI entry point (starts gateway, optionally with TUI channel)
-│   ├── install.ts              # First-time setup: copy tools, write default config
-│   ├── index.ts                # Programmatic exports
-│   ├── config/
-│   │   ├── schema.ts           # Config types + validation
-│   │   └── loader.ts           # JSON5 loader + env var resolution
-│   ├── gateway/
-│   │   ├── gateway.ts          # Main gateway orchestrator
-│   │   ├── api.ts              # HTTP API for external channels (TUI, etc.)
-│   │   ├── agent-manager.ts    # Agent session lifecycle
-│   │   ├── sessions.ts         # Session store (persistence + mapping)
-│   │   ├── session-settings.ts # Per-session setting overrides
-│   │   ├── policy.ts           # Permission checks
-│   │   └── audit.ts            # Audit logging
-│   ├── sandbox/
-│   │   └── manager.ts          # Docker container lifecycle, tool launcher generation
-│   ├── socket/
-│   │   ├── server.ts           # Unix socket server (gateway side)
-│   │   └── protocol.ts         # Request/response types
-│   ├── tools/
-│   │   ├── core.ts             # read, write, patch, exec as pi ToolDefinitions
-│   │   ├── registry.ts         # Load tool packages, register handlers
-│   │   └── runner.ts           # Execute tool handlers
-│   └── channels/
-│       ├── telegram.ts         # GrammY adapter
-│       └── tui.ts              # pi InteractiveMode adapter
-├── tools/
-│   └── kv/                     # MVP tool
-│       ├── tool.json
-│       ├── index.ts
-│       └── README.md
-├── sandbox/
-│   ├── Dockerfile              # Sandbox base image
-│   └── tool-client.ts          # Socket client (runs inside sandbox)
-├── examples/
-│   └── config.json5            # Example configuration
-├── package.json
-├── tsconfig.json
-└── README.md
-```
-
 ## Tech Decisions
 
 | Decision             | Choice                                             | Rationale                                                                                                                                                                                                                    |

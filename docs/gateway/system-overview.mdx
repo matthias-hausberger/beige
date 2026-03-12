@@ -159,7 +159,7 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant CLI as Shell 1: beige
+    participant CLI as Shell 1: beige gateway start
     participant GW as Gateway
     participant Tools as Tool Registry
     participant SM as Sandbox Manager
@@ -195,7 +195,7 @@ Then in a separate shell:
 
 ```mermaid
 sequenceDiagram
-    participant CLI2 as Shell 2: beige tui testo
+    participant CLI2 as Shell 2: beige tui assistant
     participant TUI as pi InteractiveMode
     participant API as Gateway API (:7433)
     participant SB as Docker Sandbox
@@ -204,13 +204,13 @@ sequenceDiagram
     API-->>CLI2: ok
 
     CLI2->>API: GET /api/agents
-    API-->>CLI2: [{name: "testo", tools: ["kv"]}]
+    API-->>CLI2: [{name: "assistant", tools: ["kv"]}]
 
     CLI2->>TUI: createAgentSession (LLM local, tools proxied)
 
     Note over TUI: User types a message
 
-    TUI->>API: POST /api/agents/testo/exec {tool: "exec", params: {command: "ls"}}
+    TUI->>API: POST /api/agents/assistant/exec {tool: "exec", params: {command: "ls"}}
     API->>SB: docker exec
     SB-->>API: file listing
     API-->>TUI: {content: [...]}

@@ -1,0 +1,352 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BeigeConfig",
+  "description": "Beige configuration file (config.json5). JSON5 format — comments and trailing commas are allowed.",
+  "type": "object",
+  "required": [
+    "llm",
+    "tools",
+    "agents"
+  ],
+  "properties": {
+    "llm": {
+      "title": "LLMConfig",
+      "type": "object",
+      "required": [
+        "providers"
+      ],
+      "properties": {
+        "providers": {
+          "description": "Named LLM providers. Each key becomes a provider name agents can reference.",
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "title": "LLMProviderConfig",
+              "type": "object",
+              "properties": {
+                "apiKey": {
+                  "description": "API key. Use \"${VAR_NAME}\" to read from environment. Not required for local providers (e.g. Ollama).",
+                  "type": "string"
+                },
+                "baseUrl": {
+                  "description": "Custom API endpoint URL. Required for non-built-in providers (ZAI, Groq, Ollama, etc.).",
+                  "type": "string"
+                },
+                "api": {
+                  "description": "API protocol. Auto-set for built-in providers (anthropic, openai, google). Required for custom providers.",
+                  "anyOf": [
+                    {
+                      "const": "anthropic-messages",
+                      "type": "string"
+                    },
+                    {
+                      "const": "openai-completions",
+                      "type": "string"
+                    },
+                    {
+                      "const": "openai-responses",
+                      "type": "string"
+                    },
+                    {
+                      "const": "google-generative-ai",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "tools": {
+      "description": "Tool registry. Each key becomes the tool name used in agent configs and /tools/bin/.",
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "title": "ToolConfig",
+          "type": "object",
+          "required": [
+            "path",
+            "target"
+          ],
+          "properties": {
+            "path": {
+              "description": "Path to the tool package directory. Resolved relative to the config file unless absolute.",
+              "type": "string"
+            },
+            "target": {
+              "description": "\"gateway\" runs the handler on the host process. \"sandbox\" is planned.",
+              "anyOf": [
+                {
+                  "const": "gateway",
+                  "type": "string"
+                },
+                {
+                  "const": "sandbox",
+                  "type": "string"
+                }
+              ]
+            },
+            "config": {
+              "description": "Arbitrary config object passed to createHandler(config) at startup",
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            },
+            "_toolkit": {
+              "description": "Internal: set by the loader for tools auto-discovered from toolkits",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "skills": {
+      "description": "Skill registry. Each key becomes the skill name used in agent configs.",
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "title": "SkillConfig",
+          "type": "object",
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "description": "Path to the skill package directory. Resolved relative to the config file unless absolute.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "agents": {
+      "description": "Agent definitions. Each agent gets its own Docker sandbox, Unix socket, and LLM session.",
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "title": "AgentConfig",
+          "type": "object",
+          "required": [
+            "model",
+            "tools"
+          ],
+          "properties": {
+            "model": {
+              "title": "ModelRef",
+              "type": "object",
+              "required": [
+                "provider",
+                "model"
+              ],
+              "properties": {
+                "provider": {
+                  "description": "Provider name — must match a key in llm.providers",
+                  "type": "string"
+                },
+                "model": {
+                  "description": "Model ID as the provider expects it",
+                  "type": "string"
+                },
+                "thinkingLevel": {
+                  "description": "Extended thinking budget. Only affects models that support it.",
+                  "anyOf": [
+                    {
+                      "const": "off",
+                      "type": "string"
+                    },
+                    {
+                      "const": "minimal",
+                      "type": "string"
+                    },
+                    {
+                      "const": "low",
+                      "type": "string"
+                    },
+                    {
+                      "const": "medium",
+                      "type": "string"
+                    },
+                    {
+                      "const": "high",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            "fallbackModels": {
+              "description": "Fallback models tried in order when the primary model fails or is rate-limited",
+              "type": "array",
+              "items": {
+                "title": "ModelRef",
+                "type": "object",
+                "required": [
+                  "provider",
+                  "model"
+                ],
+                "properties": {
+                  "provider": {
+                    "description": "Provider name — must match a key in llm.providers",
+                    "type": "string"
+                  },
+                  "model": {
+                    "description": "Model ID as the provider expects it",
+                    "type": "string"
+                  },
+                  "thinkingLevel": {
+                    "description": "Extended thinking budget. Only affects models that support it.",
+                    "anyOf": [
+                      {
+                        "const": "off",
+                        "type": "string"
+                      },
+                      {
+                        "const": "minimal",
+                        "type": "string"
+                      },
+                      {
+                        "const": "low",
+                        "type": "string"
+                      },
+                      {
+                        "const": "medium",
+                        "type": "string"
+                      },
+                      {
+                        "const": "high",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "tools": {
+              "description": "Tool names from the tools registry that this agent can invoke",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "skills": {
+              "description": "Skill names from the skills registry mounted into this agent's sandbox",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "sandbox": {
+              "title": "SandboxConfig",
+              "type": "object",
+              "properties": {
+                "image": {
+                  "description": "Docker image name. Default: \"beige-sandbox:latest\"",
+                  "type": "string"
+                },
+                "extraMounts": {
+                  "description": "Additional host→container bind mounts. Reduces isolation — use carefully.",
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "extraEnv": {
+                  "description": "Environment variables passed to the container. Visible to the agent — never use for secrets.",
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "gateway": {
+      "title": "GatewayServerConfig",
+      "type": "object",
+      "properties": {
+        "host": {
+          "description": "HTTP API bind address. Default: \"127.0.0.1\"",
+          "type": "string"
+        },
+        "port": {
+          "description": "HTTP API port. Default: 7433",
+          "type": "number"
+        },
+        "logFile": {
+          "description": "Daemon stdout/stderr log file. Default: ~/.beige/logs/gateway.log",
+          "type": "string"
+        }
+      }
+    },
+    "channels": {
+      "title": "ChannelsConfig",
+      "type": "object",
+      "properties": {
+        "telegram": {
+          "title": "TelegramChannelConfig",
+          "type": "object",
+          "required": [
+            "enabled",
+            "token",
+            "allowedUsers",
+            "agentMapping"
+          ],
+          "properties": {
+            "enabled": {
+              "description": "Set to true to activate the Telegram bot",
+              "type": "boolean"
+            },
+            "token": {
+              "description": "Telegram bot token from @BotFather. Use \"${TELEGRAM_BOT_TOKEN}\".",
+              "type": "string"
+            },
+            "allowedUsers": {
+              "description": "Telegram user IDs permitted to interact with the bot. All others are silently ignored.",
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "agentMapping": {
+              "description": "Maps Telegram chats to agents",
+              "type": "object",
+              "required": [
+                "default"
+              ],
+              "properties": {
+                "default": {
+                  "description": "Agent name that handles all incoming messages",
+                  "type": "string"
+                }
+              }
+            },
+            "defaults": {
+              "title": "ChannelDefaultSettings",
+              "type": "object",
+              "properties": {
+                "verbose": {
+                  "description": "Send a notification for every tool call the agent makes (e.g. 🔧 exec: ls). Default: false",
+                  "type": "boolean"
+                },
+                "streaming": {
+                  "description": "Stream responses to the user in real-time. Default: true",
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

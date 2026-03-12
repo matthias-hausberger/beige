@@ -77,17 +77,17 @@ describe("validateConfig", () => {
   describe("missing required fields", () => {
     it("throws when llm.providers is missing", () => {
       const config = { ...createMinimalConfig(), llm: {} as any };
-      expect(() => validateConfig(config)).toThrow("llm.providers is required");
+      expect(() => validateConfig(config)).toThrow(/llm.*providers/);
     });
 
     it("throws when tools is missing", () => {
       const { tools, ...config } = createMinimalConfig() as any;
-      expect(() => validateConfig(config)).toThrow("tools is required");
+      expect(() => validateConfig(config)).toThrow(/tools/);
     });
 
     it("throws when agents is missing", () => {
       const { agents, ...config } = createMinimalConfig() as any;
-      expect(() => validateConfig(config)).toThrow("agents is required");
+      expect(() => validateConfig(config)).toThrow(/agents/);
     });
   });
 

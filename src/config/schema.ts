@@ -1,42 +1,260 @@
 /**
  * Beige configuration schema.
- * Config is loaded from a YAML file. Environment variables are resolved at load time.
+ *
+ * Single source of truth: TypeBox schemas define the shape, TypeScript types
+ * are derived with Static<>, and a JSON Schema is generated from the same
+ * definitions via `pnpm run schema:generate`.
  */
 
-export interface BeigeConfig {
-  llm: LLMConfig;
-  tools: Record<string, ToolConfig>;
-  skills?: Record<string, SkillConfig>;
-  agents: Record<string, AgentConfig>;
-  gateway?: GatewayServerConfig;
-  channels: ChannelsConfig;
-}
+import { Type, type Static } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 
-export interface LLMConfig {
-  providers: Record<string, LLMProviderConfig>;
-}
+// ── Primitive schemas ────────────────────────────────────────────────────────
 
-export interface LLMProviderConfig {
-  apiKey: string;
-  baseUrl?: string;
-  api?: string; // "anthropic-messages" | "openai-completions" | etc.
-}
+const ModelRef = Type.Object(
+  {
+    provider: Type.String({ description: "Provider name — must match a key in llm.providers" }),
+    model: Type.String({ description: "Model ID as the provider expects it" }),
+    thinkingLevel: Type.Optional(
+      Type.Union(
+        [
+          Type.Literal("off"),
+          Type.Literal("minimal"),
+          Type.Literal("low"),
+          Type.Literal("medium"),
+          Type.Literal("high"),
+        ],
+        { description: "Extended thinking budget. Only affects models that support it." }
+      )
+    ),
+  },
+  { title: "ModelRef" }
+);
 
-export interface ToolConfig {
-  /** Path to the tool package directory (relative to config file) */
-  path: string;
-  /** Where the tool handler executes */
-  target: "gateway" | "sandbox";
-  /** Arbitrary tool-specific configuration */
-  config?: Record<string, unknown>;
-  /** Internal: marks tools auto-loaded from toolkits */
-  _toolkit?: string;
-}
+const SandboxConfig = Type.Object(
+  {
+    image: Type.Optional(
+      Type.String({ description: 'Docker image name. Default: "beige-sandbox:latest"' })
+    ),
+    extraMounts: Type.Optional(
+      Type.Record(Type.String(), Type.String(), {
+        description: "Additional host→container bind mounts. Reduces isolation — use carefully.",
+      })
+    ),
+    extraEnv: Type.Optional(
+      Type.Record(Type.String(), Type.String(), {
+        description:
+          "Environment variables passed to the container. Visible to the agent — never use for secrets.",
+      })
+    ),
+  },
+  { title: "SandboxConfig" }
+);
 
-export interface SkillConfig {
-  /** Path to the skill package directory (relative to config file) */
-  path: string;
-}
+const AgentConfig = Type.Object(
+  {
+    model: ModelRef,
+    fallbackModels: Type.Optional(
+      Type.Array(ModelRef, {
+        description:
+          "Fallback models tried in order when the primary model fails or is rate-limited",
+      })
+    ),
+    tools: Type.Array(Type.String(), {
+      description: "Tool names from the tools registry that this agent can invoke",
+    }),
+    skills: Type.Optional(
+      Type.Array(Type.String(), {
+        description: "Skill names from the skills registry mounted into this agent's sandbox",
+      })
+    ),
+    sandbox: Type.Optional(SandboxConfig),
+  },
+  { title: "AgentConfig" }
+);
+
+const LLMProviderConfig = Type.Object(
+  {
+    apiKey: Type.Optional(
+      Type.String({
+        description:
+          'API key. Use "${VAR_NAME}" to read from environment. Not required for local providers (e.g. Ollama).',
+      })
+    ),
+    baseUrl: Type.Optional(
+      Type.String({
+        description:
+          "Custom API endpoint URL. Required for non-built-in providers (ZAI, Groq, Ollama, etc.).",
+      })
+    ),
+    api: Type.Optional(
+      Type.Union(
+        [
+          Type.Literal("anthropic-messages"),
+          Type.Literal("openai-completions"),
+          Type.Literal("openai-responses"),
+          Type.Literal("google-generative-ai"),
+        ],
+        {
+          description:
+            'API protocol. Auto-set for built-in providers (anthropic, openai, google). Required for custom providers.',
+        }
+      )
+    ),
+  },
+  { title: "LLMProviderConfig" }
+);
+
+const LLMConfig = Type.Object(
+  {
+    providers: Type.Record(Type.String(), LLMProviderConfig, {
+      description:
+        "Named LLM providers. Each key becomes a provider name agents can reference.",
+    }),
+  },
+  { title: "LLMConfig" }
+);
+
+const ToolConfig = Type.Object(
+  {
+    path: Type.String({
+      description:
+        "Path to the tool package directory. Resolved relative to the config file unless absolute.",
+    }),
+    target: Type.Union([Type.Literal("gateway"), Type.Literal("sandbox")], {
+      description: '"gateway" runs the handler on the host process. "sandbox" is planned.',
+    }),
+    config: Type.Optional(
+      Type.Record(Type.String(), Type.Unknown(), {
+        description: "Arbitrary config object passed to createHandler(config) at startup",
+      })
+    ),
+    _toolkit: Type.Optional(
+      Type.String({
+        description: "Internal: set by the loader for tools auto-discovered from toolkits",
+      })
+    ),
+  },
+  { title: "ToolConfig" }
+);
+
+const SkillConfig = Type.Object(
+  {
+    path: Type.String({
+      description:
+        "Path to the skill package directory. Resolved relative to the config file unless absolute.",
+    }),
+  },
+  { title: "SkillConfig" }
+);
+
+const GatewayServerConfig = Type.Object(
+  {
+    host: Type.Optional(
+      Type.String({ description: 'HTTP API bind address. Default: "127.0.0.1"' })
+    ),
+    port: Type.Optional(
+      Type.Number({ description: "HTTP API port. Default: 7433" })
+    ),
+    logFile: Type.Optional(
+      Type.String({
+        description:
+          "Daemon stdout/stderr log file. Default: ~/.beige/logs/gateway.log",
+      })
+    ),
+  },
+  { title: "GatewayServerConfig" }
+);
+
+const ChannelDefaultSettings = Type.Object(
+  {
+    verbose: Type.Optional(
+      Type.Boolean({
+        description:
+          "Send a notification for every tool call the agent makes (e.g. 🔧 exec: ls). Default: false",
+      })
+    ),
+    streaming: Type.Optional(
+      Type.Boolean({
+        description:
+          "Stream responses to the user in real-time. Default: true",
+      })
+    ),
+  },
+  { title: "ChannelDefaultSettings" }
+);
+
+const TelegramChannelConfig = Type.Object(
+  {
+    enabled: Type.Boolean({ description: "Set to true to activate the Telegram bot" }),
+    token: Type.String({
+      description: 'Telegram bot token from @BotFather. Use "${TELEGRAM_BOT_TOKEN}".',
+    }),
+    allowedUsers: Type.Array(Type.Number(), {
+      description:
+        "Telegram user IDs permitted to interact with the bot. All others are silently ignored.",
+    }),
+    agentMapping: Type.Object(
+      {
+        default: Type.String({
+          description: "Agent name that handles all incoming messages",
+        }),
+      },
+      { description: "Maps Telegram chats to agents" }
+    ),
+    defaults: Type.Optional(ChannelDefaultSettings),
+  },
+  { title: "TelegramChannelConfig" }
+);
+
+const ChannelsConfig = Type.Object(
+  {
+    telegram: Type.Optional(TelegramChannelConfig),
+  },
+  { title: "ChannelsConfig" }
+);
+
+// ── Root schema ──────────────────────────────────────────────────────────────
+
+export const BeigeConfigSchema = Type.Object(
+  {
+    llm: LLMConfig,
+    tools: Type.Record(Type.String(), ToolConfig, {
+      description: "Tool registry. Each key becomes the tool name used in agent configs and /tools/bin/.",
+    }),
+    skills: Type.Optional(
+      Type.Record(Type.String(), SkillConfig, {
+        description: "Skill registry. Each key becomes the skill name used in agent configs.",
+      })
+    ),
+    agents: Type.Record(Type.String(), AgentConfig, {
+      description:
+        "Agent definitions. Each agent gets its own Docker sandbox, Unix socket, and LLM session.",
+    }),
+    gateway: Type.Optional(GatewayServerConfig),
+    channels: Type.Optional(ChannelsConfig),
+  },
+  {
+    title: "BeigeConfig",
+    description: "Beige configuration file (config.json5). JSON5 format — comments and trailing commas are allowed.",
+  }
+);
+
+// ── Derived TypeScript types (no change to callsites) ────────────────────────
+
+export type BeigeConfig = Static<typeof BeigeConfigSchema>;
+export type LLMProviderConfig = Static<typeof LLMProviderConfig>;
+export type ToolConfig = Static<typeof ToolConfig>;
+export type SkillConfig = Static<typeof SkillConfig>;
+export type AgentConfig = Static<typeof AgentConfig>;
+export type ModelRef = Static<typeof ModelRef>;
+export type SandboxConfig = Static<typeof SandboxConfig>;
+export type GatewayServerConfig = Static<typeof GatewayServerConfig>;
+export type ChannelsConfig = Static<typeof ChannelsConfig>;
+export type TelegramChannelConfig = Static<typeof TelegramChannelConfig>;
+export type ChannelDefaultSettings = Static<typeof ChannelDefaultSettings>;
+
+// ── Manifests (not part of config.json5, kept here for co-location) ──────────
 
 export interface SkillManifest {
   name: string;
@@ -49,72 +267,6 @@ export interface SkillManifest {
   };
 }
 
-export interface AgentConfig {
-  model: ModelRef;
-  /** Fallback models to try if the primary fails (after retries exhausted) */
-  fallbackModels?: ModelRef[];
-  /** List of tool names from the tools registry that this agent can use */
-  tools: string[];
-  /** List of skill names from the skills registry that this agent can use */
-  skills?: string[];
-  sandbox?: SandboxConfig;
-}
-
-export interface ModelRef {
-  provider: string;
-  model: string;
-  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high";
-}
-
-export interface SandboxConfig {
-  image?: string; // Docker image, defaults to "beige-sandbox:latest"
-  extraMounts?: Record<string, string>; // host:container
-  extraEnv?: Record<string, string>;
-}
-
-export interface GatewayServerConfig {
-  host?: string;     // default: "127.0.0.1"
-  port?: number;     // default: 7433
-  logFile?: string;  // default: ~/.beige/logs/gateway.log
-}
-
-export interface ChannelsConfig {
-  telegram?: TelegramChannelConfig;
-}
-
-/**
- * Channel-level default settings. These can be overridden per-session
- * by the user (e.g. via Telegram commands or TUI slash commands).
- */
-export interface ChannelDefaultSettings {
-  /**
-   * If true, the channel is notified whenever the agent calls a tool
-   * (e.g. "🔧 exec: ls -la"). Default: false.
-   */
-  verbose?: boolean;
-
-  /**
-   * If true, responses are streamed to the user in real-time (message updates
-   * as the LLM generates). If false, the full response is sent once complete.
-   * Default: true.
-   */
-  streaming?: boolean;
-}
-
-export interface TelegramChannelConfig {
-  enabled: boolean;
-  token: string;
-  allowedUsers: number[];
-  agentMapping: {
-    default: string;
-    // future: per-chat routing
-  };
-  /** Channel-level setting defaults (overridable per-session). */
-  defaults?: ChannelDefaultSettings;
-}
-
-// ---
-
 export interface ToolManifest {
   name: string;
   description: string;
@@ -122,20 +274,21 @@ export interface ToolManifest {
   target: "gateway" | "sandbox";
 }
 
+// ── Validation ───────────────────────────────────────────────────────────────
+
 export function validateConfig(config: unknown): BeigeConfig {
+  // TypeBox structural check
+  if (!Value.Check(BeigeConfigSchema, config)) {
+    const errors = [...Value.Errors(BeigeConfigSchema, config)];
+    const first = errors[0];
+    throw new Error(
+      `Config: ${first ? `${first.path} — ${first.message}` : "invalid configuration"}`
+    );
+  }
+
   const c = config as BeigeConfig;
 
-  if (!c.llm?.providers || typeof c.llm.providers !== "object") {
-    throw new Error("Config: llm.providers is required");
-  }
-  if (!c.tools || typeof c.tools !== "object") {
-    throw new Error("Config: tools is required");
-  }
-  if (!c.agents || typeof c.agents !== "object") {
-    throw new Error("Config: agents is required");
-  }
-
-  // Validate agent tool references
+  // Cross-reference checks TypeBox cannot express (references between keys)
   for (const [agentName, agent] of Object.entries(c.agents)) {
     if (!agent.model?.provider || !agent.model?.model) {
       throw new Error(`Config: agents.${agentName}.model requires provider and model`);
@@ -147,7 +300,6 @@ export function validateConfig(config: unknown): BeigeConfig {
         );
       }
     }
-    // Validate agent skill references
     for (const skillName of agent.skills ?? []) {
       if (!c.skills?.[skillName]) {
         throw new Error(
@@ -157,7 +309,6 @@ export function validateConfig(config: unknown): BeigeConfig {
     }
   }
 
-  // Validate channel agent references
   if (c.channels?.telegram?.enabled) {
     const defaultAgent = c.channels.telegram.agentMapping?.default;
     if (defaultAgent && !c.agents[defaultAgent]) {

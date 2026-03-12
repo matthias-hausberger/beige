@@ -19,13 +19,15 @@
   },
   "files": [
     "dist",
-    "tools"
+    "tools",
+    "config.schema.json"
   ],
   "scripts": {
     "beige": "tsx src/cli.ts",
     "build": "tsc",
     "start": "node dist/cli.js",
     "build:sandbox": "docker build -t beige-sandbox:latest ./sandbox",
+    "schema:generate": "tsx scripts/generate-schema.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

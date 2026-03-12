@@ -119,7 +119,7 @@ describe("loadConfig", () => {
       `);
 
       const config = loadConfig(configPath);
-      expect(config.channels.telegram?.token).toBe("bot-token-123");
+      expect(config.channels?.telegram?.token).toBe("bot-token-123");
 
       delete process.env.TEST_TOKEN;
     });
@@ -141,31 +141,31 @@ describe("loadConfig", () => {
     });
 
     it("resolves env vars in arrays", () => {
-      process.env.ALLOWED_USER = "999888";
+      process.env.EXTRA_TOOL = "my-env-tool";
 
       const configPath = join(tempDir, "config.json5");
       writeFileSync(configPath, `
         {
           llm: { providers: { anthropic: { apiKey: "test" } } },
           tools: {},
-          agents: { assistant: { model: { provider: "anthropic", model: "claude" }, tools: [] } },
-          channels: {
-            telegram: {
-              enabled: true,
-              token: "test",
-              allowedUsers: [123, "\${ALLOWED_USER}"],
-              agentMapping: { default: "assistant" },
+          agents: {
+            assistant: {
+              model: { provider: "anthropic", model: "claude" },
+              tools: ["\${EXTRA_TOOL}"],
             },
           },
+          channels: {},
         }
       `);
 
-      const config = loadConfig(configPath);
-      // Note: JSON5 parses strings in number arrays as strings
-      // The actual validation would convert these
-      expect(config.channels.telegram?.allowedUsers).toContain("999888");
+      // env var substitution works in arrays — but note the tool reference
+      // will fail validation since "my-env-tool" is not in the tools registry.
+      // We test substitution only; skip validation via the raw resolve step.
+      // The loader resolves env vars before validating, so we check the
+      // resolved value by catching the cross-reference error (not a parse error).
+      expect(() => loadConfig(configPath)).toThrow("unknown tool 'my-env-tool'");
 
-      delete process.env.ALLOWED_USER;
+      delete process.env.EXTRA_TOOL;
     });
   });
 

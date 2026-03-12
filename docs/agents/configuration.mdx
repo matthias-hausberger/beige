@@ -6,6 +6,19 @@ icon: "sliders"
 
 Beige is configured with a single `~/.beige/config.json5` file. JSON5 is JSON with comments, trailing commas, and unquoted keys. You can also override the path with `--config`.
 
+## Editor Autocomplete
+
+Add a `$schema` line to get inline autocomplete and validation in VS Code, JetBrains, and any editor that supports JSON Schema:
+
+```json5
+{
+  $schema: "https://raw.githubusercontent.com/matthias-hausberger/beige/main/config.schema.json",
+  // ... rest of config
+}
+```
+
+The schema is generated from the TypeBox definitions in `src/config/schema.ts` and committed at `config.schema.json` in the repository. `beige setup` writes this line automatically into the generated config.
+
 ## Environment Variables
 
 Any string value can reference environment variables using `${VAR_NAME}`. Variables are resolved at startup — if a referenced variable is not set, the gateway exits with an error.

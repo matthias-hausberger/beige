@@ -2,61 +2,65 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "Beige",
-  "logo": {
-    "dark": "/logo/dark.svg",
-    "light": "/logo/light.svg"
-  },
-  "favicon": "/favicon.svg",
+  "logo": "/assets/beige_logo.png",
+  "favicon": "/assets/beige_logo.png",
   "colors": {
     "primary": "#C2A467",
     "light": "#D4B87A",
     "dark": "#A08550"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "GitHub",
-        "href": "https://github.com/matthias-hausberger/beige"
-      }
-    ]
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/matthias-hausberger/beige"
+    },
+    "links": []
   },
   "navigation": {
     "tabs": [
       {
-        "tab": "Introduction",
-        "pages": ["introduction"]
-      },
-      {
-        "tab": "Get Started",
-        "pages": ["installation"],
-        "anchors": [
+        "tab": "Getting Started",
+        "pages": [
+          "index",
+          "installation",
           {
-            "anchor": "Architecture",
-            "icon": "sitemap",
-            "href": "/architecture"
-          },
-          {
-            "anchor": "API Reference",
-            "icon": "terminal",
-            "href": "/api"
+            "group": "Core Concepts",
+            "pages": [
+              "architecture",
+              "system-overview",
+              "security-model"
+            ]
           }
         ]
       },
       {
         "tab": "Gateway",
-        "pages": ["gateway", "configuration"]
+        "groups": [
+          {
+            "group": "Advanced Reference",
+            "pages": [
+              "gateway-api",
+              "request-flows"
+            ]
+          }
+        ]
       },
       {
-        "tab": "Agents",
-        "pages": ["agents", "skills"]
+        "tab": "Agents"
       },
       {
         "tab": "Channels",
-        "pages": ["channels-and-tools"]
+        "pages": [
+          "channels/telegram",
+          "channels/tui"
+        ]
       },
       {
         "tab": "Tools",
-        "pages": ["tools", "toolkits"]
+        "pages": [
+          "tools",
+          "toolkits"
+        ]
       }
     ]
   },
@@ -64,5 +68,8 @@
     "socials": {
       "github": "https://github.com/matthias-hausberger/beige"
     }
+  },
+  "appearance": {
+    "default": "system"
   }
 }

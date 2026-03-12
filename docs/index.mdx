@@ -1,6 +1,7 @@
 ---
-title: Beige
-description: Secure, open-source, sandboxed agent system
+title: "Introduction"
+description: "Secure, open-source, sandboxed agent system"
+icon: "hand"
 ---
 
 # Beige
@@ -19,7 +20,7 @@ Beige is a secure, open-source, sandboxed agent system. AI agents write and exec
 
 ```bash
 # Install globally
-npm install -g matthias-hausberger/beige
+npm install -g beige
 
 # Or install from source
 git clone https://github.com/matthias-hausberger/beige.git
@@ -34,7 +35,7 @@ Beige uses a two-process model:
 - **Gateway** — Manages sandboxes, sockets, tools, audit logs, HTTP API, and Telegram
 - **TUI** — Connects via HTTP API, runs LLM locally using the pi SDK
 
-```
+```text
 ┌─────────────────┐     ┌─────────────────┐
 │     Gateway     │────▶│ Docker Sandbox  │
 │   (Port 7433)   │     │   (per agent)   │
@@ -50,16 +51,16 @@ Beige uses a two-process model:
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Installation" icon="download" href="/installation">
+  <Card icon="download" href="/installation" title="Installation">
     Detailed setup instructions for npm and source installs
   </Card>
-  <Card title="Architecture" icon="sitemap" href="/architecture">
+  <Card icon="sitemap" href="/architecture" title="Architecture">
     Deep dive into system design and components
   </Card>
-  <Card title="Configuration" icon="gear" href="/configuration">
+  <Card icon="gear" href="/configuration" title="Configuration">
     Configure your agents and policies
   </Card>
-  <Card title="Tools" icon="wrench" href="/tools">
+  <Card icon="wrench" href="/tools" title="Tools">
     Learn about the tool system and writing your own
   </Card>
 </CardGroup>

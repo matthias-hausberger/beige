@@ -1,6 +1,7 @@
-# Request Flows
-
-Detailed sequence diagrams for every type of request in the system.
+---
+title: "Request Flows"
+description: "Detailed sequence diagrams for every type of request in the system."
+---
 
 ## 1. User Message → Agent Response
 
@@ -135,6 +136,7 @@ sequenceDiagram
 ```
 
 > **Two audit log entries** are created:
+>
 > 1. `core_tool/exec` — the exec call itself
 > 2. `tool/kv` — the actual tool invocation through the socket
 
@@ -198,7 +200,7 @@ sequenceDiagram
     CT-->>LLM: combined output
 ```
 
-> **Each `/tools/bin/` call inside the script** still routes through the gateway socket, gets policy-checked, and is audit-logged. There's no way to bypass this from within the sandbox.
+> **`Each /tools/bin/ call inside the script`** still routes through the gateway socket, gets policy-checked, and is audit-logged. There's no way to bypass this from within the sandbox.
 
 ## 7. Telegram Streaming Flow
 
@@ -312,7 +314,7 @@ flowchart LR
 
 ### Session Storage Layout
 
-```
+```text
 ~/.beige/
 ├── sessions/
 │   ├── session-map.json          # Maps keys → session files

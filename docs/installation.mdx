@@ -1,27 +1,26 @@
 ---
-title: "Getting Started"
-description: "Install Beige and run your first agent"
----
-
-# Prerequisites
-
-- **Node.js 22+** — Check with `node --version`
-- **Docker** — For sandbox execution. Check with `docker --version`
-
+title: "Installation"
+description: "Install Beige in your system"
+icon: "download"
 ---
 
 # Installation
 
-Beige supports two install modes:
+Beige supports two install modes that coexist cleanly:
 
-| Mode | Who it's for | How it works |
-|------|--------------|--------------|
-| **npm global** | End users | `npm install -g` → first run auto-sets up `~/.beige` |
-| **Source / git clone** | Contributors, power users | Clone repo, run with `tsx`; manual config |
+| Mode                              | Who it's for              | How it works                                                                 |
+| --------------------------------- | ------------------------- | ---------------------------------------------------------------------------- |
+| **npm global** (`npm install -g`) | End users                 | Installs the published package; first run auto-bootstraps `~/.beige`         |
+| **Source / git clone**            | Contributors, power users | Clone the repo and run with `tsx`; `~/.beige` is never touched automatically |
 
 ---
 
-## Option A: npm Global Install (Recommended)
+## npm Global Install
+
+### Prerequisites
+
+- Node.js 22+
+- Docker (for sandbox execution)
 
 ### Install
 
@@ -29,11 +28,11 @@ Beige supports two install modes:
 npm install -g matthias-hausberger/beige
 ```
 
-### First Run
+### First run
 
-On your first command after install, Beige detects that `~/.beige/config.json5` doesn't exist and runs setup automatically:
+On the very first command after install, beige detects that `~/.beige/config.json5` does not yet exist and runs setup automatically:
 
-```bash
+```text
 $ beige gateway start
 [BEIGE] First run — setting up ~/.beige…
 [BEIGE] Created:
@@ -43,27 +42,29 @@ $ beige gateway start
 [BEIGE] Gateway daemon started (PID 12345)
 ```
 
-You can also trigger setup explicitly:
+You can also trigger setup explicitly at any time:
 
 ```bash
 beige setup
 ```
 
-### What Setup Creates
+### What setup creates
 
-```
+```text
 ~/.beige/
-├── config.json5          # Default config (see below)
+├── config.json5          # default config (see below)
 └── tools/
-    └── kv/               # Bundled KV tool
+    └── kv/               # bundled KV tool
         ├── tool.json
         ├── index.ts
         └── README.md
 ```
 
-Setup is **idempotent** — it only creates files that don't already exist. Re-running is always safe.
+Setup is fully **idempotent** — it only creates files that do not already exist. Existing files (including individual tool directories) are never overwritten. Re-running `beige setup` after partial failures is always safe.
 
-### Default Config
+### Default config
+
+The generated `~/.beige/config.json5` contains:
 
 ```json5
 {
@@ -74,14 +75,14 @@ Setup is **idempotent** — it only creates files that don't already exist. Re-r
       },
     },
   },
-  
+
   tools: {
     kv: {
-      path: "/Users/you/.beige/tools/kv",  // Absolute path, written at setup
+      path: "/Users/you/.beige/tools/kv",   // absolute path, written at setup time
       target: "gateway",
     },
   },
-  
+
   agents: {
     beige: {
       model: {
@@ -98,253 +99,155 @@ Setup is **idempotent** — it only creates files that don't already exist. Re-r
 }
 ```
 
-### Set Your API Key
+The `kv` tool path is written as an absolute path at setup time so the config works regardless of the working directory you run `beige` from.
+
+### Set your API key
 
 ```bash
-# Option 1: Environment variable (recommended)
 export ANTHROPIC_API_KEY="sk-ant-..."
-
-# Option 2: Add directly to config (less secure)
-# Edit ~/.beige/config.json5 and replace "${ANTHROPIC_API_KEY}" with your key
+# or add it directly to ~/.beige/config.json5
 ```
 
 ### Run
 
 ```bash
-# Shell 1: Start the gateway
+# Shell 1
 beige gateway start
 
-# Shell 2: Start the TUI
+# Shell 2
 beige tui
 ```
 
-On first start, the gateway builds the sandbox Docker image automatically.
+On first start, if any agent config uses the `beige-sandbox` image, the gateway builds it automatically before starting containers. Subsequent starts skip the build if the image already exists.
 
 ---
 
-## Option B: Source Install
+## Source Install (git clone)
 
-### Clone and Install
+### Prerequisites
+
+- Node.js 22+
+- Docker
+
+### Clone and install
 
 ```bash
 git clone https://github.com/matthias-hausberger/beige.git
 cd beige
-npm install  # or: pnpm install
+npm install          # or: pnpm install
 ```
 
-### No Automatic Setup
+### No automatic setup
 
-When Beige detects it's running from a git checkout (`.git` directory exists), **it never touches `~/.beige` automatically**.
+When beige detects it is running from a git checkout (a `.git` directory exists next to `package.json`), **`it never touches ~/.beige automatically`**. No config is written, no tools are copied.
 
-To set up manually:
+This means:
+
+- `npm install` in the repo does not create any files outside the repo.
+- Running `npx tsx src/cli.ts gateway start` without a config will exit cleanly with "config not found" rather than silently creating files.
+- `beige setup` without `--force` also exits with an explanation.
+
+To set up `~/.beige` deliberately from source (e.g. to use the kv tool from a dev build), run:
 
 ```bash
-# Option 1: Force setup
 npx tsx src/cli.ts setup --force
-
-# Option 2: Use example config
-cp examples/config.json5 ~/.beige/config.json5
-# Edit paths to point to the repo
 ```
 
-### Run (Dev Mode)
+Or use the config from the repo directly:
+
+```bash
+cp examples/config.json5 ~/.beige/config.json5
+# Edit to point tool paths at the repo:  path: "/path/to/beige/tools/kv"
+```
+
+### Run (dev mode)
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Shell 1: Gateway
+# Shell 1 — gateway
 npx tsx src/cli.ts gateway start --foreground
 
-# Shell 2: TUI
+# Shell 2 — TUI
 npx tsx src/cli.ts tui
 ```
 
----
-
-## Verify Installation
-
-### Check Gateway Status
+Or add a config path explicitly:
 
 ```bash
-beige gateway status
+npx tsx src/cli.ts --config ./examples/config.json5 gateway start --foreground
 ```
 
-### Check Docker
-
-```bash
-docker ps | grep beige
-```
-
-You should see a container named `beige-<agent>`.
-
-### Check Health
-
-```bash
-curl http://127.0.0.1:7433/api/health
-# {"status":"ok"}
-```
+The sandbox image is built automatically on first gateway start — no manual `docker build` step required.
 
 ---
 
-## Troubleshooting
+## How Source-Install Detection Works
 
-### Gateway Won't Start
+`src/install.ts` exposes `isSourceInstall()`:
 
-**Symptom:** `beige gateway start` exits immediately
+```text
+Compiled output lives at:  <package-root>/dist/install.js
+                                              ↑
+import.meta.url  ──────────────────────────── resolved one level up → package root
 
-**Checks:**
-1. Is Docker running?
-```bash
-docker info
+isSourceInstall() = existsSync(packageRoot + "/.git")
 ```
 
-2. Is the config valid?
-```bash
-cat ~/.beige/config.json5
-```
+When installed via `npm install -g`, the package lands in a path like `/usr/local/lib/node_modules/beige/` — no `.git` directory there.
 
-3. Check gateway logs:
-```bash
-beige logs
-# or
-tail -f ~/.beige/logs/gateway.log
-```
+When run from a git clone, `.git` is present — detection fires.
 
-**Common causes:**
-- Missing API key: `export ANTHROPIC_API_KEY="sk-ant-..."`
-- Invalid JSON5 syntax: Check for trailing commas, unquoted keys
-- Docker not running: Start Docker Desktop
+This check is intentionally simple and has no edge-cases around symlinks or npm workspaces: `.git` is only present when the package is the actual repository.
 
 ---
 
-### TUI Can't Connect
+## The `beige setup` Command
 
-**Symptom:** TUI exits with "Cannot connect to gateway"
-
-**Checks:**
-1. Is the gateway running?
-```bash
-curl http://127.0.0.1:7433/api/health
+```text
+beige setup [--force]
 ```
 
-2. Is the port correct?
-```bash
-# Default is 7433, check config
-grep -A5 "gateway:" ~/.beige/config.json5
+| Flag      | Behaviour                                                                                                              |
+| --------- | ---------------------------------------------------------------------------------------------------------------------- |
+| _(none)_  | Runs setup only when **not** a source install. On a source install, prints an explanation.                             |
+| `--force` | Runs setup unconditionally — works from source installs too. Useful for contributors who want to test with `~/.beige`. |
+
+Output example (first run):
+
+```text
+[BEIGE] Running setup…
+
+[BEIGE] Created:
+  + /Users/you/.beige/tools/kv
+  + /Users/you/.beige/config.json5
+
+[BEIGE] Setup complete.
 ```
 
-3. Try with explicit URL:
-```bash
-beige tui --gateway http://127.0.0.1:7433
-```
+Output example (re-run after everything exists):
 
----
+```text
+[BEIGE] Running setup…
 
-### Agent Not Found
+[BEIGE] Already exists (skipped):
+  ~ /Users/you/.beige/tools/kv
+  ~ /Users/you/.beige/config.json5
 
-**Symptom:** "Unknown agent 'myagent'"
-
-**Checks:**
-1. List available agents:
-```bash
-curl http://127.0.0.1:7433/api/agents
-```
-
-2. Check your config:
-```bash
-grep -A10 "agents:" ~/.beige/config.json5
-```
-
-**Fix:** Add the agent to config or use a valid name.
-
----
-
-### Tool Execution Fails
-
-**Symptom:** Tool calls return errors
-
-**Checks:**
-1. Check if tool is in agent's allowlist:
-```bash
-grep "tools:" ~/.beige/config.json5
-```
-
-2. Check audit logs for denials:
-```bash
-grep "denied" ~/.beige/logs/audit.jsonl
-```
-
-3. Check tool exists:
-```bash
-ls ~/.beige/tools/
-```
-
-**Common causes:**
-- Tool not in agent's `tools` array
-- Tool path incorrect in config
-- Tool handler error (check gateway logs)
-
----
-
-### Docker Issues
-
-**Symptom:** "Cannot connect to Docker daemon"
-
-**Checks:**
-1. Is Docker running?
-```bash
-docker info
-```
-
-2. Permissions (Linux):
-```bash
-sudo usermod -aG docker $USER
-# Log out and back in
-```
-
-3. Docker Desktop (Mac/Windows): Start the app
-
----
-
-### Environment Variables Not Resolved
-
-**Symptom:** "Environment variable ANTHROPIC_API_KEY not set"
-
-**Checks:**
-1. Is the variable set?
-```bash
-echo $ANTHROPIC_API_KEY
-```
-
-2. In the right shell?
-```bash
-# If you set it in .zshrc, make sure to source it
-source ~/.zshrc
-```
-
-3. Config uses correct syntax?
-```json5
-// Correct
-apiKey: "${ANTHROPIC_API_KEY}"
-
-// Incorrect (no quotes)
-apiKey: ${ANTHROPIC_API_KEY}
+[BEIGE] Setup complete.
 ```
 
 ---
 
 ## Updating
 
-### npm Global
+### npm global
 
 ```bash
 npm install -g matthias-hausberger/beige
 ```
 
-Setup doesn't re-run automatically. If new tools are added, run:
-```bash
-beige setup
-```
+Setup is not re-run automatically on update. If a new version ships new bundled tools, run `beige setup` manually to copy them (existing tools are never overwritten).
 
 ### Source
 
@@ -352,6 +255,8 @@ beige setup
 git pull
 npm install
 ```
+
+`~/.beige` is untouched.
 
 ---
 
@@ -361,17 +266,8 @@ npm install
 npm uninstall -g matthias-hausberger/beige
 ```
 
-**Note:** `~/.beige/` is **not** removed. It contains your config, sessions, and data. Remove manually:
+`~/.beige/` is **not** removed — it holds your config, sessions, audit logs, and kv data. Remove it manually if you want a clean slate:
 
 ```bash
 rm -rf ~/.beige
 ```
-
----
-
-## Next Steps
-
-- **[Introduction](/introduction)** — Why Beige exists
-- **[The Gateway](/gateway)** — Architecture and security
-- **[Agents](/agents)** — Configure providers and models
-- **[Channels & Tools](/channels-and-tools)** — TUI, Telegram, and extensibility

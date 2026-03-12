@@ -1,21 +1,12 @@
 ---
-title: "HTTP API"
-description: "Gateway REST API reference for external integrations"
+title: "Gateway HTTP API"
 ---
-
-> **导航 / Navigation:** [← Back to Channels & Tools](/channels-and-tools) | [Introduction](/introduction)
-
-For a beginner-friendly guide, see [Channels & Tools → HTTP API](/channels-and-tools#part-b-http-api).
-
----
-
-# Gateway HTTP API
 
 The gateway exposes an HTTP API on port 7433 (configurable via `gateway.port`). This API is used by external channels like the TUI and can be used for custom integrations.
 
 ## Base URL
 
-```
+```text
 http://127.0.0.1:7433
 ```
 
@@ -34,13 +25,14 @@ The host and port can be configured in `config.json5`:
 
 ### Health Check
 
-```
+```text
 GET /api/health
 ```
 
 Returns the gateway health status.
 
 **Response:**
+
 ```json
 {
   "status": "ok"
@@ -48,6 +40,7 @@ Returns the gateway health status.
 ```
 
 **Example:**
+
 ```bash
 curl http://127.0.0.1:7433/api/health
 ```
@@ -56,13 +49,14 @@ curl http://127.0.0.1:7433/api/health
 
 ### List Agents
 
-```
+```text
 GET /api/agents
 ```
 
 Returns all configured agents with their model and tool assignments.
 
 **Response:**
+
 ```json
 {
   "agents": [
@@ -80,6 +74,7 @@ Returns all configured agents with their model and tool assignments.
 ```
 
 **Example:**
+
 ```bash
 curl http://127.0.0.1:7433/api/agents
 ```
@@ -88,13 +83,14 @@ curl http://127.0.0.1:7433/api/agents
 
 ### Get Config
 
-```
+```text
 GET /api/config
 ```
 
 Returns agent configurations and provider metadata (without API keys).
 
 **Response:**
+
 ```json
 {
   "agents": {
@@ -118,6 +114,7 @@ Returns agent configurations and provider metadata (without API keys).
 ```
 
 **Example:**
+
 ```bash
 curl http://127.0.0.1:7433/api/config
 ```
@@ -126,16 +123,18 @@ curl http://127.0.0.1:7433/api/config
 
 ### Execute Tool
 
-```
+```text
 POST /api/agents/:name/exec
 ```
 
 Execute a core tool (`read`, `write`, `patch`, `exec`) in the agent's sandbox.
 
 **Parameters:**
+
 - `:name` — Agent name (URL-encoded)
 
 **Request Body:**
+
 ```json
 {
   "tool": "read|write|patch|exec",
@@ -146,6 +145,7 @@ Execute a core tool (`read`, `write`, `patch`, `exec`) in the agent's sandbox.
 ```
 
 **Response:**
+
 ```json
 {
   "content": [
@@ -160,12 +160,12 @@ Execute a core tool (`read`, `write`, `patch`, `exec`) in the agent's sandbox.
 
 **Tool Parameters:**
 
-| Tool | Parameters |
-|------|------------|
-| `read` | `path` (string), `offset?` (number), `limit?` (number) |
-| `write` | `path` (string), `content` (string) |
+| Tool    | Parameters                                              |
+| ------- | ------------------------------------------------------- |
+| `read`  | `path` (string), `offset?` (number), `limit?` (number)  |
+| `write` | `path` (string), `content` (string)                     |
 | `patch` | `path` (string), `oldText` (string), `newText` (string) |
-| `exec` | `command` (string), `timeout?` (number, seconds) |
+| `exec`  | `command` (string), `timeout?` (number, seconds)        |
 
 **Examples:**
 
@@ -190,16 +190,18 @@ curl -X POST http://127.0.0.1:7433/api/agents/assistant/exec \
 
 ### Send Prompt
 
-```
+```text
 POST /api/agents/:name/prompt
 ```
 
 Send a message to an agent and get the full response (non-streaming).
 
 **Parameters:**
+
 - `:name` — Agent name (URL-encoded)
 
 **Request Body:**
+
 ```json
 {
   "message": "Your message to the agent",
@@ -210,6 +212,7 @@ Send a message to an agent and get the full response (non-streaming).
 If `sessionKey` is omitted, a default session key is used.
 
 **Response:**
+
 ```json
 {
   "response": "Agent's response text..."
@@ -217,6 +220,7 @@ If `sessionKey` is omitted, a default session key is used.
 ```
 
 **Example:**
+
 ```bash
 curl -X POST http://127.0.0.1:7433/api/agents/assistant/prompt \
   -H "Content-Type: application/json" \
@@ -227,16 +231,18 @@ curl -X POST http://127.0.0.1:7433/api/agents/assistant/prompt \
 
 ### List Sessions
 
-```
+```text
 GET /api/agents/:name/sessions
 ```
 
 List saved sessions for an agent.
 
 **Parameters:**
+
 - `:name` — Agent name (URL-encoded)
 
 **Response:**
+
 ```json
 {
   "sessions": [
@@ -251,6 +257,7 @@ List saved sessions for an agent.
 ```
 
 **Example:**
+
 ```bash
 curl http://127.0.0.1:7433/api/agents/assistant/sessions
 ```
@@ -259,17 +266,19 @@ curl http://127.0.0.1:7433/api/agents/assistant/sessions
 
 ### Restart Gateway
 
-```
+```text
 POST /api/gateway/restart
 ```
 
 Trigger a graceful in-place restart of the gateway:
+
 1. Drain all in-flight LLM/tool calls
 2. Tear down sandboxes, sockets, API, and channels
 3. Reload config from disk
 4. Restart everything fresh
 
 **Response:**
+
 ```json
 {
   "status": "restarting",
@@ -280,6 +289,7 @@ Trigger a graceful in-place restart of the gateway:
 Returns `202 Accepted` immediately; the restart happens asynchronously.
 
 **Example:**
+
 ```bash
 curl -X POST http://127.0.0.1:7433/api/gateway/restart
 ```
@@ -298,13 +308,13 @@ All endpoints return errors in a consistent format:
 
 Common HTTP status codes:
 
-| Code | Meaning |
-|------|---------|
-| 200 | Success |
-| 202 | Accepted (async operation started) |
-| 400 | Bad request (missing/invalid parameters) |
-| 404 | Not found (unknown agent, etc.) |
-| 500 | Internal server error |
+| Code | Meaning                                  |
+| ---- | ---------------------------------------- |
+| 200  | Success                                  |
+| 202  | Accepted (async operation started)       |
+| 400  | Bad request (missing/invalid parameters) |
+| 404  | Not found (unknown agent, etc.)          |
+| 500  | Internal server error                    |
 
 ---
 

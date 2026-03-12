@@ -15,59 +15,81 @@ icon: "hand"
 
 Beige is a secure, open-source, sandboxed agent system. AI agents write and execute code inside Docker containers. The gateway orchestrates LLM calls, enforces policies, audit-logs every tool invocation, and routes tool execution.
 
+**In short:** Your AI assistant runs in a sandbox, not on your machine.
+
+```mermaid
+graph LR
+    subgraph "Your Machine"
+        GW[Gateway Process]
+        SB[Docker Sandbox]
+        GW --> SB
+    end
+
+    USER[You] --> GW
+    GW -->|controlled access| SB
+
+    style SB fill:#ccffcc,stroke:#00cc00
+```
+
 ## Key Features
 
 - **Docker Sandboxing** — All code execution happens in isolated containers
 - **Policy Enforcement** — Fine-grained control over what agents can do
 - **Audit Logging** — Every tool invocation is logged for accountability
-- **Multi-Channel** — Support for Telegram, TUI, and custom integrations
-- **Extensible Tools** — Build custom tools and toolkits
+- **Multi-Channel** — Interact via TUI, Telegram, or the HTTP API
+- **Minimal by Design** — Exactly 4 core tools; everything else composes through `exec`
 
-## Quick Start
+## How It Works
 
-```bash
-# Install globally
-npm install -g beige
+Beige uses a **two-process model**:
 
-# Or install from source
-git clone https://github.com/matthias-hausberger/beige.git
-cd beige
-pnpm install && pnpm run build
+```mermaid
+graph TB
+    subgraph "Shell 1: Gateway (Always Running)"
+        GW[Gateway Process]
+        GW --> AM[Agent Manager]
+        GW --> SM[Sandbox Manager]
+        GW --> SS[Socket Server]
+        GW --> PE[Policy Engine]
+        GW --> AL[Audit Logger]
+        GW --> TG[Telegram Bot]
+    end
+
+    subgraph "Shell 2: TUI (Optional)"
+        TUI[TUI Process]
+        TUI -->|HTTP API| GW
+    end
+
+    subgraph "Docker Sandboxes"
+        SB1[Agent 1 Sandbox]
+        SB2[Agent 2 Sandbox]
+    end
+
+    SM --> SB1
+    SM --> SB2
+    SB1 -->|Unix socket| SS
+    SB2 -->|Unix socket| SS
+
+    TG --> GW
 ```
 
-## Architecture Overview
+**The Gateway** is the orchestrator. It manages Docker containers, routes tool calls through Unix sockets, enforces policies (deny by default), logs every action, and exposes an HTTP API for external channels.
 
-Beige uses a two-process model:
-
-- **Gateway** — Manages sandboxes, sockets, tools, audit logs, HTTP API, and Telegram
-- **TUI** — Connects via HTTP API, runs LLM locally using the pi SDK
-
-```text
-┌─────────────────┐     ┌─────────────────┐
-│     Gateway     │────▶│ Docker Sandbox  │
-│   (Port 7433)   │     │   (per agent)   │
-└────────┬────────┘     └─────────────────┘
-         │
-    ┌────┴────┐
-    │         │
-┌───▼───┐ ┌───▼───┐
-│  TUI  │ │Telegram│
-└───────┘ └───────┘
-```
+**The Sandbox** is where each agent runs — an isolated Docker container with a writable `/workspace`, read-only tool mounts, and no access to host secrets or environment variables.
 
 ## Next Steps
 
 <CardGroup cols={2}>
   <Card icon="download" href="/installation" title="Installation">
-    Detailed setup instructions for npm and source installs
+    Install Beige, configure your first agent, and run it
   </Card>
-  <Card icon="sitemap" href="/architecture" title="Architecture">
-    Deep dive into system design and components
+  <Card icon="circle-question" href="/why-beige" title="Why Beige?">
+    The motivation, inspiration, and use cases behind Beige
   </Card>
-  <Card icon="gear" href="/configuration" title="Configuration">
-    Configure your agents and policies
+  <Card icon="shield" href="/security-overview" title="Security Overview">
+    What agents can and cannot do, and why
   </Card>
-  <Card icon="wrench" href="/tools" title="Tools">
-    Learn about the tool system and writing your own
+  <Card icon="sitemap" href="/gateway" title="The Gateway">
+    Deep dive into architecture and the security model
   </Card>
 </CardGroup>

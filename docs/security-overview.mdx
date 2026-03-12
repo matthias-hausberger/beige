@@ -1,0 +1,93 @@
+---
+title: "Security Overview"
+description: "What agents can and cannot do, and the layers that enforce it"
+icon: "shield"
+---
+
+Beige assumes **an agent might go rogue**. Every layer is designed to contain damage even in the worst case.
+
+```mermaid
+graph TB
+    subgraph L1["Layer 1: Docker Isolation"]
+        L1A[Separate container per agent]
+        L1B[No host env vars]
+        L1C[No host filesystem]
+    end
+
+    subgraph L2["Layer 2: Read-Only Mounts"]
+        L2A[Tool launchers — read-only]
+        L2B[Tool packages — read-only]
+        L2C[Only /workspace is writable]
+    end
+
+    subgraph L3["Layer 3: Socket Identity"]
+        L3A[One socket per agent]
+        L3B[Identity from connection not payload]
+        L3C[Cannot impersonate another agent]
+    end
+
+    subgraph L4["Layer 4: Policy Engine"]
+        L4A[Deny by default]
+        L4B[Explicit tool allowlist per agent]
+    end
+
+    subgraph L5["Layer 5: Audit Logging"]
+        L5A[Every tool call logged]
+        L5B[JSONL append-only]
+    end
+
+    L1 --> L2 --> L3 --> L4 --> L5
+```
+
+## What an Agent CAN Do
+
+| Action | Allowed? | Mechanism |
+|--------|----------|-----------|
+| Read/write files in `/workspace` | ✅ | Writable bind mount |
+| Execute code (TypeScript, Deno, etc.) | ✅ | Deno runtime in sandbox |
+| Call allowed tools | ✅ | Launcher → socket → policy → execute |
+| Access the internet | ✅ | Container has network access |
+| Read tool documentation | ✅ | Read-only mount at `/tools/packages/` |
+| Persist data across sessions | ✅ | `/workspace` is persistent |
+
+## What an Agent CANNOT Do
+
+| Action | Prevented By |
+|--------|-------------|
+| Read gateway env vars or API keys | Docker isolation |
+| Access host filesystem | Docker isolation |
+| Modify tool code or launchers | Read-only mounts |
+| Use tools not in its allowlist | Policy engine |
+| Impersonate another agent | Socket identity |
+| Access another agent's workspace | Separate containers |
+| Access the Docker daemon | No Docker socket mount |
+| Bypass tool logging | All calls route through gateway |
+
+## The Defense Layers in Detail
+
+### Layer 1: Docker Isolation
+
+Each agent runs in a separate Docker container. The container has no access to:
+- Host environment variables (no leaked API keys)
+- The host filesystem (no `~/.ssh`, no `~/.aws`)
+- Other agents' containers
+
+### Layer 2: Read-Only Mounts
+
+Tool binaries and packages are mounted read-only into the sandbox. Even if an agent tries to modify a tool, it can't. The only writable location is `/workspace`.
+
+### Layer 3: Socket Identity
+
+The gateway assigns one Unix socket per agent. When a tool call arrives, the gateway knows which agent sent it from the connection itself — not from anything in the payload. An agent cannot forge its own identity.
+
+### Layer 4: Policy Engine
+
+The gateway maintains an explicit allowlist of tools per agent. Tool calls for tools not on the list are denied before execution. The default is deny — an agent with an empty `tools` array can call nothing.
+
+### Layer 5: Audit Logging
+
+Every tool invocation is appended to `~/.beige/logs/audit.jsonl` with a timestamp, agent name, tool name, arguments, and result. The log is append-only — agents cannot modify past entries.
+
+---
+
+For an even deeper technical dive, see [The Gateway → Security Model](/gateway/security-model).

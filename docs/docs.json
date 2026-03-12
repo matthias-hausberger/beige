@@ -22,8 +22,9 @@
         "tab": "Getting Started",
         "pages": [
           "index",
-          "introduction",
-          "installation"
+          "installation",
+          "why-beige",
+          "security-overview"
         ]
       },
       {

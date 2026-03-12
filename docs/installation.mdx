@@ -1,15 +1,71 @@
 ---
 title: "Installation"
-description: "Install Beige in your system"
+description: "Install Beige, run your first agent, and understand the minimal config"
 icon: "download"
 ---
 
+## Quick Start
+
+Get Beige running in under 5 minutes:
+
+```bash
+# Install globally
+npm install -g matthias-hausberger/beige
+
+# Set your API key
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Start the gateway (first run auto-creates ~/.beige/)
+beige gateway start
+
+# In another terminal, start the TUI
+beige tui
+```
+
+That's it. The gateway builds the sandbox Docker image automatically on first start.
+
+---
+
+## Minimal Config
+
+The smallest `~/.beige/config.json5` that works:
+
+```json5
+{
+  llm: {
+    providers: {
+      anthropic: { apiKey: "${ANTHROPIC_API_KEY}" },
+    },
+  },
+
+  tools: {
+    kv: {
+      path: "~/.beige/tools/kv",
+      target: "gateway",
+    },
+  },
+
+  agents: {
+    assistant: {
+      model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+      tools: ["kv"],
+    },
+  },
+}
+```
+
+For the full config reference, see [Configuration](/agents/configuration).
+
+---
+
+## Install Modes
+
 Beige supports two install modes that coexist cleanly:
 
-| Mode                              | Who it's for              | How it works                                                                 |
-| --------------------------------- | ------------------------- | ---------------------------------------------------------------------------- |
-| **npm global** (`npm install -g`) | End users                 | Installs the published package; first run auto-bootstraps `~/.beige`         |
-| **Source / git clone**            | Contributors, power users | Clone the repo and run with `tsx`; `~/.beige` is never touched automatically |
+| Mode | Who it's for | How it works |
+|------|--------------|--------------|
+| **npm global** (`npm install -g`) | End users | Installs the published package; first run auto-bootstraps `~/.beige` |
+| **Source / git clone** | Contributors, power users | Clone the repo and run with `tsx`; `~/.beige` is never touched automatically |
 
 ---
 
@@ -26,9 +82,9 @@ Beige supports two install modes that coexist cleanly:
 npm install -g matthias-hausberger/beige
 ```
 
-### First run
+### First Run
 
-On the very first command after install, beige detects that `~/.beige/config.json5` does not yet exist and runs setup automatically:
+On the very first command after install, Beige detects that `~/.beige/config.json5` does not yet exist and runs setup automatically:
 
 ```text
 $ beige gateway start
@@ -46,7 +102,7 @@ You can also trigger setup explicitly at any time:
 beige setup
 ```
 
-### What setup creates
+### What Setup Creates
 
 ```text
 ~/.beige/
@@ -58,9 +114,9 @@ beige setup
         └── README.md
 ```
 
-Setup is fully **idempotent** — it only creates files that do not already exist. Existing files (including individual tool directories) are never overwritten. Re-running `beige setup` after partial failures is always safe.
+Setup is fully **idempotent** — it only creates files that do not already exist. Existing files are never overwritten. Re-running `beige setup` after partial failures is always safe.
 
-### Default config
+### Default Config
 
 The generated `~/.beige/config.json5` contains:
 
@@ -97,9 +153,9 @@ The generated `~/.beige/config.json5` contains:
 }
 ```
 
-The `kv` tool path is written as an absolute path at setup time so the config works regardless of the working directory you run `beige` from.
+The `kv` tool path is written as an absolute path at setup time so the config works regardless of where you run `beige` from.
 
-### Set your API key
+### Set Your API Key
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
@@ -127,7 +183,7 @@ On first start, if any agent config uses the `beige-sandbox` image, the gateway 
 - Node.js 22+
 - Docker
 
-### Clone and install
+### Clone and Install
 
 ```bash
 git clone https://github.com/matthias-hausberger/beige.git
@@ -135,30 +191,30 @@ cd beige
 npm install          # or: pnpm install
 ```
 
-### No automatic setup
+### No Automatic Setup
 
-When beige detects it is running from a git checkout (a `.git` directory exists next to `package.json`), **`it never touches ~/.beige automatically`**. No config is written, no tools are copied.
+When Beige detects it is running from a git checkout (a `.git` directory exists next to `package.json`), **it never touches `~/.beige` automatically**. No config is written, no tools are copied.
 
 This means:
 
 - `npm install` in the repo does not create any files outside the repo.
-- Running `npx tsx src/cli.ts gateway start` without a config will exit cleanly with "config not found" rather than silently creating files.
+- Running `npx tsx src/cli.ts gateway start` without a config will exit cleanly with "config not found".
 - `beige setup` without `--force` also exits with an explanation.
 
-To set up `~/.beige` deliberately from source (e.g. to use the kv tool from a dev build), run:
+To set up `~/.beige` deliberately from source:
 
 ```bash
 npx tsx src/cli.ts setup --force
 ```
 
-Or use the config from the repo directly:
+Or use the example config:
 
 ```bash
 cp examples/config.json5 ~/.beige/config.json5
 # Edit to point tool paths at the repo:  path: "/path/to/beige/tools/kv"
 ```
 
-### Run (dev mode)
+### Run (Dev Mode)
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
@@ -170,34 +226,6 @@ npx tsx src/cli.ts gateway start --foreground
 npx tsx src/cli.ts tui
 ```
 
-Or add a config path explicitly:
-
-```bash
-npx tsx src/cli.ts --config ./examples/config.json5 gateway start --foreground
-```
-
-The sandbox image is built automatically on first gateway start — no manual `docker build` step required.
-
----
-
-## How Source-Install Detection Works
-
-`src/install.ts` exposes `isSourceInstall()`:
-
-```text
-Compiled output lives at:  <package-root>/dist/install.js
-                                              ↑
-import.meta.url  ──────────────────────────── resolved one level up → package root
-
-isSourceInstall() = existsSync(packageRoot + "/.git")
-```
-
-When installed via `npm install -g`, the package lands in a path like `/usr/local/lib/node_modules/beige/` — no `.git` directory there.
-
-When run from a git clone, `.git` is present — detection fires.
-
-This check is intentionally simple and has no edge-cases around symlinks or npm workspaces: `.git` is only present when the package is the actual repository.
-
 ---
 
 ## The `beige setup` Command
@@ -206,40 +234,16 @@ This check is intentionally simple and has no edge-cases around symlinks or npm 
 beige setup [--force]
 ```
 
-| Flag      | Behaviour                                                                                                              |
-| --------- | ---------------------------------------------------------------------------------------------------------------------- |
-| _(none)_  | Runs setup only when **not** a source install. On a source install, prints an explanation.                             |
-| `--force` | Runs setup unconditionally — works from source installs too. Useful for contributors who want to test with `~/.beige`. |
-
-Output example (first run):
-
-```text
-[BEIGE] Running setup…
-
-[BEIGE] Created:
-  + /Users/you/.beige/tools/kv
-  + /Users/you/.beige/config.json5
-
-[BEIGE] Setup complete.
-```
-
-Output example (re-run after everything exists):
-
-```text
-[BEIGE] Running setup…
-
-[BEIGE] Already exists (skipped):
-  ~ /Users/you/.beige/tools/kv
-  ~ /Users/you/.beige/config.json5
-
-[BEIGE] Setup complete.
-```
+| Flag | Behaviour |
+|------|-----------|
+| _(none)_ | Runs setup only when **not** a source install. On a source install, prints an explanation. |
+| `--force` | Runs setup unconditionally — works from source installs too. |
 
 ---
 
 ## Updating
 
-### npm global
+### npm Global
 
 ```bash
 npm install -g matthias-hausberger/beige

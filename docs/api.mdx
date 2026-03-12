@@ -1,0 +1,365 @@
+---
+title: "HTTP API"
+description: "Gateway REST API reference for external integrations"
+---
+
+> **导航 / Navigation:** [← Back to Channels & Tools](/channels-and-tools) | [Introduction](/introduction)
+
+For a beginner-friendly guide, see [Channels & Tools → HTTP API](/channels-and-tools#part-b-http-api).
+
+---
+
+# Gateway HTTP API
+
+The gateway exposes an HTTP API on port 7433 (configurable via `gateway.port`). This API is used by external channels like the TUI and can be used for custom integrations.
+
+## Base URL
+
+```
+http://127.0.0.1:7433
+```
+
+The host and port can be configured in `config.json5`:
+
+```json5
+{
+  gateway: {
+    host: "127.0.0.1",  // default
+    port: 7433,          // default
+  },
+}
+```
+
+## Endpoints
+
+### Health Check
+
+```
+GET /api/health
+```
+
+Returns the gateway health status.
+
+**Response:**
+```json
+{
+  "status": "ok"
+}
+```
+
+**Example:**
+```bash
+curl http://127.0.0.1:7433/api/health
+```
+
+---
+
+### List Agents
+
+```
+GET /api/agents
+```
+
+Returns all configured agents with their model and tool assignments.
+
+**Response:**
+```json
+{
+  "agents": [
+    {
+      "name": "assistant",
+      "model": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-20250514",
+        "thinkingLevel": "off"
+      },
+      "tools": ["kv"]
+    }
+  ]
+}
+```
+
+**Example:**
+```bash
+curl http://127.0.0.1:7433/api/agents
+```
+
+---
+
+### Get Config
+
+```
+GET /api/config
+```
+
+Returns agent configurations and provider metadata (without API keys).
+
+**Response:**
+```json
+{
+  "agents": {
+    "assistant": {
+      "model": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-20250514"
+      },
+      "tools": ["kv"]
+    }
+  },
+  "llm": {
+    "providers": {
+      "anthropic": {
+        "baseUrl": null,
+        "api": null
+      }
+    }
+  }
+}
+```
+
+**Example:**
+```bash
+curl http://127.0.0.1:7433/api/config
+```
+
+---
+
+### Execute Tool
+
+```
+POST /api/agents/:name/exec
+```
+
+Execute a core tool (`read`, `write`, `patch`, `exec`) in the agent's sandbox.
+
+**Parameters:**
+- `:name` — Agent name (URL-encoded)
+
+**Request Body:**
+```json
+{
+  "tool": "read|write|patch|exec",
+  "params": {
+    // Tool-specific parameters
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Tool output..."
+    }
+  ],
+  "isError": false
+}
+```
+
+**Tool Parameters:**
+
+| Tool | Parameters |
+|------|------------|
+| `read` | `path` (string), `offset?` (number), `limit?` (number) |
+| `write` | `path` (string), `content` (string) |
+| `patch` | `path` (string), `oldText` (string), `newText` (string) |
+| `exec` | `command` (string), `timeout?` (number, seconds) |
+
+**Examples:**
+
+```bash
+# Read a file
+curl -X POST http://127.0.0.1:7433/api/agents/assistant/exec \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "read", "params": {"path": "/workspace/file.txt"}}'
+
+# Write a file
+curl -X POST http://127.0.0.1:7433/api/agents/assistant/exec \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "write", "params": {"path": "/workspace/output.txt", "content": "Hello, world!"}}'
+
+# Execute a command
+curl -X POST http://127.0.0.1:7433/api/agents/assistant/exec \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "exec", "params": {"command": "ls -la /workspace"}}'
+```
+
+---
+
+### Send Prompt
+
+```
+POST /api/agents/:name/prompt
+```
+
+Send a message to an agent and get the full response (non-streaming).
+
+**Parameters:**
+- `:name` — Agent name (URL-encoded)
+
+**Request Body:**
+```json
+{
+  "message": "Your message to the agent",
+  "sessionKey": "optional-session-key"
+}
+```
+
+If `sessionKey` is omitted, a default session key is used.
+
+**Response:**
+```json
+{
+  "response": "Agent's response text..."
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://127.0.0.1:7433/api/agents/assistant/prompt \
+  -H "Content-Type: application/json" \
+  -d '{"message": "List files in my workspace"}'
+```
+
+---
+
+### List Sessions
+
+```
+GET /api/agents/:name/sessions
+```
+
+List saved sessions for an agent.
+
+**Parameters:**
+- `:name` — Agent name (URL-encoded)
+
+**Response:**
+```json
+{
+  "sessions": [
+    {
+      "id": "telegram:123456:789",
+      "file": "/Users/you/.beige/sessions/assistant/abc123.jsonl",
+      "createdAt": "2025-03-06T12:00:00.000Z",
+      "updatedAt": "2025-03-06T14:30:00.000Z"
+    }
+  ]
+}
+```
+
+**Example:**
+```bash
+curl http://127.0.0.1:7433/api/agents/assistant/sessions
+```
+
+---
+
+### Restart Gateway
+
+```
+POST /api/gateway/restart
+```
+
+Trigger a graceful in-place restart of the gateway:
+1. Drain all in-flight LLM/tool calls
+2. Tear down sandboxes, sockets, API, and channels
+3. Reload config from disk
+4. Restart everything fresh
+
+**Response:**
+```json
+{
+  "status": "restarting",
+  "message": "Graceful restart initiated. Follow progress with: beige gateway logs -f"
+}
+```
+
+Returns `202 Accepted` immediately; the restart happens asynchronously.
+
+**Example:**
+```bash
+curl -X POST http://127.0.0.1:7433/api/gateway/restart
+```
+
+---
+
+## Error Responses
+
+All endpoints return errors in a consistent format:
+
+```json
+{
+  "error": "Error message describing what went wrong"
+}
+```
+
+Common HTTP status codes:
+
+| Code | Meaning |
+|------|---------|
+| 200 | Success |
+| 202 | Accepted (async operation started) |
+| 400 | Bad request (missing/invalid parameters) |
+| 404 | Not found (unknown agent, etc.) |
+| 500 | Internal server error |
+
+---
+
+## Authentication
+
+The HTTP API currently has **no authentication**. It binds to `127.0.0.1` by default and is intended for local use only.
+
+If you expose the API to a network, you are responsible for adding authentication (e.g., via a reverse proxy with basic auth, or by modifying the gateway code).
+
+---
+
+## Rate Limiting
+
+There is no built-in rate limiting. The underlying LLM providers have their own rate limits.
+
+---
+
+## Using the API from Code
+
+### JavaScript/TypeScript
+
+```typescript
+const GATEWAY_URL = "http://127.0.0.1:7433";
+
+async function execTool(agent: string, tool: string, params: Record<string, any>) {
+  const res = await fetch(`${GATEWAY_URL}/api/agents/${agent}/exec`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tool, params }),
+  });
+  return res.json();
+}
+
+// Example usage
+const result = await execTool("assistant", "exec", {
+  command: "ls -la /workspace",
+});
+console.log(result);
+```
+
+### Python
+
+```python
+import requests
+
+GATEWAY_URL = "http://127.0.0.1:7433"
+
+def exec_tool(agent: str, tool: str, params: dict):
+    response = requests.post(
+        f"{GATEWAY_URL}/api/agents/{agent}/exec",
+        json={"tool": tool, "params": params},
+    )
+    return response.json()
+
+# Example usage
+result = exec_tool("assistant", "exec", {"command": "ls -la /workspace"})
+print(result)
+```

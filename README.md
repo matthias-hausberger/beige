@@ -1,8 +1,10 @@
-# Beige
+<p align="center">
+  <img src="https://raw.githubusercontent.com/matthias-hausberger/beige/main/docs/assets/beige_landscape.png" alt="Beige Landscape" width="100%">
+</p>
 
 Secure, sandboxed agent system. Let agents write and execute code — safely.
 
-**📚 [Documentation](https://beige.mintlify.app)** — Full docs at beige.mintlify.app
+**📚 [Documentation](https://beige.mintlify.app)** — Full docs at [beige.mintlify.app](https://beige.mintlify.app)
 
 ## What is Beige?
 

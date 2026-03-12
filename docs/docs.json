@@ -23,7 +23,6 @@
         "pages": [
           "index",
           "installation",
-          "cli",
           "why-beige",
           "security-overview"
         ]
@@ -43,8 +42,7 @@
         "tab": "Agents",
         "pages": [
           "agents/index",
-          "agents/providers",
-          "agents/configuration"
+          "agents/providers"
         ]
       },
       {
@@ -69,7 +67,7 @@
             "group": "Tool Ecosystem",
             "pages": [
               "tools/ecosystem/build-tools",
-              "tools/toolkits"
+              "tools/ecosystem/toolkits"
             ]
           }
         ]
@@ -78,6 +76,18 @@
         "tab": "Skills",
         "pages": [
           "skills/index"
+        ]
+      },
+      {
+        "tab": "Config Reference",
+        "pages": [
+          "agents/configuration"
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "pages": [
+          "cli"
         ]
       }
     ]

@@ -1,309 +1,261 @@
 ---
-title: "Configuration"
-description: "Complete config.json5 reference"
+title: "Config Reference"
+description: "Complete config.json5 reference — all fields, validation rules, and directory layout"
+icon: "sliders"
 ---
 
-For a higher-level overview, see [Agents](/agents).
+Beige is configured with a single `~/.beige/config.json5` file. JSON5 is JSON with comments, trailing commas, and unquoted keys. Override the path with `--config`.
 
----
+## Environment Variables
 
-Beige is configured with a single `config.json5` file. JSON5 is JSON with comments, trailing commas, and unquoted keys.
-
-## Config File Location
-
-The gateway looks for `~/.beige/config.json5` by default. Override with:
-
-```bash
-beige --config /path/to/my-config.json5
-```
-
-## Tool Paths: npm vs Source Install
-
-Tool `path` values in config are resolved relative to the config file's directory —
-unless they are absolute paths (starting with `/`).
-
-| Install mode | Typical tool path in config | Notes |
-|---|---|---|
-| **npm global** | `/Users/you/.beige/tools/kv` (absolute) | Written by `beige setup` at setup time. Never needs changing. |
-| **Source** | `./tools/kv` (relative) | Relative to `~/.beige/config.json5`, so points into the repo only if the config is inside the repo. When using `~/.beige/config.json5` with a source install, use an absolute path. |
-
-When `beige setup` generates the default config it always writes the kv tool path as
-an absolute path to `~/.beige/tools/kv`, so it works regardless of working directory.
-
-See [Installation](/installation) for the full picture on the two install modes.
-
-## Environment Variable Resolution
-
-Any string value can reference environment variables using `${VAR_NAME}` syntax. Variables are resolved at startup — if a referenced variable is not set, the gateway exits with an error.
+Any string value can reference environment variables using `${VAR_NAME}`. Variables are resolved at startup — if a referenced variable is not set, the gateway exits with an error.
 
 ```json5
-{
-  llm: {
-    providers: {
-      anthropic: {
-        apiKey: "${ANTHROPIC_API_KEY}",  // resolved from env
-      },
-    },
-  },
-}
+apiKey: "${ANTHROPIC_API_KEY}",  // resolved from env at startup
 ```
+
+## Tool Path Resolution
+
+Tool `path` values are resolved relative to the config file's directory, unless they are absolute paths.
+
+| Install mode | Recommended path style |
+|---|---|
+| **npm global** | Absolute (`/Users/you/.beige/tools/kv`) — written by `beige setup` |
+| **Source / git clone** | Absolute or repo-relative (`./tools/kv`) |
+
+---
 
 ## Full Config Reference
 
 ```json5
 {
-  // ─── LLM Providers ───────────────────────────────────────────────
+  // ── LLM Providers ────────────────────────────────────────────────────
+  // Configure one or more LLM providers. Each key becomes a provider name
+  // that agents reference in their model config.
   llm: {
     providers: {
-      // Provider name → config.
-      // Built-in providers (anthropic, openai, google) just need an API key.
-      // Custom providers also need baseUrl and api.
+      // Built-in providers only need an apiKey.
       anthropic: {
         apiKey: "${ANTHROPIC_API_KEY}",
       },
+      openai: {
+        apiKey: "${OPENAI_API_KEY}",
+      },
+      google: {
+        apiKey: "${GOOGLE_API_KEY}",
+      },
+      // Custom / OpenAI-compatible providers also need baseUrl and api.
       zai: {
         apiKey: "${ZAI_API_KEY}",
-        baseUrl: "https://api.zai.com/v1",    // required for custom providers
-        api: "openai-completions",             // API type (see below)
+        baseUrl: "https://api.zai.com/v1",
+        api: "openai-completions",
+      },
+      // Local (no apiKey needed)
+      ollama: {
+        baseUrl: "http://localhost:11434/v1",
+        api: "openai-completions",
       },
     },
   },
 
-  // ─── Tool Registry ───────────────────────────────────────────────
+  // ── Tool Registry ─────────────────────────────────────────────────────
+  // Register tool packages. Each key becomes the tool name used in agent
+  // configs, launcher scripts (/tools/bin/<name>), and audit logs.
   tools: {
-    // Tool name → config.
-    // The name is used in agent tool lists, audit logs, and /tools/bin/.
     kv: {
-      path: "./tools/kv",          // path to tool package (relative to config file)
-      target: "gateway",           // where the handler executes
+      path: "~/.beige/tools/kv",  // path to tool package directory
+      target: "gateway",           // where the handler runs: "gateway" | "sandbox"(future)
       config: {},                  // arbitrary config passed to createHandler()
     },
   },
 
-  // ─── Skill Registry ───────────────────────────────────────────────
+  // ── Skill Registry ────────────────────────────────────────────────────
+  // Register skill packages (read-only knowledge mounted at /skills/<name>/).
   skills: {
-    // Skill name → config.
-    // Skills provide specialized knowledge mounted at /skills/<name>/.
     "code-review": {
-      path: "./skills/code-review",  // path to skill package (relative to config file)
-    },
-    testing: {
-      path: "./skills/testing",
+      path: "./skills/code-review",  // path to skill package directory
     },
   },
 
-  // ─── Agents ───────────────────────────────────────────────────────
+  // ── Agents ───────────────────────────────────────────────────────────
+  // Each agent gets its own Docker sandbox, Unix socket, and LLM session.
   agents: {
-    // Agent name → config.
-    // Each agent gets its own sandbox, socket, and LLM session.
     assistant: {
       model: {
         provider: "anthropic",                    // must match a key in llm.providers
-        model: "claude-sonnet-4-20250514",        // model ID
+        model: "claude-sonnet-4-20250514",        // model ID as the provider expects it
         thinkingLevel: "off",                     // off | minimal | low | medium | high
       },
-      fallbackModels: [                           // optional: tried if primary fails
+      fallbackModels: [                           // tried in order if primary fails
         { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
       ],
-      tools: ["kv"],                              // tool names from the tools registry
-      skills: ["code-review", "testing"],         // skill names from the skills registry
-      sandbox: {                                  // optional sandbox overrides
+      tools: ["kv"],                              // tool names from the tools registry above
+      skills: ["code-review"],                    // skill names from the skills registry above
+      sandbox: {
         image: "beige-sandbox:latest",            // Docker image (default)
-        extraMounts: {                            // additional bind mounts
-          "/host/path": "/container/path",
+        extraMounts: {                            // additional host→container bind mounts
+          "/host/path": "/container/path",        // reduces isolation — use carefully
         },
-        extraEnv: {                               // env vars for the container (non-secret!)
-          "NODE_ENV": "production",
+        extraEnv: {                               // env vars for the container
+          "NODE_ENV": "production",               // never use for secrets — agent can read these
         },
       },
     },
   },
 
-  // ─── Gateway Server ───────────────────────────────────────────────
-  // Optional. All fields have defaults and the block can be omitted.
+  // ── Gateway ───────────────────────────────────────────────────────────
+  // All fields are optional; defaults shown.
   gateway: {
-    host: "127.0.0.1",                           // bind address (default: 127.0.0.1)
-    port: 7433,                                   // HTTP API port (default: 7433)
-    logFile: "/custom/path/gateway.log",          // daemon log file (default: ~/.beige/logs/gateway.log)
+    host: "127.0.0.1",                           // HTTP API bind address
+    port: 7433,                                   // HTTP API port
+    logFile: "~/.beige/logs/gateway.log",         // daemon log file
   },
 
-  // ─── Channels ─────────────────────────────────────────────────────
+  // ── Channels ─────────────────────────────────────────────────────────
   channels: {
     telegram: {
       enabled: true,
       token: "${TELEGRAM_BOT_TOKEN}",
-      allowedUsers: [123456789],                  // Telegram user IDs
+      allowedUsers: [123456789],                  // Telegram user IDs allowed to interact
       agentMapping: {
-        default: "assistant",                     // which agent handles messages
+        default: "assistant",                     // agent that handles messages
       },
-      // Channel-level default settings (users can override per-session)
       defaults: {
-        verbose: false,                           // show tool-call notifications
+        verbose: false,                           // send tool-call notifications by default
       },
     },
   },
 }
 ```
 
-## Channel Settings
+---
 
-Each channel can define default settings that apply to all sessions. Users can override these per-session via commands.
+## Field Reference
 
-### Telegram Channel Settings
+### `llm.providers.<name>`
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `verbose` | boolean | `false` | When `true`, the bot sends a notification for every tool call the agent makes (e.g. "🔧 exec: ls -la") |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `apiKey` | Yes* | API key — use `${VAR}` for env var. Not required for local providers. |
+| `baseUrl` | No | Custom API endpoint. Required for non-built-in providers. |
+| `api` | No | API type (see below). Auto-set for built-in providers. |
 
-Users can toggle verbose mode at runtime with:
-- `/verbose on` or `/verbose off`
-- `/v on` or `/v off` (shorthand)
+**API types:**
 
-Session overrides are persisted in `~/.beige/sessions/session-settings.json`.
+| Value | Use for |
+|-------|---------|
+| `anthropic-messages` | Anthropic Claude (default for `anthropic`) |
+| `openai-completions` | OpenAI, ZAI, Groq, Ollama, and most OpenAI-compatible APIs |
+| `openai-responses` | OpenAI Responses API |
+| `google-generative-ai` | Google Gemini (default for `google`) |
 
-### TUI Channel Settings
+### `tools.<name>`
 
-The TUI doesn't have channel-level config defaults (it's a local process). However, verbose mode can still be toggled per-session:
+| Field | Required | Description |
+|-------|----------|-------------|
+| `path` | Yes | Path to the tool package directory |
+| `target` | Yes | `"gateway"` (runs on host) — `"sandbox"` is future |
+| `config` | No | Arbitrary object passed to `createHandler(config)` |
 
-- `/verbose on` or `/verbose off`
-- `/v on` or `/v off`
+### `skills.<name>`
 
-When verbose mode is ON in the TUI, tool calls are printed to stderr (appearing above the TUI frame).
+| Field | Required | Description |
+|-------|----------|-------------|
+| `path` | Yes | Path to the skill package directory |
 
-## Config Schema Diagram
+### `agents.<name>.model`
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `provider` | Yes | Must match a key in `llm.providers` |
+| `model` | Yes | Model ID as the provider expects it |
+| `thinkingLevel` | No | `off` \| `minimal` \| `low` \| `medium` \| `high` — extended thinking budget |
+
+### `agents.<name>.sandbox`
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `image` | No | Docker image name (default: `beige-sandbox:latest`) |
+| `extraMounts` | No | `{ "/host/path": "/container/path" }` — reduces isolation |
+| `extraEnv` | No | `{ "KEY": "value" }` — visible to the agent, never use for secrets |
+
+### `gateway`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `host` | `"127.0.0.1"` | HTTP API bind address |
+| `port` | `7433` | HTTP API port |
+| `logFile` | `~/.beige/logs/gateway.log` | Daemon stdout/stderr log file |
+
+### `channels.telegram`
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `enabled` | Yes | `true` to activate the Telegram bot |
+| `token` | Yes | Telegram bot token from BotFather |
+| `allowedUsers` | Yes | Array of Telegram user IDs permitted to interact |
+| `agentMapping.default` | Yes | Agent name to handle all incoming messages |
+| `defaults.verbose` | No | Default `false` — when `true`, bot sends tool-call notifications |
+
+---
+
+## Config Schema
 
 ```mermaid
 graph TD
     CONFIG[config.json5] --> LLM[llm]
     CONFIG --> TOOLS[tools]
+    CONFIG --> SKILLS[skills]
     CONFIG --> AGENTS[agents]
-    CONFIG --> GW["gateway (optional)<br/>host, port, logFile"]
+    CONFIG --> GW["gateway (optional)"]
     CONFIG --> CHANNELS[channels]
 
     LLM --> PROVIDERS["providers{}"]
-    PROVIDERS --> P1["anthropic<br/>apiKey"]
-    PROVIDERS --> P2["zai<br/>apiKey, baseUrl, api"]
+    PROVIDERS --> P1["anthropic · openai · google<br/>apiKey"]
+    PROVIDERS --> P2["zai · ollama · custom<br/>apiKey, baseUrl, api"]
 
-    TOOLS --> T1["kv<br/>path, target, config"]
-    TOOLS --> T2["browser<br/>path, target, config"]
+    TOOLS --> T1["<name><br/>path, target, config"]
 
-    AGENTS --> A1["assistant"]
+    SKILLS --> S1["<name><br/>path"]
+
+    AGENTS --> A1["<name>"]
     A1 --> MODEL["model<br/>provider, model, thinkingLevel"]
-    A1 --> FALLBACK["fallbackModels[]<br/>(optional)"]
-    A1 --> ATOOLS["tools[]<br/>references tool names"]
+    A1 --> FALLBACK["fallbackModels[]"]
+    A1 --> ATOOLS["tools[] → references tool names"]
+    A1 --> ASKILLS["skills[] → references skill names"]
     A1 --> SANDBOX["sandbox<br/>image, extraMounts, extraEnv"]
 
-    CHANNELS --> TELEGRAM["telegram<br/>enabled, token,<br/>allowedUsers, agentMapping,<br/>defaults"]
-    TELEGRAM --> TGDEFAULTS["defaults<br/>verbose"]
+    GW --> GWFIELDS["host, port, logFile"]
 
-    ATOOLS -.->|references| T1
-    ATOOLS -.->|references| T2
-    MODEL -.->|references| P1
+    CHANNELS --> TELEGRAM["telegram<br/>enabled, token, allowedUsers<br/>agentMapping, defaults.verbose"]
+
+    ATOOLS -.->|must exist in| T1
+    ASKILLS -.->|must exist in| S1
+    MODEL -.->|must exist in| P1
 
     style CONFIG fill:#f5f0e0,stroke:#c9b97a
 ```
 
-## Validation
+---
 
-The config is validated at startup. The gateway checks:
+## Validation at Startup
+
+The gateway checks the following at startup and exits with an error if any check fails:
 
 | Check | Error if |
 |-------|----------|
 | `llm.providers` exists | Missing or empty |
-| `tools` exists | Missing |
 | `agents` exists | Missing or empty |
 | Each agent has `model.provider` + `model.model` | Missing model config |
-| Each agent's tools exist in tool registry | Agent references unknown tool |
-| Telegram default agent exists | Agent mapping points to unknown agent |
+| Agent's `model.provider` exists in `llm.providers` | Unknown provider |
+| Agent's tools all exist in `tools` registry | Unknown tool |
+| Agent's skills all exist in `skills` registry | Unknown skill |
+| Skill's `requires.tools` all in agent's `tools` | Missing required tool |
+| Skill's `requires.skills` all in agent's `skills` | Missing required skill |
+| Telegram `agentMapping.default` exists | Points to unknown agent |
 | All `${VAR}` references resolve | Environment variable not set |
 
-## Model Fallback
-
-When an agent has `fallbackModels` configured, the gateway automatically falls back if the primary model fails:
-
-```json5
-agents: {
-  assistant: {
-    model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
-    fallbackModels: [
-      { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
-    ],
-    tools: ["kv"],
-  },
-}
-```
-
-### How It Works
-
-1. The primary model is tried first
-2. If it fails after the SDK's built-in retries (3 attempts), the first fallback is tried
-3. This continues until a model succeeds or all models have been tried
-4. Models currently in cooldown (rate-limited) are skipped
-
-### Rate Limit Handling
-
-When a provider returns a rate limit error (HTTP 429 or rate-limit error message):
-
-- The provider/model is marked as "cooling down"
-- If the response includes a `retry-after` header, that time is used
-- Otherwise, a 30-minute default cooldown is applied
-- Cooldown state persists in `~/.beige/data/provider-health.json` and survives gateway restarts
-
-```
-~/.beige/data/provider-health.json:
-{
-  "providers": {
-    "anthropic/claude-sonnet-4-20250514": {
-      "rateLimitedAt": "2026-03-06T15:00:00.000Z",
-      "retryAfter": "2026-03-06T15:30:00.000Z",
-      "consecutiveFailures": 1,
-      "lastError": "Rate limit exceeded"
-    }
-  },
-  "lastUpdated": "2026-03-06T15:00:00.000Z"
-}
-```
-
-### When to Use Fallbacks
-
-- **High availability**: Ensure the agent keeps working even if one model is rate-limited
-- **Cost optimization**: Use a cheaper fallback for non-critical requests
-- **Model migration**: Gradually shift traffic to a new model
-
-## LLM Provider API Types
-
-| API value | Use for |
-|-----------|---------|
-| `anthropic-messages` | Anthropic Claude (default for `anthropic` provider) |
-| `openai-completions` | OpenAI, ZAI, and most OpenAI-compatible APIs |
-| `openai-responses` | OpenAI Responses API |
-| `google-generative-ai` | Google Gemini |
-
-## Host Directory Structure
-
-The gateway creates directories under `~/.beige/`:
-
-```
-~/.beige/
-├── config.json5                # main config file
-├── agents/
-│   └── <agent>/
-│       ├── workspace/          # mounted as /workspace (rw)
-│       └── launchers/          # mounted as /tools/bin (ro)
-├── sessions/
-│   ├── session-map.json        # maps keys → session files
-│   ├── session-settings.json   # per-session setting overrides
-│   └── <agent>/
-│       └── <id>.jsonl          # pi session files (persistent)
-├── sockets/
-│   └── <agent>.sock           # Unix socket per agent
-├── data/
-│   ├── kv.json                # KV tool data (example)
-│   └── provider-health.json   # rate limit tracking
-└── logs/
-    ├── audit.jsonl            # audit log
-    └── gateway.log            # daemon stdout/stderr (configurable via gateway.logFile)
-```
+---
 
 ## Minimal Working Config
 
@@ -323,36 +275,38 @@ The smallest config that will start:
       tools: [],
     },
   },
-  channels: {
-    telegram: {
-      enabled: true,
-      token: "${TELEGRAM_BOT_TOKEN}",
-      allowedUsers: [123456789],
-      agentMapping: { default: "bot" },
-    },
-  },
 }
 ```
 
-This creates an agent with no tools — it can still use the 4 core tools (`read`, `write`, `patch`, `exec`) to work inside its sandbox.
+This agent has no custom tools but can still use the 4 core tools (`read`, `write`, `patch`, `exec`) inside its sandbox.
 
-## Toolkit Tools
+---
 
-Tools from installed toolkits are automatically discovered and added to your configuration. You don't need to manually add their paths — just enable them in your agents:
+## Host Directory Structure
 
-```json5
-{
-  // Tools from toolkits are auto-discovered
-  tools: {
-    // Built-in or manually configured tools go here
-    kv: { path: "~/.beige/tools/kv", target: "gateway" },
-  },
-  agents: {
-    assistant: {
-      tools: ["kv", "slack", "github"],  // slack and github from installed toolkits
-    },
-  },
-}
+The gateway creates and manages these directories under `~/.beige/`:
+
 ```
-
-See [Toolkits](/tools/toolkits) for installing and managing toolkits.
+~/.beige/
+├── config.json5                   # main config file
+├── agents/
+│   └── <agent>/
+│       ├── workspace/             # mounted as /workspace (rw) in sandbox
+│       └── launchers/             # generated launcher scripts, mounted as /tools/bin (ro)
+├── sessions/
+│   ├── session-map.json           # maps session keys → .jsonl file paths
+│   ├── session-settings.json      # per-session setting overrides (e.g. verbose)
+│   └── <agent>/
+│       └── <id>.jsonl             # pi conversation session files
+├── sockets/
+│   └── <agent>.sock               # Unix socket per agent
+├── data/
+│   ├── kv.json                    # KV tool data
+│   └── provider-health.json       # rate limit cooldown state
+├── toolkits/                      # installed toolkits
+│   └── @scope/toolkit-name/
+├── toolkit-registry.json          # tracks installed toolkits + sources
+└── logs/
+    ├── audit.jsonl                # append-only audit log (every tool call)
+    └── gateway.log                # daemon stdout/stderr (configurable)
+```

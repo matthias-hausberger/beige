@@ -48,17 +48,34 @@
       {
         "tab": "Channels",
         "pages": [
-          "channels-and-tools",
-          "channels/tui",
-          "channels/telegram"
+          "channels/index",
+          {
+            "group": "Individual Channels",
+            "pages": [
+              "channels/tui",
+              "channels/telegram"
+            ]
+          }
         ]
       },
       {
         "tab": "Tools",
         "pages": [
           "tools/index",
+          "tools/core-capabilities",
           "tools/toolkits",
-          "tools/skills"
+          {
+            "group": "Tools",
+            "pages": [
+              "tools/reference/coming-soon"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Skills",
+        "pages": [
+          "skills/index"
         ]
       }
     ]

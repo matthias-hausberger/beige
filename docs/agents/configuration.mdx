@@ -4,7 +4,7 @@ description: "Complete config.json5 reference — all fields, validation rules, 
 icon: "sliders"
 ---
 
-Beige is configured with a single `~/.beige/config.json5` file. JSON5 is JSON with comments, trailing commas, and unquoted keys. Override the path with `--config`.
+Beige is configured with a single `~/.beige/config.json5` file. JSON5 is JSON with comments, trailing commas, and unquoted keys. You can also override the path with `--config`.
 
 ## Environment Variables
 
@@ -196,45 +196,6 @@ Tool `path` values are resolved relative to the config file's directory, unless 
 | `allowedUsers` | Yes | Array of Telegram user IDs permitted to interact |
 | `agentMapping.default` | Yes | Agent name to handle all incoming messages |
 | `defaults.verbose` | No | Default `false` — when `true`, bot sends tool-call notifications |
-
----
-
-## Config Schema
-
-```mermaid
-graph TD
-    CONFIG[config.json5] --> LLM[llm]
-    CONFIG --> TOOLS[tools]
-    CONFIG --> SKILLS[skills]
-    CONFIG --> AGENTS[agents]
-    CONFIG --> GW["gateway (optional)"]
-    CONFIG --> CHANNELS[channels]
-
-    LLM --> PROVIDERS["providers{}"]
-    PROVIDERS --> P1["anthropic · openai · google<br/>apiKey"]
-    PROVIDERS --> P2["zai · ollama · custom<br/>apiKey, baseUrl, api"]
-
-    TOOLS --> T1["<name><br/>path, target, config"]
-
-    SKILLS --> S1["<name><br/>path"]
-
-    AGENTS --> A1["<name>"]
-    A1 --> MODEL["model<br/>provider, model, thinkingLevel"]
-    A1 --> FALLBACK["fallbackModels[]"]
-    A1 --> ATOOLS["tools[] → references tool names"]
-    A1 --> ASKILLS["skills[] → references skill names"]
-    A1 --> SANDBOX["sandbox<br/>image, extraMounts, extraEnv"]
-
-    GW --> GWFIELDS["host, port, logFile"]
-
-    CHANNELS --> TELEGRAM["telegram<br/>enabled, token, allowedUsers<br/>agentMapping, defaults.verbose"]
-
-    ATOOLS -.->|must exist in| T1
-    ASKILLS -.->|must exist in| S1
-    MODEL -.->|must exist in| P1
-
-    style CONFIG fill:#f5f0e0,stroke:#c9b97a
-```
 
 ---
 

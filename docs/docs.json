@@ -22,44 +22,42 @@
         "tab": "Getting Started",
         "pages": [
           "index",
-          "installation",
-          {
-            "group": "Core Concepts",
-            "pages": [
-              "architecture",
-              "system-overview",
-              "security-model"
-            ]
-          }
+          "introduction",
+          "installation"
         ]
       },
       {
         "tab": "Gateway",
-        "groups": [
-          {
-            "group": "Advanced Reference",
-            "pages": [
-              "gateway-api",
-              "request-flows"
-            ]
-          }
+        "pages": [
+          "gateway/index",
+          "gateway/system-overview",
+          "gateway/architecture",
+          "gateway/security-model",
+          "gateway/request-flows",
+          "gateway/api"
         ]
       },
       {
-        "tab": "Agents"
+        "tab": "Agents",
+        "pages": [
+          "agents/index",
+          "agents/configuration"
+        ]
       },
       {
         "tab": "Channels",
         "pages": [
-          "channels/telegram",
-          "channels/tui"
+          "channels-and-tools",
+          "channels/tui",
+          "channels/telegram"
         ]
       },
       {
         "tab": "Tools",
         "pages": [
-          "tools",
-          "toolkits"
+          "tools/index",
+          "tools/toolkits",
+          "tools/skills"
         ]
       }
     ]

@@ -4,6 +4,11 @@ description: "Install Beige, run your first agent, and understand the minimal co
 icon: "download"
 ---
 
+## Prerequisites
+
+- Node.js 22+
+- Docker
+
 ## Quick Start
 
 Get Beige running in under 5 minutes.
@@ -20,7 +25,7 @@ npm install -g matthias-hausberger/beige
 beige setup
 ```
 
-This creates `~/.beige/config.json5` and installs the bundled KV tool.
+This creates `~/.beige/config.json5` (and installs an example-KV tool).
 
 ### Step 3 — Add your API key
 
@@ -46,12 +51,13 @@ Alternatively, keep the default `${ANTHROPIC_API_KEY}` and export it in your she
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-### Step 4 — Start the gateway and TUI
+Of course you can also use other provides, see [LLM Providers](/agents/providers).
+
+### Step 4 — Start the gateway
 
 ```bash
 beige gateway start
 ```
-This starts the gateway in a background process.
 
 ### Step 5 — Start the TUI
 
@@ -59,102 +65,33 @@ This starts the gateway in a background process.
 beige tui
 ```
 
-That's it. The gateway builds the sandbox Docker image automatically on first start. You can now talk to your agent.
+That's it. The gateway builds the sandbox Docker image automatically on first start.
 
 ---
 
-## Minimal Config
+## What `beige setup` Creates
 
-The smallest `~/.beige/config.json5` that works:
+`beige setup` initializes `~/.beige/`:
+
+```text
+~/.beige/
+├── config.json5          # your config (edit this)
+└── tools/
+    └── kv/               # bundled KV store tool
+```
+
+Setup is **idempotent** — it only creates files that do not already exist. Re-running it after partial failures is always safe.
+
+---
+
+## Default Config
+
+The generated `~/.beige/config.json5`:
 
 ```json5
 {
   $schema: "https://raw.githubusercontent.com/matthias-hausberger/beige/main/config.schema.json",
-  llm: {
-    providers: {
-      anthropic: { apiKey: "${ANTHROPIC_API_KEY}" },
-    },
-  },
 
-  // ...
-
-  agents: {
-    assistant: {
-      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-      tools: ["kv"],
-    },
-  },
-}
-```
-
-For the full config reference, see [Configuration](/agents/configuration).
-
----
-
-## Install Modes
-
-Beige supports two install modes that coexist cleanly:
-
-| Mode | Who it's for | How it works |
-|------|--------------|--------------|
-| **npm global** (`npm install -g`) | End users | Installs the published package; first run auto-bootstraps `~/.beige` |
-| **Source / git clone** | Contributors, power users | Clone the repo and run with `pnpm run beige`; data goes into `./.beige` inside the repo (set via `BEIGE_HOME`), keeping the global `~/.beige` untouched |
-
----
-
-## npm Global Install
-
-### Prerequisites
-
-- Node.js 22+
-- Docker (for sandbox execution)
-
-### Install
-
-```bash
-npm install -g matthias-hausberger/beige
-```
-
-### First Run
-
-On the very first command after install, Beige detects that `~/.beige/config.json5` does not yet exist and runs setup automatically:
-
-```text
-$ beige gateway start
-[BEIGE] First run — setting up ~/.beige…
-[BEIGE] Created:
-  + /Users/you/.beige/tools/kv
-  + /Users/you/.beige/config.json5
-
-[BEIGE] Gateway daemon started (PID 12345)
-```
-
-You can also trigger setup explicitly at any time:
-
-```bash
-beige setup
-```
-
-### What Setup Creates
-
-```text
-~/.beige/
-├── config.json5          # default config (see below)
-└── tools/
-    └── kv/               # bundled KV tool
-        ├── tool.json
-        ├── index.ts
-        └── README.md
-```
-
-Setup is fully **idempotent** — it only creates files that do not already exist. Existing files are never overwritten. Re-running `beige setup` after partial failures is always safe.
-
-### Default Config
-
-The generated `~/.beige/config.json5` contains:
-
-```json5
-{
   llm: {
     providers: {
       anthropic: {
@@ -186,115 +123,17 @@ The generated `~/.beige/config.json5` contains:
 }
 ```
 
-The `kv` tool path is written as an absolute path at setup time so the config works regardless of where you run `beige` from.
-
-### Set Your API Key
-
-Open `~/.beige/config.json5` and replace `${ANTHROPIC_API_KEY}` with your key directly, or export it in your shell:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
-
-### Run
-
-```bash
-# Shell 1: start the gateway daemon
-beige gateway start
-
-# Shell 2: interactive TUI
-beige tui
-```
-
-On first start, if any agent config uses the `beige-sandbox` image, the gateway builds it automatically before starting containers. Subsequent starts skip the build if the image already exists.
-
----
-
-## Source Install (git clone)
-
-### Prerequisites
-
-- Node.js 22+
-- Docker
-
-### Clone and Install
-
-```bash
-git clone https://github.com/matthias-hausberger/beige.git
-cd beige
-npm install          # or: pnpm install
-```
-
-### Self-Contained Dev Environment
-
-`pnpm run beige` sets `BEIGE_HOME=./.beige` before invoking the CLI. This means all runtime data — config, sessions, logs, KV store, sockets — goes into a `.beige/` folder **inside the repo**, which is already in `.gitignore`.
-
-The global `~/.beige` is never touched. There is no source-install detection, no special cases: Beige just uses wherever `BEIGE_HOME` points.
-
-### Run (Dev Mode)
-
-First-time setup creates `./.beige`:
-
-```bash
-pnpm run beige setup
-```
-
-Then set your API key and start:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-# Shell 1 — gateway (foreground so you can see logs)
-pnpm run beige gateway start --foreground
-
-# Shell 2 — TUI
-pnpm run beige tui
-```
-
-You can also override `BEIGE_HOME` to point at any directory:
-
-```bash
-BEIGE_HOME=/tmp/my-beige pnpm run beige gateway start
-```
-
----
-
-## The `beige setup` Command
-
-```bash
-beige setup
-```
-
-Initializes the beige home directory (`BEIGE_HOME`, default `~/.beige`) with:
-- `config.json5` — default config template
-- `tools/kv/` — bundled KV store tool
-
-Setup is **idempotent**: existing files are never overwritten. For source checkouts, `pnpm run beige setup` writes into `./.beige` instead of `~/.beige`.
-
-| Environment variable | Effect |
-|----------------------|--------|
-| `BEIGE_HOME=<path>` | Write setup output to `<path>` instead of `~/.beige` |
+The `kv` tool path is written as an absolute path at setup time so the config works regardless of where you run `beige` from. For the full config reference, see [Configuration](/agents/configuration).
 
 ---
 
 ## Updating
 
-### npm Global
-
 ```bash
 npm install -g matthias-hausberger/beige
 ```
 
-Setup is not re-run automatically on update. If a new version ships new bundled tools, run `beige setup` manually to copy them (existing tools are never overwritten).
-
-### Source
-
-```bash
-git pull
-npm install
-```
-
-`~/.beige` is untouched.
+Setup is not re-run automatically on update. If a new version ships new bundled tools, run `beige setup` manually to copy them — existing files are never overwritten.
 
 ---
 
@@ -304,8 +143,38 @@ npm install
 npm uninstall -g matthias-hausberger/beige
 ```
 
-`~/.beige/` is **not** removed — it holds your config, sessions, audit logs, and kv data. Remove it manually if you want a clean slate:
+`~/.beige/` is **not** removed — it holds your config, sessions, audit logs, and KV data. Remove it manually if you want a clean slate:
 
 ```bash
 rm -rf ~/.beige
+```
+
+---
+
+## Source Install (Contributing)
+
+If you are contributing to Beige or want to run from source:
+
+```bash
+git clone https://github.com/matthias-hausberger/beige.git
+cd beige
+pnpm install
+```
+
+`pnpm run beige` automatically sets `BEIGE_HOME=./.beige`, so all runtime data (config, sessions, logs, KV store, sockets) stays inside the repo folder — completely separate from your global `~/.beige`. The `.beige/` folder is already in `.gitignore`.
+
+Everything works identically to the global install:
+
+```bash
+pnpm run beige setup                        # creates ./.beige/config.json5
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+pnpm run beige gateway start --foreground   # Shell 1
+pnpm run beige tui                          # Shell 2
+```
+
+You can also point `BEIGE_HOME` at any directory:
+
+```bash
+BEIGE_HOME=/tmp/my-beige beige gateway start
 ```

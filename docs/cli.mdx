@@ -27,7 +27,7 @@ beige gateway start
 beige gateway start --foreground    # Run in foreground (stdout/stderr visible)
 ```
 
-On first run (npm install), if `~/.beige/config.json5` does not exist, the gateway automatically runs setup before starting.
+On first run, if `~/.beige/config.json5` does not exist, the gateway automatically runs setup before starting.
 
 The daemon writes its PID to `~/.beige/gateway.pid` and logs to `~/.beige/logs/gateway.log`.
 
@@ -47,7 +47,7 @@ Stop the running gateway daemon.
 beige gateway stop
 ```
 
-Sends `SIGTERM` to the daemon process. In-flight requests are not gracefully drained — for a graceful stop, use `restart`.
+Sends `SIGTERM` to the daemon process.
 
 ### `beige gateway restart`
 
@@ -86,10 +86,9 @@ View the gateway log file.
 ```bash
 beige gateway logs           # Print full log and exit
 beige gateway logs -f        # Follow (live tail)
-beige gateway logs --follow  # Same as -f
 ```
 
-Logs are stored at `~/.beige/logs/gateway.log` (configurable via `gateway.logFile` in config).
+Logs are stored at `~/.beige/logs/gateway.log`.
 
 ---
 
@@ -102,15 +101,9 @@ Launch the interactive TUI, connecting to the running gateway.
 ```bash
 beige tui                    # Connect using the first agent in config
 beige tui assistant          # Connect as a specific agent
-beige tui assistant --gateway http://192.168.1.100:7433
 ```
 
-The TUI:
-- Reads `config.json5` locally (for LLM API keys — the LLM session runs in the TUI process)
-- Connects to the gateway HTTP API for tool execution (sandbox operations)
-- Provides the full pi experience: rich editor, streaming, model switching, session management
-
-The gateway **must be running** before starting the TUI.
+The TUI reads `config.json5` locally for LLM API keys and connects to the gateway HTTP API for tool execution. The gateway **must be running** before starting the TUI.
 
 **Flags:**
 
@@ -118,7 +111,7 @@ The gateway **must be running** before starting the TUI.
 |------|-------------|
 | `[agent]` | Agent name (defaults to first agent in config) |
 | `--gateway`, `-g` | Gateway URL (default: `http://127.0.0.1:7433`) |
-| `--config`, `-c` | Config file path (default: `$BEIGE_HOME/config.json5`) |
+| `--config`, `-c` | Config file path (default: `~/.beige/config.json5`) |
 
 ---
 
@@ -126,23 +119,21 @@ The gateway **must be running** before starting the TUI.
 
 ### `beige setup`
 
-Initialize the beige home directory with the default config and bundled tools.
+Initialize `~/.beige/` with the default config and bundled tools.
 
 ```bash
 beige setup
 ```
 
-Setup creates (inside `BEIGE_HOME`, default `~/.beige` for global install, `./.beige` for `pnpm run beige`):
+Creates:
 ```
-<BEIGE_HOME>/
+~/.beige/
 ├── config.json5          # Default config with Anthropic provider + kv tool
 └── tools/
     └── kv/               # Bundled KV store tool
 ```
 
-Setup is **idempotent** — it only creates files that don't already exist. Existing files are never overwritten.
-
-**Source install behavior:** When running from a git checkout (a `.git` directory next to `package.json`), setup is skipped unless `--force` is passed. This prevents accidentally writing to `~/.beige` when developing Beige itself.
+Setup is **idempotent** — existing files are never overwritten.
 
 ---
 
@@ -171,8 +162,6 @@ List all installed toolkits.
 ```bash
 beige toolkit list
 ```
-
-Shows toolkit name, version, source, available tools, and install date.
 
 ### `beige toolkit show <name>`
 
@@ -204,31 +193,19 @@ beige toolkit update
 
 ## Global Flags
 
-These flags apply to all commands:
-
 | Flag | Description |
 |------|-------------|
-| `--config`, `-c` | Config file path (default: `$BEIGE_HOME/config.json5`) |
+| `--config`, `-c` | Config file path (default: `~/.beige/config.json5`) |
 | `--gateway`, `-g` | Gateway URL for TUI commands (default: `http://127.0.0.1:7433`) |
 | `--help`, `-h` | Show help for the current command |
-
-**Environment variables:**
-
-| Variable | Description |
-|----------|-------------|
-| `BEIGE_HOME` | Override the beige home directory (default: `~/.beige`). Set to `./.beige` by `pnpm run beige` for source checkouts. |
 
 ---
 
 ## Typical Workflow
 
 ```bash
-# First time — npm global install
+# First time
 beige setup
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-# First time — source checkout (data goes into ./.beige, not ~/.beige)
-pnpm run beige setup
 export ANTHROPIC_API_KEY="sk-ant-..."
 
 # Every time
@@ -241,5 +218,4 @@ beige gateway restart                # Reload config without losing sessions
 # Debugging
 beige gateway logs -f                # Follow logs live
 beige gateway status                 # Check if daemon is running
-docker ps | grep beige               # Check sandbox containers
 ```

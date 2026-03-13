@@ -1,7 +1,7 @@
 import Docker from "dockerode";
 import { mkdirSync, writeFileSync, chmodSync } from "fs";
 import { resolve, join } from "path";
-import { homedir } from "os";
+import { beigeDir } from "../paths.js";
 import { PassThrough } from "stream";
 import { fileURLToPath } from "url";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
@@ -32,7 +32,7 @@ export class SandboxManager {
     private loadedSkills: Map<string, LoadedSkill>
   ) {
     this.docker = new Docker();
-    this.beigeDir = resolve(homedir(), ".beige");
+    this.beigeDir = beigeDir();
     mkdirSync(this.beigeDir, { recursive: true });
   }
 

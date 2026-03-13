@@ -2,6 +2,11 @@ import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { resolve } from "path";
 import { homedir } from "os";
 
+/** Respects BEIGE_HOME env var, falls back to ~/.beige (matches src/paths.ts). */
+function beigeDir(): string {
+  return process.env.BEIGE_HOME ? resolve(process.env.BEIGE_HOME) : resolve(homedir(), ".beige");
+}
+
 // ToolHandler type is defined here inline so this file is self-contained.
 // It can be installed anywhere (e.g. ~/.beige/tools/kv/) without needing the
 // beige source tree.
@@ -59,8 +64,8 @@ function resolveAllowedCommands(config: Record<string, unknown>): Set<KVCommand>
  *   denyCommands   — always block these commands (deny beats allow)
  */
 export function createHandler(config: Record<string, unknown>): ToolHandler {
-  const storePath = resolve(homedir(), ".beige", "data", "kv.json");
-  mkdirSync(resolve(homedir(), ".beige", "data"), { recursive: true });
+  const storePath = resolve(beigeDir(), "data", "kv.json");
+  mkdirSync(resolve(beigeDir(), "data"), { recursive: true });
 
   const allowedCommands = resolveAllowedCommands(config);
 

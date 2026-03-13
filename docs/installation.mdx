@@ -98,7 +98,7 @@ Beige supports two install modes that coexist cleanly:
 | Mode | Who it's for | How it works |
 |------|--------------|--------------|
 | **npm global** (`npm install -g`) | End users | Installs the published package; first run auto-bootstraps `~/.beige` |
-| **Source / git clone** | Contributors, power users | Clone the repo and run with `tsx`; `~/.beige` is never touched automatically |
+| **Source / git clone** | Contributors, power users | Clone the repo and run with `pnpm run beige`; data goes into `./.beige` inside the repo (set via `BEIGE_HOME`), keeping the global `~/.beige` untouched |
 
 ---
 
@@ -225,63 +225,55 @@ cd beige
 npm install          # or: pnpm install
 ```
 
-### No Automatic Setup
+### Self-Contained Dev Environment
 
-When Beige detects it is running from a git checkout (a `.git` directory exists next to `package.json`), **it never touches `~/.beige` automatically**. No config is written, no tools are copied.
+`pnpm run beige` sets `BEIGE_HOME=./.beige` before invoking the CLI. This means all runtime data — config, sessions, logs, KV store, sockets — goes into a `.beige/` folder **inside the repo**, which is already in `.gitignore`.
 
-This means:
-
-- `npm install` in the repo does not create any files outside the repo.
-- Running `npx tsx src/cli.ts gateway start` without a config will exit cleanly with "config not found".
-- `beige setup` without `--force` also exits with an explanation.
-
-To set up `~/.beige` deliberately from source:
-
-```bash
-npx tsx src/cli.ts setup --force
-```
-
-Or use the example config:
-
-```bash
-cp examples/config.json5 ~/.beige/config.json5
-# Edit to point tool paths at the repo:  path: "/path/to/beige/tools/kv"
-```
+The global `~/.beige` is never touched. There is no source-install detection, no special cases: Beige just uses wherever `BEIGE_HOME` points.
 
 ### Run (Dev Mode)
+
+First-time setup creates `./.beige`:
+
+```bash
+pnpm run beige setup
+```
+
+Then set your API key and start:
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 
 # Shell 1 — gateway (foreground so you can see logs)
-npx tsx src/cli.ts gateway start --foreground
-
-# Shell 2 — TUI
-npx tsx src/cli.ts tui
-```
-
-Or use `pnpm run beige` as a shorthand for `npx tsx src/cli.ts`:
-
-```bash
-# Shell 1
 pnpm run beige gateway start --foreground
 
-# Shell 2
+# Shell 2 — TUI
 pnpm run beige tui
+```
+
+You can also override `BEIGE_HOME` to point at any directory:
+
+```bash
+BEIGE_HOME=/tmp/my-beige pnpm run beige gateway start
 ```
 
 ---
 
 ## The `beige setup` Command
 
-```text
-beige setup [--force]
+```bash
+beige setup
 ```
 
-| Flag | Behaviour |
-|------|-----------|
-| _(none)_ | Runs setup only when **not** a source install. On a source install, prints an explanation. |
-| `--force` | Runs setup unconditionally — works from source installs too. |
+Initializes the beige home directory (`BEIGE_HOME`, default `~/.beige`) with:
+- `config.json5` — default config template
+- `tools/kv/` — bundled KV store tool
+
+Setup is **idempotent**: existing files are never overwritten. For source checkouts, `pnpm run beige setup` writes into `./.beige` instead of `~/.beige`.
+
+| Environment variable | Effect |
+|----------------------|--------|
+| `BEIGE_HOME=<path>` | Write setup output to `<path>` instead of `~/.beige` |
 
 ---
 

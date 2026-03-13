@@ -16,8 +16,8 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 import { resolve, basename } from "path";
-import { homedir } from "os";
 import { readdirSync, existsSync } from "fs";
+import { beigeDir } from "../paths.js";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
 import { SessionSettingsStore, resolveSessionSetting } from "../gateway/session-settings.js";
@@ -195,7 +195,7 @@ async function createSession(state: TUIState, extensionsResult: LoadExtensionsRe
   const skillContext = buildSkillContext(skillNames, loadedSkills);
   const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
 
-  const sessionsDir = resolve(homedir(), ".beige", "sessions", agentName);
+  const sessionsDir = resolve(beigeDir(), "sessions", agentName);
   let sessionManager: ReturnType<typeof SessionManager.create>;
   try {
     sessionManager = SessionManager.continueRecent(process.cwd(), sessionsDir);
@@ -276,7 +276,7 @@ async function buildBeigeExtension(
     }
 
     // Create new session directory entry
-    const sessionsDir = resolve(homedir(), ".beige", "sessions", state.agentName);
+    const sessionsDir = resolve(beigeDir(), "sessions", state.agentName);
     const sessionManager = SessionManager.create(process.cwd(), sessionsDir);
 
     const resourceLoader = await buildResourceLoader(state);
@@ -508,7 +508,7 @@ interface SessionEntry {
 }
 
 function listSessions(agentName: string): SessionEntry[] {
-  const sessionsDir = resolve(homedir(), ".beige", "sessions", agentName);
+  const sessionsDir = resolve(beigeDir(), "sessions", agentName);
   if (!existsSync(sessionsDir)) return [];
 
   const files = readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl"));

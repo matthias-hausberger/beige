@@ -23,7 +23,7 @@
     "config.schema.json"
   ],
   "scripts": {
-    "beige": "tsx src/cli.ts",
+    "beige": "BEIGE_HOME=./.beige tsx src/cli.ts",
     "build": "tsc",
     "start": "node dist/cli.js",
     "build:sandbox": "docker build -t beige-sandbox:latest ./sandbox",

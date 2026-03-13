@@ -118,7 +118,7 @@ The gateway **must be running** before starting the TUI.
 |------|-------------|
 | `[agent]` | Agent name (defaults to first agent in config) |
 | `--gateway`, `-g` | Gateway URL (default: `http://127.0.0.1:7433`) |
-| `--config`, `-c` | Config file path (default: `~/.beige/config.json5`) |
+| `--config`, `-c` | Config file path (default: `$BEIGE_HOME/config.json5`) |
 
 ---
 
@@ -126,16 +126,15 @@ The gateway **must be running** before starting the TUI.
 
 ### `beige setup`
 
-Initialize `~/.beige/` with the default config and bundled tools.
+Initialize the beige home directory with the default config and bundled tools.
 
 ```bash
-beige setup           # Run setup (skips if already done, no-op on source installs)
-beige setup --force   # Run setup unconditionally (works on source installs too)
+beige setup
 ```
 
-Setup creates:
+Setup creates (inside `BEIGE_HOME`, default `~/.beige` for global install, `./.beige` for `pnpm run beige`):
 ```
-~/.beige/
+<BEIGE_HOME>/
 ├── config.json5          # Default config with Anthropic provider + kv tool
 └── tools/
     └── kv/               # Bundled KV store tool
@@ -209,17 +208,27 @@ These flags apply to all commands:
 
 | Flag | Description |
 |------|-------------|
-| `--config`, `-c` | Config file path (default: `~/.beige/config.json5`) |
+| `--config`, `-c` | Config file path (default: `$BEIGE_HOME/config.json5`) |
 | `--gateway`, `-g` | Gateway URL for TUI commands (default: `http://127.0.0.1:7433`) |
 | `--help`, `-h` | Show help for the current command |
+
+**Environment variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `BEIGE_HOME` | Override the beige home directory (default: `~/.beige`). Set to `./.beige` by `pnpm run beige` for source checkouts. |
 
 ---
 
 ## Typical Workflow
 
 ```bash
-# First time (npm global install)
-beige setup                          # Initialize ~/.beige
+# First time — npm global install
+beige setup
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# First time — source checkout (data goes into ./.beige, not ~/.beige)
+pnpm run beige setup
 export ANTHROPIC_API_KEY="sk-ant-..."
 
 # Every time

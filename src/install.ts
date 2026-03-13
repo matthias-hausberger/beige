@@ -1,21 +1,14 @@
 /**
  * Beige first-time setup.
  *
- * Copies bundled tool packages into ~/.beige/tools/ and writes a default
+ * Copies bundled tool packages into <beigeDir>/tools/ and writes a default
  * config.json5 when none exists.  All operations are safe to re-run: existing
  * files/directories are never overwritten.
  *
- * Source-install detection
- * ────────────────────────
- * When beige is run from a git clone (i.e. the developer installed deps with
- * `npm install` / `pnpm install` but did not publish to npm) there is a `.git`
- * directory sitting next to `package.json`.  In that case we skip automatic
- * first-run setup entirely — the developer works directly from the repo.
- *
- * npm-global-install detection
- * ────────────────────────────
- * When installed via `npm install -g beige` there is no `.git` directory in the
- * package root, so `isSourceInstall()` returns false and setup can proceed.
+ * The target directory is controlled by the BEIGE_HOME environment variable
+ * (see src/paths.ts).  `pnpm run beige` sets BEIGE_HOME=./.beige so that
+ * source-checkout runs are self-contained inside the repo and never touch the
+ * global ~/.beige used by the npm-global install.
  */
 
 import {
@@ -27,8 +20,8 @@ import {
   statSync,
 } from "fs";
 import { resolve, join } from "path";
-import { homedir } from "os";
 import { fileURLToPath } from "url";
+import { beigeDir } from "./paths.js";
 
 // ── Resolve package root ─────────────────────────────────────────────────────
 
@@ -37,16 +30,6 @@ function packageRoot(): string {
   // In compiled output this file is at <root>/dist/install.js
   const distDir = fileURLToPath(new URL(".", import.meta.url));
   return resolve(distDir, "..");
-}
-
-// ── Source-install guard ─────────────────────────────────────────────────────
-
-/**
- * Returns true when beige is being run directly from a git checkout.
- * A `.git` entry at the package root is the canonical signal.
- */
-export function isSourceInstall(): boolean {
-  return existsSync(resolve(packageRoot(), ".git"));
 }
 
 // ── Default config template ──────────────────────────────────────────────────
@@ -128,23 +111,16 @@ export interface SetupResult {
 
 /**
  * Run beige first-time setup.
- *
- * @param force  When true, run even on a source install (used by `beige setup`).
  */
-export async function runSetup(options: { force?: boolean } = {}): Promise<SetupResult> {
+export async function runSetup(_options: { force?: boolean } = {}): Promise<SetupResult> {
   const created: string[] = [];
   const skipped: string[] = [];
 
-  if (!options.force && isSourceInstall()) {
-    // Never auto-setup when running from source.
-    return { created, skipped };
-  }
+  const dir = beigeDir();
+  const toolsDst = resolve(dir, "tools");
+  const configDst = resolve(dir, "config.json5");
 
-  const beigeDir = resolve(homedir(), ".beige");
-  const toolsDst = resolve(beigeDir, "tools");
-  const configDst = resolve(beigeDir, "config.json5");
-
-  ensureDir(beigeDir);
+  ensureDir(dir);
 
   // ── Copy bundled tools ─────────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 import { resolve } from "path";
-import { homedir } from "os";
+import { beigeDir } from "../paths.js";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { BeigeConfig } from "../config/schema.js";
 import { loadConfig } from "../config/loader.js";
@@ -39,7 +39,7 @@ export class Gateway {
     this.config = config;
     this.configPath = resolve(configPath);
     this.audit = new AuditLogger(
-      resolve(homedir(), ".beige", "logs", "audit.jsonl")
+      resolve(beigeDir(), "logs", "audit.jsonl")
     );
     this.policy = new PolicyEngine(config);
     this.toolRunner = new ToolRunner();
@@ -185,12 +185,7 @@ export class Gateway {
   }
 
   private async startAgentInfra(agentName: string): Promise<void> {
-    const socketPath = resolve(
-      homedir(),
-      ".beige",
-      "sockets",
-      `${agentName}.sock`
-    );
+    const socketPath = resolve(beigeDir(), "sockets", `${agentName}.sock`);
     const socketServer = new AgentSocketServer(
       agentName,
       socketPath,

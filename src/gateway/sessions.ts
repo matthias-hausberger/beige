@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "fs";
 import { resolve, join } from "path";
-import { homedir } from "os";
+import { beigeDir } from "../paths.js";
 
 /**
  * Beige session store.
@@ -21,7 +21,7 @@ export class BeigeSessionStore {
   private sessionMap: Record<string, SessionMapEntry>;
 
   constructor() {
-    this.beigeDir = resolve(homedir(), ".beige");
+    this.beigeDir = beigeDir();
     this.sessionsDir = resolve(this.beigeDir, "sessions");
     this.mapFile = resolve(this.sessionsDir, "session-map.json");
     mkdirSync(this.sessionsDir, { recursive: true });

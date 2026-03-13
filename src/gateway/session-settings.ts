@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { resolve } from "path";
-import { homedir } from "os";
+import { beigeDir } from "../paths.js";
 
 /**
  * Per-session setting overrides.
@@ -37,7 +37,7 @@ export class SessionSettingsStore {
   private data: Record<string, SessionSettings>;
 
   constructor() {
-    const dir = resolve(homedir(), ".beige", "sessions");
+    const dir = resolve(beigeDir(), "sessions");
     mkdirSync(dir, { recursive: true });
     this.filePath = resolve(dir, "session-settings.json");
     this.data = this.load();

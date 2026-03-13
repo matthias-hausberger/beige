@@ -10,7 +10,7 @@
 
 import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, symlinkSync, lstatSync, readdirSync } from "fs";
 import { resolve, basename, join } from "path";
-import { homedir } from "os";
+import { beigeDir } from "../paths.js";
 import { execSync } from "child_process";
 import { extract } from "tar";
 import {
@@ -30,8 +30,8 @@ import {
   listInstalledToolkits,
 } from "./registry.js";
 
-const BEIGE_DIR = resolve(homedir(), ".beige");
-const TEMP_DIR = resolve(BEIGE_DIR, "temp");
+// TEMP_DIR is lazily computed so it picks up BEIGE_HOME at call time.
+function getTempDir(): string { return resolve(beigeDir(), "temp"); }
 
 export interface InstallResult {
   success: boolean;
@@ -43,14 +43,16 @@ export interface InstallResult {
 }
 
 function ensureTempDir(): void {
-  if (!existsSync(TEMP_DIR)) {
-    mkdirSync(TEMP_DIR, { recursive: true });
+  const tempDir = getTempDir();
+  if (!existsSync(tempDir)) {
+    mkdirSync(tempDir, { recursive: true });
   }
 }
 
 function cleanTempDir(): void {
-  if (existsSync(TEMP_DIR)) {
-    rmSync(TEMP_DIR, { recursive: true, force: true });
+  const tempDir = getTempDir();
+  if (existsSync(tempDir)) {
+    rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
@@ -170,7 +172,7 @@ export async function installToolkit(sourceStr: string, options: { force?: boole
 async function fetchFromNpm(packageName: string): Promise<string> {
   ensureTempDir();
   
-  const tempPackDir = join(TEMP_DIR, `npm-${Date.now()}`);
+  const tempPackDir = join(getTempDir(), `npm-${Date.now()}`);
   mkdirSync(tempPackDir, { recursive: true });
   
   const isInstalled = checkNpmPackageInstalled(packageName);
@@ -197,7 +199,7 @@ async function fetchFromNpm(packageName: string): Promise<string> {
     throw new Error("npm pack did not produce a .tgz file");
   }
   
-  const extractDir = join(TEMP_DIR, `npm-extract-${Date.now()}`);
+  const extractDir = join(getTempDir(), `npm-extract-${Date.now()}`);
   await extractTarball(join(tempPackDir, tgzFile), extractDir);
   
   const extractedContents = readdirSync(extractDir);
@@ -237,7 +239,7 @@ async function fetchFromGitHub(owner: string, repo: string, ref?: string): Promi
     ? `https://github.com/${owner}/${repo}/archive/${ref}.tar.gz`
     : `https://github.com/${owner}/${repo}/tarball/main`;
   
-  const extractDir = join(TEMP_DIR, `github-${owner}-${repo}-${Date.now()}`);
+  const extractDir = join(getTempDir(), `github-${owner}-${repo}-${Date.now()}`);
   
   try {
     await downloadAndExtractTarball(tarballUrl, extractDir);
@@ -264,7 +266,7 @@ async function fetchFromUrl(url: string): Promise<string> {
     throw new Error("URL must point to a .tar.gz or .tgz file");
   }
   
-  const extractDir = join(TEMP_DIR, `url-${Date.now()}`);
+  const extractDir = join(getTempDir(), `url-${Date.now()}`);
   await downloadAndExtractTarball(url, extractDir);
   
   const contents = readdirSync(extractDir);
@@ -286,7 +288,7 @@ async function downloadAndExtractTarball(url: string, destDir: string): Promise<
     throw new Error(`Failed to download from ${url}: ${response.status} ${response.statusText}`);
   }
   
-  const tempFile = join(TEMP_DIR, `download-${Date.now()}.tar.gz`);
+  const tempFile = join(getTempDir(), `download-${Date.now()}.tar.gz`);
   const buffer = Buffer.from(await response.arrayBuffer());
   writeFileSync(tempFile, buffer);
   

@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
-import { homedir } from "os";
+import { beigeDir } from "../paths.js";
 
 /**
  * Provider health tracking for rate limit handling and fallback logic.
@@ -44,7 +44,7 @@ export class ProviderHealthTracker {
   private data: ProviderHealthData;
 
   constructor() {
-    const dir = resolve(homedir(), ".beige", "data");
+    const dir = resolve(beigeDir(), "data");
     mkdirSync(dir, { recursive: true });
     this.filePath = resolve(dir, "provider-health.json");
     this.data = this.load();

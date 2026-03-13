@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
-import { homedir } from "os";
+import { beigeDir } from "../paths.js";
 import JSON5 from "json5";
 import { type BeigeConfig, type ToolConfig, type SkillConfig, validateConfig } from "./schema.js";
 import { listInstalledToolkits, getToolkitsDir } from "../toolkit/registry.js";
@@ -17,7 +17,7 @@ interface ToolkitRegistry {
 }
 
 function loadToolkitRegistry(): ToolkitRegistry | null {
-  const registryPath = resolve(homedir(), ".beige", "toolkit-registry.json");
+  const registryPath = resolve(beigeDir(), "toolkit-registry.json");
   if (!existsSync(registryPath)) {
     return null;
   }

@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { resolve, join } from "path";
-import { homedir } from "os";
+import { beigeDir } from "../paths.js";
 import {
   type ToolkitRegistry,
   type InstalledToolkit,
@@ -15,30 +15,37 @@ import {
   normalizeToolkitName,
 } from "./schema.js";
 
-const BEIGE_DIR = resolve(homedir(), ".beige");
-const TOOLKITS_DIR = resolve(BEIGE_DIR, "toolkits");
-const REGISTRY_PATH = resolve(BEIGE_DIR, "toolkit-registry.json");
+function getBeigeDirPaths() {
+  const dir = beigeDir();
+  return {
+    beigeDir: dir,
+    toolkitsDir: resolve(dir, "toolkits"),
+    registryPath: resolve(dir, "toolkit-registry.json"),
+  };
+}
 
 function ensureDirs(): void {
-  if (!existsSync(BEIGE_DIR)) {
-    mkdirSync(BEIGE_DIR, { recursive: true });
+  const { beigeDir: dir, toolkitsDir } = getBeigeDirPaths();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
-  if (!existsSync(TOOLKITS_DIR)) {
-    mkdirSync(TOOLKITS_DIR, { recursive: true });
+  if (!existsSync(toolkitsDir)) {
+    mkdirSync(toolkitsDir, { recursive: true });
   }
 }
 
 export function getToolkitsDir(): string {
-  return TOOLKITS_DIR;
+  return getBeigeDirPaths().toolkitsDir;
 }
 
 export function loadRegistry(): ToolkitRegistry {
-  if (!existsSync(REGISTRY_PATH)) {
+  const { registryPath } = getBeigeDirPaths();
+  if (!existsSync(registryPath)) {
     return { version: TOOLKIT_REGISTRY_VERSION, toolkits: {} };
   }
   
   try {
-    const content = readFileSync(REGISTRY_PATH, "utf-8");
+    const content = readFileSync(registryPath, "utf-8");
     const data = JSON.parse(content);
     
     if (typeof data.version !== "number") {
@@ -56,7 +63,7 @@ export function loadRegistry(): ToolkitRegistry {
 
 export function saveRegistry(registry: ToolkitRegistry): void {
   ensureDirs();
-  writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2), "utf-8");
+  writeFileSync(getBeigeDirPaths().registryPath, JSON.stringify(registry, null, 2), "utf-8");
 }
 
 export function getInstalledToolkit(name: string): InstalledToolkit | undefined {
@@ -107,7 +114,7 @@ export function unregisterToolkit(name: string): boolean {
 
 export function getToolkitInstallPath(name: string): string {
   const normalizedName = normalizeToolkitName(name);
-  return resolve(TOOLKITS_DIR, normalizedName);
+  return resolve(getBeigeDirPaths().toolkitsDir, normalizedName);
 }
 
 export function sourceToString(source: ToolkitSource): string {

@@ -22,7 +22,6 @@
  */
 
 import { resolve } from "path";
-import { homedir } from "os";
 import {
   mkdirSync,
   writeFileSync,
@@ -32,7 +31,8 @@ import {
 } from "fs";
 import { spawn } from "child_process";
 import { watch } from "fs";
-import { isSourceInstall, runSetup } from "./install.js";
+import { runSetup } from "./install.js";
+import { beigeDir } from "./paths.js";
 import {
   installToolkit,
   removeToolkit,
@@ -43,20 +43,22 @@ import {
 
 // ── Paths ────────────────────────────────────────────────────────────
 
-const BEIGE_DIR = resolve(homedir(), ".beige");
-const PID_FILE = resolve(BEIGE_DIR, "gateway.pid");
-const LOG_FILE = resolve(BEIGE_DIR, "logs", "gateway.log");
+// beigeDir() is called lazily (inside functions) so that BEIGE_HOME is
+// already resolved by the time the value is needed.
+function getPidFile(): string { return resolve(beigeDir(), "gateway.pid"); }
+function getLogFile(): string { return resolve(beigeDir(), "logs", "gateway.log"); }
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function ensureDirs() {
-  mkdirSync(resolve(BEIGE_DIR, "logs"), { recursive: true });
+  mkdirSync(resolve(beigeDir(), "logs"), { recursive: true });
 }
 
 /** Read the stored PID, or null if the file doesn't exist. */
 function readPid(): number | null {
-  if (!existsSync(PID_FILE)) return null;
-  const raw = readFileSync(PID_FILE, "utf-8").trim();
+  const pidFile = getPidFile();
+  if (!existsSync(pidFile)) return null;
+  const raw = readFileSync(pidFile, "utf-8").trim();
   const pid = parseInt(raw, 10);
   return isNaN(pid) ? null : pid;
 }
@@ -73,17 +75,9 @@ function isRunning(pid: number): boolean {
 
 // ── Commands ─────────────────────────────────────────────────────────
 
-async function cmdSetup(force: boolean): Promise<void> {
-  if (!force && isSourceInstall()) {
-    console.log(
-      "[BEIGE] Detected source install (git checkout). Skipping automatic setup.\n" +
-      "        Run 'beige setup --force' to set up ~/.beige anyway."
-    );
-    return;
-  }
-
+async function cmdSetup(_force: boolean): Promise<void> {
   console.log("[BEIGE] Running setup…");
-  const result = await runSetup({ force: true });
+  const result = await runSetup();
 
   if (result.created.length > 0) {
     console.log("\n[BEIGE] Created:");
@@ -100,16 +94,15 @@ async function cmdSetup(force: boolean): Promise<void> {
 }
 
 /**
- * Auto-setup for npm-global installs: if no config exists yet and we are not
- * running from source, silently initialise ~/.beige on the first invocation.
+ * Auto-setup on first run: if no config exists yet, silently bootstrap
+ * the beige home directory (respects BEIGE_HOME).
  */
 async function maybeAutoSetup(): Promise<void> {
-  if (isSourceInstall()) return;
-  const configPath = resolve(homedir(), ".beige", "config.json5");
+  const configPath = resolve(beigeDir(), "config.json5");
   if (existsSync(configPath)) return;
 
-  console.log("[BEIGE] First run — setting up ~/.beige…");
-  const result = await runSetup({ force: false });
+  console.log(`[BEIGE] First run — setting up ${beigeDir()}…`);
+  const result = await runSetup();
   if (result.created.length > 0) {
     console.log("[BEIGE] Created:");
     for (const p of result.created) console.log(`  + ${p}`);
@@ -129,7 +122,8 @@ async function cmdGatewayStart(configPath: string, foreground: boolean): Promise
     ensureDirs();
 
     // Open log file for append (create if absent)
-    const logFd = openSync(LOG_FILE, "a");
+    const logFile = getLogFile();
+    const logFd = openSync(logFile, "a");
 
     // Re-invoke this same entry point in foreground mode.
     // argv[0] is always `node` regardless of whether tsx is used as a loader,
@@ -147,9 +141,9 @@ async function cmdGatewayStart(configPath: string, foreground: boolean): Promise
     });
     child.unref();
 
-    writeFileSync(PID_FILE, String(child.pid), "utf-8");
+    writeFileSync(getPidFile(), String(child.pid), "utf-8");
     console.log(`[BEIGE] Gateway daemon started (PID ${child.pid})`);
-    console.log(`[BEIGE] Logs: ${LOG_FILE}`);
+    console.log(`[BEIGE] Logs: ${logFile}`);
     console.log(`[BEIGE] Run 'beige gateway logs -f' to follow`);
     process.exit(0);
   }
@@ -234,19 +228,20 @@ function cmdGatewayStatus(): void {
     console.log("[BEIGE] Gateway: stopped");
   } else {
     console.log(`[BEIGE] Gateway: running (PID ${pid})`);
-    console.log(`[BEIGE] Logs:    ${LOG_FILE}`);
+    console.log(`[BEIGE] Logs:    ${getLogFile()}`);
   }
 }
 
 function cmdGatewayLogs(follow: boolean): void {
-  if (!existsSync(LOG_FILE)) {
-    console.log(`[BEIGE] Log file not found: ${LOG_FILE}`);
+  const logFile = getLogFile();
+  if (!existsSync(logFile)) {
+    console.log(`[BEIGE] Log file not found: ${logFile}`);
     process.exit(1);
   }
 
   if (!follow) {
     // Dump the whole file and exit
-    const content = readFileSync(LOG_FILE, "utf-8");
+    const content = readFileSync(logFile, "utf-8");
     process.stdout.write(content);
     return;
   }
@@ -256,7 +251,7 @@ function cmdGatewayLogs(follow: boolean): void {
 
   function flush() {
     try {
-      const buf = readFileSync(LOG_FILE);
+      const buf = readFileSync(logFile);
       if (buf.length > position) {
         process.stdout.write(buf.subarray(position));
         position = buf.length;
@@ -270,7 +265,7 @@ function cmdGatewayLogs(follow: boolean): void {
   flush();
 
   // Watch for writes and flush incrementally
-  watch(LOG_FILE, () => flush());
+  watch(logFile, () => flush());
 
   // Keep the process alive
   process.on("SIGINT", () => process.exit(0));
@@ -279,7 +274,7 @@ function cmdGatewayLogs(follow: boolean): void {
 
 // ── Parse args ───────────────────────────────────────────────────────
 
-const defaultConfigPath = resolve(homedir(), ".beige", "config.json5");
+const defaultConfigPath = resolve(beigeDir(), "config.json5");
 let configPath = defaultConfigPath;
 let gatewayUrl: string | undefined;
 

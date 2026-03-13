@@ -9,6 +9,10 @@ jobs:
   publish-npm:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      id-token: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,9 +36,16 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          if [[ "$VERSION" =~ -(alpha|beta|rc|pre|preview|canary|next) ]]; then
+          # Check if the version has a pre-release suffix (anything after a hyphen)
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(.+))$ ]]; then
+            SUFFIX="${BASH_REMATCH[2]}"
             echo "prerelease=true" >> $GITHUB_OUTPUT
-            echo "npm_tag=next" >> $GITHUB_OUTPUT
+            # Extract the label part (letters only) from the suffix; fall back to "next"
+            LABEL=$(echo "$SUFFIX" | sed 's/[^a-zA-Z].*//')
+            if [[ -z "$LABEL" ]]; then
+              LABEL="next"
+            fi
+            echo "npm_tag=$LABEL" >> $GITHUB_OUTPUT
           else
             echo "prerelease=false" >> $GITHUB_OUTPUT
             echo "npm_tag=latest" >> $GITHUB_OUTPUT
@@ -49,6 +60,6 @@ jobs:
 
       - name: Publish to npm
         run: |
-          pnpm publish --no-git-checks --tag ${{ steps.version.outputs.npm_tag }}
+          pnpm publish --no-git-checks --provenance --tag ${{ steps.version.outputs.npm_tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

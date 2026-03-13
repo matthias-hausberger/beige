@@ -306,6 +306,7 @@ Usage:
 Options:
   -c, --config <path>        Config file (default: ~/.beige/config.json5)
   -g, --gateway <url>        Gateway URL for TUI (default: http://127.0.0.1:7433)
+  -v, --version              Show version
   -h, --help                 Show this help
 
 Run 'beige gateway' for gateway-specific commands.
@@ -369,6 +370,11 @@ function parseArgs(): Mode {
       gatewayUrl = args[i + 1];
       args.splice(i, 2);
       i--;
+    } else if (args[i] === "--version" || args[i] === "-v") {
+      const pkgPath = new URL("../package.json", import.meta.url);
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      console.log(pkg.version);
+      process.exit(0);
     } else if (args[i] === "--help" || args[i] === "-h") {
       printHelp();
       process.exit(0);

@@ -3,7 +3,9 @@ title: "The Gateway"
 description: "The central process that orchestrates agents, sandboxes, policies, and channels"
 ---
 
-The gateway is the heart of Beige — a Node.js process that runs continuously and coordinates everything: LLM calls, Docker sandbox lifecycle, tool routing, policy enforcement, and audit logging.
+The gateway is the heart of Beige — a single long-running Node.js process that coordinates everything: agent lifecycle, Docker sandbox management, tool routing, policy enforcement, and audit logging.
+
+Every agent runs inside a Docker sandbox that the gateway creates and owns. Every tool call an agent makes passes through the gateway before anything executes. The gateway is always the single source of truth.
 
 ```mermaid
 graph TB
@@ -22,9 +24,9 @@ graph TB
         SB2[Agent 2]
     end
 
-    subgraph "External"
-        TUI[TUI Process]
-        PHONE[Phone]
+    subgraph "Channels"
+        PHONE[Telegram]
+        HTTP[HTTP Client]
     end
 
     AM --> SM
@@ -35,99 +37,52 @@ graph TB
     SS --> PE
     PE --> AL
 
-    TUI -->|HTTP| API
-    PHONE -->|Telegram| TG
+    HTTP -->|HTTP :7433| API
+    PHONE -->|Telegram API| TG
     API --> AM
     TG --> AM
 ```
-
-**The gateway always runs.** Channels (TUI, Telegram) connect to it. Agents run inside sandboxes that the gateway creates and manages.
 
 ---
 
 ## Core Responsibilities
 
-| Component | Responsibility |
-|-----------|---------------|
-| **Agent Manager** | Creates and maps agent name → LLM session + Docker container |
-| **Sandbox Manager** | Creates Docker containers, generates tool launchers, manages lifecycle |
-| **Socket Server** | Listens on Unix sockets (one per agent), receives tool requests |
-| **Policy Engine** | Checks tool permissions before every invocation (deny by default) |
-| **Audit Logger** | Logs every tool call with agent, tool, args, timing, and decision |
-| **HTTP API** | REST endpoints used by TUI and custom integrations (port 7433) |
+| Component | What it does |
+|-----------|--------------|
+| **Agent Manager** | Owns the mapping of agent name → LLM session + Docker sandbox |
+| **Sandbox Manager** | Creates and tears down Docker containers; generates tool launcher scripts at startup |
+| **Socket Server** | Listens on a Unix socket per agent; receives tool requests from inside the sandbox |
+| **Policy Engine** | Checks every tool invocation against the agent's allowed-tools list before it runs |
+| **Audit Logger** | Appends a structured JSONL record for every tool call — tool, args, timing, decision |
+| **HTTP API** | REST endpoints on port 7433 for channels and external integrations |
+| **Telegram Bot** | In-process channel that forwards messages to agents and streams replies |
 
 ---
 
-## Two-Process Model
+## Configuration and Storage
 
-Beige runs as two separate processes:
+The gateway reads its configuration from `~/.beige/config.json5` on startup. Key runtime files:
 
-```
-Shell 1: beige gateway start      ← Gateway: manages sandboxes, enforces policy, routes tools
-Shell 2: beige tui [agent]        ← TUI: LLM session runs locally, tools proxied via gateway HTTP API
-```
+| Path | Purpose |
+|------|---------|
+| `~/.beige/config.json5` | Main configuration file |
+| `~/.beige/gateway.pid` | PID of the running gateway process |
+| `~/.beige/logs/gateway.log` | Gateway log output |
+| `~/.beige/sessions/<agent>/` | Persisted conversation sessions |
+| `~/.beige/workspaces/<agent>/` | Agent workspace (bind-mounted into sandbox) |
+| `~/.beige/provider-health.json` | LLM provider cooldown state |
 
-The **gateway** runs always. The **TUI** is optional — you can also interact via Telegram (in-process) or the HTTP API directly.
-
----
-
-## How a Tool Call Works
-
-When the LLM calls `exec /tools/bin/kv set mykey value`:
-
-1. **Gateway receives** the `exec` core tool call from the pi SDK
-2. **Audit log** entry written: `{type: "core_tool", tool: "exec", ...}`
-3. **`docker exec`** runs `/tools/bin/kv set mykey value` inside the sandbox
-4. Inside the container, the **launcher script** invokes `tool-client`
-5. `tool-client` connects to `/beige/gateway.sock` (a Unix socket mounted into the container)
-6. The **socket server** receives the tool request, identifies the agent from which socket it came
-7. **Policy engine** checks: is this agent allowed to use `kv`?
-8. If allowed: **tool handler** executes on the gateway host, result returned through socket
-9. `tool-client` exits with the result, `docker exec` returns output to the LLM
-
-Two audit log entries are created — one for the `exec` call, one for the `kv` tool invocation.
-
----
-
-## Running the Gateway
-
-```bash
-# Start as background daemon
-beige gateway start
-
-# Start in foreground (for debugging)
-beige gateway start --foreground
-
-# Stop, restart, check status
-beige gateway stop
-beige gateway restart
-beige gateway status
-
-# View logs
-beige gateway logs
-beige gateway logs -f        # Follow (live tail)
-```
-
-The gateway stores a PID file at `~/.beige/gateway.pid` and logs to `~/.beige/logs/gateway.log`.
+See the [Config Reference](/agents/configuration) for the full configuration schema.
 
 ---
 
 ## In This Section
 
 <CardGroup cols={2}>
-  <Card icon="sitemap" href="/gateway/system-overview" title="System Overview">
-    Component diagrams, startup sequence, and multi-agent setup
+  <Card icon="arrow-right-arrow-left" href="/gateway/tool-calls" title="How Tool Calls Work">
+    What happens from the moment the LLM calls a tool to when the result comes back
   </Card>
-  <Card icon="diagram-project" href="/gateway/architecture" title="Architecture">
-    Detailed technical reference: components, data flow, tech decisions
-  </Card>
-  <Card icon="shield-halved" href="/gateway/security-model" title="Security Model">
-    Threat model, defense layers, secrets flow, and audit logging
-  </Card>
-  <Card icon="arrows-turn-right" href="/gateway/request-flows" title="Request Flows">
-    Sequence diagrams for every type of request
-  </Card>
-  <Card icon="code" href="/gateway/api" title="HTTP API">
-    REST API reference for external integrations
+  <Card icon="play" href="/gateway/operating" title="Operating the Gateway">
+    Starting, stopping, monitoring, and troubleshooting the gateway process
   </Card>
 </CardGroup>

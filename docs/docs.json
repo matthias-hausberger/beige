@@ -31,11 +31,18 @@
         "tab": "Gateway",
         "pages": [
           "gateway/index",
-          "gateway/system-overview",
-          "gateway/architecture",
-          "gateway/security-model",
-          "gateway/request-flows",
-          "gateway/api"
+          "gateway/tool-calls",
+          "gateway/operating",
+          {
+            "group": "Advanced",
+            "pages": [
+              "gateway/system-overview",
+              "gateway/architecture",
+              "gateway/security-model",
+              "gateway/request-flows",
+              "gateway/api"
+            ]
+          }
         ]
       },
       {

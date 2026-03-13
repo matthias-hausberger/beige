@@ -1,0 +1,150 @@
+---
+title: "Operating the Gateway"
+description: "Starting, stopping, monitoring, and troubleshooting the gateway process"
+---
+
+The gateway is a long-running daemon. You start it once and leave it running. Channels (Telegram, HTTP clients) connect to it as needed.
+
+---
+
+## Starting the Gateway
+
+```bash
+beige gateway start
+```
+
+This starts the gateway as a background daemon and returns immediately. The gateway process continues running after you close the terminal.
+
+To start in the **foreground** instead (useful when debugging or inspecting startup logs directly):
+
+```bash
+beige gateway start --foreground
+```
+
+In foreground mode, logs stream to stdout and the process exits when you press `Ctrl+C`.
+
+<Info>
+On first run, make sure you have run `beige setup` first to create the config file and pull the Docker image. See the [installation guide](/installation).
+</Info>
+
+For all flags and options, see the [CLI Reference](/cli).
+
+---
+
+## Checking Status
+
+```bash
+beige gateway status
+```
+
+Shows whether the gateway is running and the PID of the process. Example output:
+
+```
+Gateway is running (PID 12345)
+```
+
+---
+
+## Viewing Logs
+
+```bash
+# Print recent logs
+beige gateway logs
+
+# Follow logs in real time
+beige gateway logs -f
+```
+
+Logs are stored at `~/.beige/logs/gateway.log`. Each line is a structured JSON record (tool calls, errors, startup events).
+
+---
+
+## Stopping and Restarting
+
+```bash
+# Graceful stop
+beige gateway stop
+
+# Stop and start again
+beige gateway restart
+```
+
+`restart` performs an in-place graceful restart — it shuts down the running process and starts a new one. Use this after changing your config or installing new tools.
+
+You can also restart via the HTTP API if you have a client that uses it:
+
+```bash
+curl -X POST http://127.0.0.1:7433/api/gateway/restart
+```
+
+---
+
+## Key File Locations
+
+| Path | Purpose |
+|------|---------|
+| `~/.beige/config.json5` | Main config — read once at startup |
+| `~/.beige/gateway.pid` | PID file — present while gateway is running |
+| `~/.beige/logs/gateway.log` | All gateway log output |
+| `~/.beige/sessions/<agent>/` | Persisted conversation sessions (JSONL) |
+| `~/.beige/workspaces/<agent>/` | Agent workspace directory (bind-mounted into sandbox) |
+| `~/.beige/provider-health.json` | LLM provider cooldown state (persisted across restarts) |
+| `~/.beige/sockets/<agent>.sock` | Unix socket for each agent (created at startup, removed on stop) |
+
+---
+
+## Config Changes
+
+The gateway reads its config once at startup. After editing `~/.beige/config.json5`:
+
+```bash
+beige gateway restart
+```
+
+Changes to agent definitions, tool lists, and channel settings all require a restart to take effect.
+
+---
+
+## Troubleshooting
+
+**Gateway won't start**
+
+Run in foreground mode to see the full error output:
+
+```bash
+beige gateway start --foreground
+```
+
+Common causes: Docker is not running, the config file has a syntax error, or a port is already in use.
+
+**Gateway starts but agents don't respond**
+
+Check that the Docker image was pulled during setup:
+
+```bash
+docker images | grep beige
+```
+
+If missing, re-run `beige setup`.
+
+**Tool calls are being rejected**
+
+Check the audit log for `"decision": "deny"` entries:
+
+```bash
+beige gateway logs | grep '"decision":"deny"'
+```
+
+The `error` field in the log entry will explain why the call was blocked. Most likely the tool is not listed in the agent's `allowedTools` config.
+
+**Port 7433 is already in use**
+
+Change the gateway port in `~/.beige/config.json5`:
+
+```json5
+gateway: {
+  port: 7434
+}
+```
+
+Then restart the gateway.

@@ -1,6 +1,6 @@
 {
   "name": "@matthias-hausberger/beige",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Secure sandboxed agent system",
   "publishConfig": {
     "access": "public"
@@ -36,9 +36,7 @@
     "docs:deploy": "cd docs && mintlify deploy",
     "pack": "pnpm install --frozen-lockfile && pnpm run build && pnpm pack",
     "pack:local": "pnpm run pack",
-    "package": "tsx scripts/package.ts",
-    "package:version": "tsx scripts/package.ts",
-    "test:install": "tsx scripts/test-local-install.ts"
+    "test:install": "npm install -g ./*.tgz"
   },
   "dependencies": {
     "@mariozechner/pi-ai": "^0.56.1",

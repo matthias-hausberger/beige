@@ -4,74 +4,19 @@ description: "The motivation, inspiration, and use cases behind Beige"
 icon: "brain"
 ---
 
-## Why We Built This
+## Why I Built Beige
 
-Existing solutions like [OpenClaw](https://openclaw.ai) are powerful but come with significant trade-offs:
+Existing solutions like [OpenClaw](https://openclaw.ai) are powerful but come with significant trade-offs. Here is what I don't like and what I wanted to fix:
 
-### 🛡️ Sandboxed by Default
+1. **Tool calling is limited**: Openclaw is like any other agent system - it still relies on the LLM calling many tools (or even MCP). [Lobster](https://github.com/openclaw/lobster) was an approach at creating typed workflows for tools, but **it's missing real coding capabilities**. An agent should be able to **call tools safely in a code-environment**.
+1. **So much clutter**: Openclaw comes with so many things built-in. Many channels, tools and other stuff that I don't want to run by default. I want my gateway to be clean and extensible.
+1. **Limited sandboxing**: Openclaw supports sandboxing, but it seemed like it could escape the sandbox ever-so often (/elevated mode). Sometimes you are hit with: *I need the agent to run CLI tools. But if I "elevate" it, then it could read all my environment variables and secrets.*
 
-**The Problem:** Many agent systems run directly on your machine. The agent has full access to your filesystem, environment variables, and can execute any command. A rogue or confused agent could delete files, expose API keys, or worse.
-
-**Our Solution:** Every Beige agent runs in its own Docker container. The agent can only access what you explicitly allow. No host environment variables, no direct filesystem access, no escape hatch.
-
-```mermaid
-graph LR
-    subgraph "Unsandboxed Approach"
-        OC_HOST[Your Machine]
-        OC_LLM[LLM]
-        OC_LLM -->|direct access| OC_HOST
-    end
-
-    subgraph "Beige Approach"
-        BEIGE_GW[Gateway]
-        BEIGE_SB[Docker Sandbox]
-        BEIGE_LLM[LLM]
-
-        BEIGE_LLM -->|sandboxed| BEIGE_SB
-        BEIGE_SB -->|socket| BEIGE_GW
-        BEIGE_GW -->|controlled| BEIGE_SB
-    end
-
-    style OC_HOST fill:#ffcccc
-    style BEIGE_SB fill:#ccffcc
-```
-
-### 🧹 Minimal, Not Cluttered
-
-**The Problem:** Many agent systems expose dozens or hundreds of tools directly to the LLM. This bloats the context window, confuses the model, and makes the system harder to understand.
-
-**Our Solution:** Beige has exactly **4 core tools**: `read`, `write`, `patch`, `exec`. Everything else composes through `exec`. The agent can write scripts that chain tools together — keeping the interface simple while remaining powerful.
-
-### ⚡ True Autonomy
-
-**The Problem:** Traditional tool-calling requires the LLM to invoke tools one at a time. Each result goes back through the model, wasting tokens and time. Complex workflows require hundreds of individual tool calls.
-
-**Our Solution:** Beige agents can write and run code. Instead of calling a tool 50 times, the agent writes a script that does it in a loop. The LLM only sees the final result.
-
-```bash
-# Traditional approach: 50 tool calls through the LLM
-exec /tools/bin/kv get user:1
-exec /tools/bin/kv get user:2
-# ... 48 more calls
-
-# Beige approach: 1 script, 1 result
-exec deno run - <<'EOF'
-const users = [];
-for (let i = 1; i <= 50; i++) {
-  const result = await exec(`/tools/bin/kv get user:${i}`);
-  users.push(JSON.parse(result));
-}
-console.log(JSON.stringify(users));
-EOF
-```
-
----
-
-## Inspiration
+### Inspiration
 
 Beige builds on ideas from two key blog posts:
 
-### "What if you don't need MCP?"
+#### "What if you don't need MCP?"
 
 Mario Zechner's [blog post](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/) argues that MCP servers often add unnecessary complexity:
 
@@ -81,9 +26,9 @@ Mario Zechner's [blog post](https://mariozechner.at/posts/2025-11-02-what-if-you
 
 **The alternative:** Simple CLI tools with READMEs. The agent reads the README, then uses `exec` to invoke the tools. This is more token-efficient, more composable, and easier to customize.
 
-Beige embraces this philosophy: tools are simple executables with documentation mounted read-only into the sandbox.
+So -> **What if tools are simple executables like CLI, but routed through a gateway?** With documentation mounted read-only into the sandbox for dynamic exploration?
 
-### "Code Mode: the better way to use MCP"
+#### "Code Mode: the better way to use MCP"
 
 Cloudflare's [blog post](https://blog.cloudflare.com/code-mode/) shows that LLMs are better at writing code to call tools than calling tools directly:
 
@@ -94,7 +39,219 @@ When an LLM writes code to orchestrate tool calls:
 - **Complex logic** (loops, conditionals, error handling) is natural in code
 - **Results** are combined and filtered before reaching the LLM
 
-Beige gives agents a full TypeScript/Deno runtime in the sandbox, enabling this code-first approach by default.
+So -> **What if we give agents a full TypeScript/Deno runtime in the sandbox, enabling this code-first approach by default. But also for TOOL CALLING?**
+
+## What makes Beige Different
+
+Here's how Beige addresses the three issues described above and creates a **unique tool approach**:
+
+### ⚡ True Autonomy
+
+**The Problem:** Traditional tool-calling requires the LLM to invoke tools one at a time. Each result goes back through the model, wasting tokens and time. Complex workflows require hundreds of individual tool calls.
+
+**Our Solution:** Beige agents can write and run code. Instead of calling a tool 50 times, the agent writes a script that does it in a loop. The LLM only sees the final result.
+
+<Tabs sync={false}>
+  <Tab title="Beige — single exec">
+    The agent issues one `exec` call with an inline script. Fifty KV lookups happen inside the sandbox, and only the final aggregated result returns to the LLM.
+
+    ```bash
+    exec deno run - <<'EOF'
+    const users = [];
+    for (let i = 1; i <= 50; i++) {
+      const result = await exec(`/tools/bin/kv get user:${i}`);
+      users.push(JSON.parse(result));
+    }
+    console.log(JSON.stringify(users));
+    EOF
+    ```
+
+    **Result returned to LLM:** one JSON array — done.
+  </Tab>
+
+  <Tab title="Beige — write then exec">
+    For longer scripts the agent writes a TypeScript file first, then executes it. Same one round-trip to the LLM.
+
+    **Step 1 — agent writes the script**
+
+    ```typescript fetch-users.ts
+    const users = [];
+    for (let i = 1; i <= 50; i++) {
+      const result = await exec(`/tools/bin/kv get user:${i}`);
+      users.push(JSON.parse(result));
+    }
+    console.log(JSON.stringify(users));
+    ```
+
+    **Step 2 — agent runs it**
+
+    ```bash
+    write /workspace/fetch-users.ts
+    exec deno run /workspace/fetch-users.ts
+    ```
+
+    **Result returned to LLM:** one JSON array — done.
+  </Tab>
+
+  <Tab title="Traditional LLM">
+    Without a code runtime the LLM must call the tool once per item. Every call round-trips through the model context.
+
+    ```
+    → tool_call: kv get user:1
+    ← result: {"id":1,"name":"Alice"}
+    → tool_call: kv get user:2
+    ← result: {"id":2,"name":"Bob"}
+    → tool_call: kv get user:3
+    ← result: {"id":3,"name":"Carol"}
+    → tool_call: kv get user:4
+    ← result: {"id":4,"name":"Dave"}
+    → tool_call: kv get user:5
+    ← result: {"id":5,"name":"Eve"}
+    → tool_call: kv get user:6
+    ← result: {"id":6,"name":"Frank"}
+    → tool_call: kv get user:7
+    ← result: {"id":7,"name":"Grace"}
+    → tool_call: kv get user:8
+    ← result: {"id":8,"name":"Heidi"}
+    → tool_call: kv get user:9
+    ← result: {"id":9,"name":"Ivan"}
+    → tool_call: kv get user:10
+    ← result: {"id":10,"name":"Judy"}
+    → tool_call: kv get user:11
+    ← result: {"id":11,"name":"Karl"}
+    → tool_call: kv get user:12
+    ← result: {"id":12,"name":"Laura"}
+    → tool_call: kv get user:13
+    ← result: {"id":13,"name":"Mallory"}
+    → tool_call: kv get user:14
+    ← result: {"id":14,"name":"Niaj"}
+    → tool_call: kv get user:15
+    ← result: {"id":15,"name":"Olivia"}
+    → tool_call: kv get user:16
+    ← result: {"id":16,"name":"Peggy"}
+    → tool_call: kv get user:17
+    ← result: {"id":17,"name":"Quentin"}
+    → tool_call: kv get user:18
+    ← result: {"id":18,"name":"Rupert"}
+    → tool_call: kv get user:19
+    ← result: {"id":19,"name":"Sybil"}
+    → tool_call: kv get user:20
+    ← result: {"id":20,"name":"Trent"}
+    → tool_call: kv get user:21
+    ← result: {"id":21,"name":"Uma"}
+    → tool_call: kv get user:22
+    ← result: {"id":22,"name":"Victor"}
+    → tool_call: kv get user:23
+    ← result: {"id":23,"name":"Wendy"}
+    → tool_call: kv get user:24
+    ← result: {"id":24,"name":"Xander"}
+    → tool_call: kv get user:25
+    ← result: {"id":25,"name":"Yvonne"}
+    → tool_call: kv get user:26
+    ← result: {"id":26,"name":"Zara"}
+    → tool_call: kv get user:27
+    ← result: {"id":27,"name":"Aaron"}
+    → tool_call: kv get user:28
+    ← result: {"id":28,"name":"Bella"}
+    → tool_call: kv get user:29
+    ← result: {"id":29,"name":"Carlos"}
+    → tool_call: kv get user:30
+    ← result: {"id":30,"name":"Diana"}
+    → tool_call: kv get user:31
+    ← result: {"id":31,"name":"Ethan"}
+    → tool_call: kv get user:32
+    ← result: {"id":32,"name":"Fiona"}
+    → tool_call: kv get user:33
+    ← result: {"id":33,"name":"George"}
+    → tool_call: kv get user:34
+    ← result: {"id":34,"name":"Hannah"}
+    → tool_call: kv get user:35
+    ← result: {"id":35,"name":"Ian"}
+    → tool_call: kv get user:36
+    ← result: {"id":36,"name":"Julia"}
+    → tool_call: kv get user:37
+    ← result: {"id":37,"name":"Kevin"}
+    → tool_call: kv get user:38
+    ← result: {"id":38,"name":"Lena"}
+    → tool_call: kv get user:39
+    ← result: {"id":39,"name":"Marco"}
+    → tool_call: kv get user:40
+    ← result: {"id":40,"name":"Nina"}
+    → tool_call: kv get user:41
+    ← result: {"id":41,"name":"Oscar"}
+    → tool_call: kv get user:42
+    ← result: {"id":42,"name":"Paula"}
+    → tool_call: kv get user:43
+    ← result: {"id":43,"name":"Quinn"}
+    → tool_call: kv get user:44
+    ← result: {"id":44,"name":"Rosa"}
+    → tool_call: kv get user:45
+    ← result: {"id":45,"name":"Sam"}
+    → tool_call: kv get user:46
+    ← result: {"id":46,"name":"Tara"}
+    → tool_call: kv get user:47
+    ← result: {"id":47,"name":"Ugo"}
+    → tool_call: kv get user:48
+    ← result: {"id":48,"name":"Vera"}
+    → tool_call: kv get user:49
+    ← result: {"id":49,"name":"Will"}
+    → tool_call: kv get user:50
+    ← result: {"id":50,"name":"Xena"}
+    ```
+
+    50 round-trips. 50× the latency. 50× the token overhead. Every result sits in context for every subsequent call.
+  </Tab>
+</Tabs>
+
+Every tool call in Beige — **including the ones called by a script** — is routed through the gateway before it reaches the sandbox. The gateway checks permissions against your policy config, decides how to execute the call, and strips any host environment variables that the agent should not see. Your secrets stay on the host; the sandbox only receives what you explicitly allow.
+
+### 🧹 Minimal, Not Cluttered
+
+**The Problem:** Many agent systems expose dozens or hundreds of tools directly to the LLM. This bloats the context window, confuses the model, and makes the system harder to understand.
+
+**Our Solution:** Beige has exactly **4 core capabilities**: `read`, `write`, `patch`, `exec`. Everything else composes through `exec`. You can add additional tools that are then mounted as executables in the sandbox. The agent can write scripts that chain tools together — keeping the interface simple while remaining powerful.
+
+### 🛡️ Sandboxed by Default
+
+**The Problem:** Many agent systems run directly on your machine. The agent has full access to your filesystem, environment variables, and can execute any command. A rogue or confused agent could delete files, expose API keys, or worse.
+
+**Our Solution:** Every Beige agent runs in its own Docker container. The agent can only access what you explicitly allow. No host environment variables, no direct filesystem access, no escape hatch.
+
+<Tabs sync={false}>
+  <Tab title="Beige">
+    ```mermaid
+    graph LR
+        BEIGE_LLM[LLM]
+        BEIGE_SB[Docker Sandbox]
+        BEIGE_GW[Gateway]
+        BEIGE_HOST[Your Machine]
+
+        BEIGE_LLM -->|sandboxed exec| BEIGE_SB
+        BEIGE_SB -->|socket| BEIGE_GW
+        BEIGE_GW -->|policy check + controlled access| BEIGE_HOST
+
+        style BEIGE_SB fill:#ccffcc
+        style BEIGE_GW fill:#cce5ff
+        style BEIGE_HOST fill:#e8e8e8
+    ```
+
+    The agent runs inside a Docker container. All tool calls pass through the gateway, which enforces permissions and strips secrets before anything reaches the sandbox.
+  </Tab>
+
+  <Tab title="Traditional LLM">
+    ```mermaid
+    graph LR
+        LLM[LLM]
+        HOST[Your Machine]
+
+        LLM -->|direct tool access| HOST
+
+        style HOST fill:#ffcccc
+    ```
+
+    The agent calls tools directly on your machine. It can read any file, access any environment variable, and execute any command — including ones that expose your API keys or credentials.
+  </Tab>
+</Tabs>
 
 ---
 
@@ -110,6 +267,10 @@ An agent that researches and plans trips:
 - Writes `.md` files with itineraries to a shared folder (Google Drive → Obsidian)
 - **Sandboxed:** Can't access your browser credentials or personal files
 
+<Info>
+  Browser automation is not included by default. Install it via [tool extensibility](/tools).
+</Info>
+
 ### Browser Automation
 
 An agent that automates web tasks:
@@ -117,12 +278,20 @@ An agent that automates web tasks:
 - Navigates, scrapes, fills forms
 - **Sandboxed:** Never sees your passwords or session cookies
 
+<Info>
+  Browser automation is not included by default. Install it via [tool extensibility](/tools).
+</Info>
+
 ### CLI Tool Orchestration
 
 An agent that uses command-line tools:
 - Drafts messages via `slack-cli`
 - Manages GitHub repos via `gh`
 - **Sandboxed:** Cannot access CLI config files with API keys
+
+<Info>
+  CLI tools like `slack-cli` and `gh` are not included by default. Install them via [tool extensibility](/tools).
+</Info>
 
 ### Development Environment
 
@@ -136,6 +305,10 @@ An agent that writes and runs code:
 An agent that spawns and coordinates sub-agents:
 - Distributes tasks, aggregates results
 - **Governed:** Gateway enforces concurrency limits and policies
+
+<Info>
+  Multi-agent orchestration requires a coordination tool. Install it via [tool extensibility](/tools).
+</Info>
 
 ### Self-Improvement & Experimentation
 

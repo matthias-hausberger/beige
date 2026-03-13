@@ -75,7 +75,7 @@ Without a code runtime the LLM must call the tool once per item. Slow, unsafe, e
 Install Beige globally:
 
 ```bash
-npm install -g matthias-hausberger/beige
+npm install -g @matthias-hausberger/beige
 ```
 
 Set your Anthropic API key (you can also set this in your `~/.beige/config.json5` config after you started the gateway for the first time):

@@ -1,4 +1,4 @@
-![Cover](https://github.com/matthias-hausberger/beige/blob/main/docs/assets/beige-landscape.png?raw=true)
+![Cover](https://github.com/matthias-hausberger/beige/blob/main/docs/assets/beige_landscape.png?raw=true)
 
 [![NPM](https://nodei.co/npm/@keyflare/cli.png?compact=true)](https://npmjs.org/package/@keyflare/cli)
 [![CI](https://github.com/matthias-hausberger/beige/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/matthias-hausberger/beige/actions/workflows/ci.yml)

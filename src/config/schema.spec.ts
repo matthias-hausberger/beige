@@ -18,7 +18,7 @@ describe("validateConfig", () => {
       const config = createMinimalConfig({
         agents: {
           assistant: {
-            model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
             fallbackModels: [
               { provider: "openai", model: "gpt-4o" },
             ],
@@ -35,7 +35,7 @@ describe("validateConfig", () => {
           assistant: {
             model: {
               provider: "anthropic",
-              model: "claude-sonnet-4-20250514",
+              model: "claude-sonnet-4-6",
               thinkingLevel: "high",
             },
             tools: [],
@@ -49,7 +49,7 @@ describe("validateConfig", () => {
       const config = createMinimalConfig({
         agents: {
           assistant: {
-            model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
             tools: [],
             sandbox: {
               image: "custom-sandbox:v1",
@@ -96,7 +96,7 @@ describe("validateConfig", () => {
       const config = createMinimalConfig({
         agents: {
           assistant: {
-            model: { provider: "", model: "claude-sonnet-4-20250514" },
+            model: { provider: "", model: "claude-sonnet-4-6" },
             tools: [],
           } as any,
         },
@@ -120,7 +120,7 @@ describe("validateConfig", () => {
       const config = createMinimalConfig({
         agents: {
           assistant: {
-            model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
             tools: ["nonexistent-tool"],
           },
         },
@@ -135,7 +135,7 @@ describe("validateConfig", () => {
         },
         agents: {
           assistant: {
-            model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
             tools: [],
             skills: ["nonexistent-skill"],
           },
@@ -152,7 +152,7 @@ describe("validateConfig", () => {
         },
         agents: {
           assistant: {
-            model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
             tools: [],
             skills: ["code-review", "testing"],
           },

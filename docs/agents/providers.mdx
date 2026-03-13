@@ -79,7 +79,7 @@ agents: {
   assistant: {
     model: {
       provider: "anthropic",              // must match a key in llm.providers
-      model: "claude-sonnet-4-20250514",  // model ID as the provider expects it
+      model: "claude-sonnet-4-6",  // model ID as the provider expects it
       thinkingLevel: "medium",            // off | minimal | low | medium | high
     },
     tools: ["kv"],
@@ -108,7 +108,7 @@ When the primary model fails (rate limit, provider error), the gateway tries fal
 ```json5
 agents: {
   assistant: {
-    model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+    model: { provider: "anthropic", model: "claude-sonnet-4-6" },
     fallbackModels: [
       { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
       { provider: "openai", model: "gpt-4o" },
@@ -149,7 +149,7 @@ When a provider returns HTTP 429 or a rate-limit error:
 // ~/.beige/data/provider-health.json
 {
   "providers": {
-    "anthropic/claude-sonnet-4-20250514": {
+    "anthropic/claude-sonnet-4-6": {
       "rateLimitedAt": "2026-03-06T15:00:00.000Z",
       "retryAfter": "2026-03-06T15:30:00.000Z",
       "consecutiveFailures": 1,

@@ -32,7 +32,7 @@ describe("loadConfig", () => {
             /* Multi-line
                comment */
             assistant: {
-              model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+              model: { provider: "anthropic", model: "claude-sonnet-4-6" },
               tools: [],
             },
           },

@@ -55,7 +55,7 @@ Agents are defined in `config.json5` under `agents`:
       // LLM model (required)
       model: {
         provider: "anthropic",
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         thinkingLevel: "medium",
       },
 
@@ -113,13 +113,13 @@ Tools are registered globally in `config.json5`, then assigned to agents by name
   agents: {
     // Full access
     assistant: {
-      model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
       tools: ["kv", "browser"],
     },
 
     // Restricted — only kv, no browser
     intern: {
-      model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
       tools: ["kv"],
     },
   },
@@ -142,7 +142,7 @@ Skills are read-only knowledge packages (documentation files) mounted into the s
 
   agents: {
     assistant: {
-      model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
       tools: ["kv"],
       skills: ["code-review"],
     },
@@ -262,14 +262,14 @@ In Telegram:
   agents: {
     // Main assistant — full access
     assistant: {
-      model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
       tools: ["kv", "browser"],
       skills: ["code-review"],
     },
 
     // Developer — code-focused with project mount
     dev: {
-      model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
       tools: ["kv"],
       skills: ["code-review"],
       sandbox: {
@@ -279,7 +279,7 @@ In Telegram:
 
     // Restricted — minimal tools, no skills
     intern: {
-      model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
       tools: ["kv"],
     },
   },

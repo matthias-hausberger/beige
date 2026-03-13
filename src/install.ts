@@ -80,7 +80,7 @@ function defaultConfig(kvToolPath: string): string {
     beige: {
       model: {
         provider: "anthropic",
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         thinkingLevel: "off",
       },
       tools: ["kv"],

@@ -119,7 +119,7 @@ describe("GatewayAPI", () => {
 
       const assistant = body.agents.find((a: any) => a.name === "assistant");
       expect(assistant.model.provider).toBe("anthropic");
-      expect(assistant.model.model).toBe("claude-sonnet-4-20250514");
+      expect(assistant.model.model).toBe("claude-sonnet-4-6");
     });
   });
 

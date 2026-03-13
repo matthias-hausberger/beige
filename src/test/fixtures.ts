@@ -18,7 +18,7 @@ export function createMinimalConfig(overrides: Partial<BeigeConfig> = {}): Beige
     tools: {},
     agents: {
       assistant: {
-        model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+        model: { provider: "anthropic", model: "claude-sonnet-4-6" },
         tools: [],
       },
     },
@@ -51,18 +51,18 @@ export function createFullConfig(): BeigeConfig {
     },
     agents: {
       assistant: {
-        model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+        model: { provider: "anthropic", model: "claude-sonnet-4-6" },
         tools: ["kv"],
       },
       researcher: {
-        model: { provider: "anthropic", model: "claude-sonnet-4-20250514", thinkingLevel: "medium" },
+        model: { provider: "anthropic", model: "claude-sonnet-4-6", thinkingLevel: "medium" },
         fallbackModels: [
           { provider: "openai", model: "gpt-4o" },
         ],
         tools: ["kv", "browser"],
       },
       restricted: {
-        model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+        model: { provider: "anthropic", model: "claude-sonnet-4-6" },
         tools: [],
       },
     },
@@ -82,7 +82,7 @@ export function createFullConfig(): BeigeConfig {
  */
 export function createAgentConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return {
-    model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+    model: { provider: "anthropic", model: "claude-sonnet-4-6" },
     tools: [],
     ...overrides,
   };

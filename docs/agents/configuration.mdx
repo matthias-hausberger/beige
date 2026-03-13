@@ -96,7 +96,7 @@ Tool `path` values are resolved relative to the config file's directory, unless 
     assistant: {
       model: {
         provider: "anthropic",                    // must match a key in llm.providers
-        model: "claude-sonnet-4-20250514",        // model ID as the provider expects it
+        model: "claude-sonnet-4-6",        // model ID as the provider expects it
         thinkingLevel: "off",                     // off | minimal | low | medium | high
       },
       fallbackModels: [                           // tried in order if primary fails
@@ -245,7 +245,7 @@ The smallest config that will start:
   tools: {},
   agents: {
     bot: {
-      model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
       tools: [],
     },
   },

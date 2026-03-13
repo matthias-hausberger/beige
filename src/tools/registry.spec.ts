@@ -63,7 +63,7 @@ describe("loadTools", () => {
       },
       agents: {
         assistant: {
-          model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
           tools: ["test-tool", "sandbox-tool"],
         },
       },
@@ -85,7 +85,7 @@ describe("loadTools", () => {
       },
       agents: {
         assistant: {
-          model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
           tools: ["gateway-tool"],
         },
       },
@@ -105,7 +105,7 @@ describe("loadTools", () => {
       },
       agents: {
         assistant: {
-          model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
           tools: ["sandbox-tool"],
         },
       },
@@ -137,7 +137,7 @@ describe("loadTools", () => {
       },
       agents: {
         assistant: {
-          model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
           tools: ["no-handler"],
         },
       },
@@ -161,7 +161,7 @@ describe("loadTools", () => {
       },
       agents: {
         assistant: {
-          model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
           tools: ["broken-tool"],
         },
       },
@@ -180,7 +180,7 @@ describe("loadTools", () => {
       },
       agents: {
         assistant: {
-          model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
           tools: ["test"],
         },
       },

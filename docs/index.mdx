@@ -13,69 +13,57 @@ icon: "hand"
   />
 </Frame>
 
-Beige is a secure, open-source, sandboxed agent system with a **special twist to tools**. AI agents write and execute code inside Docker containers. The gateway orchestrates LLM calls, enforces policies, audit-logs every tool invocation, and routes tool execution.
-
-**In short:** Your AI assistant runs in a sandbox, not on your machine.
-
-```mermaid
-graph LR
-    subgraph "Your Machine"
-        GW[Gateway Process]
-        SB[Docker Sandbox]
-        GW --> SB
-    end
-
-    USER[You] --> GW
-    GW -->|controlled access| SB
-
-    style SB fill:#ccffcc,stroke:#00cc00
-```
+Beige is a secure, open-source, sandboxed agent system with a **special twist to tools**.
 
 ## Key Features
+Here's what's _different_ from other tools like [Openclaw](https://openclaw.ai/):
+- **LLM calls (almost) NO TOOLS** — LLMs are good at writing code. LLMs only call `EXEC`
+- **Docker Sandboxing - always** — All code execution happens in isolated containers
+- **Nothing out-of-the-box** - You configure the agents the way YOU want
 
-- **Docker Sandboxing** — All code execution happens in isolated containers
+In addition to that, there are also common features:
 - **Policy Enforcement** — Fine-grained control over what agents can do
 - **Audit Logging** — Every tool invocation is logged for accountability
-- **Multi-Channel** — Interact via TUI, Telegram, or the HTTP API
-- **Minimal by Design** — Exactly 4 core tools; everything else composes through `exec`
+- **Multi-Channel** — Interact via TUI, Telegram, the HTTP API or any custom channel
+
+## Why?
+Why build a new agent system if [Openclaw](https://openclaw.ai/), [Picoclaw](https://github.com/sipeed/picoclaw) and others already exist?
+
+What's so different with Beige?
+
+Find out on [Why Beige](/why-beige).
 
 ## How It Works
 
-Beige uses a **two-process model**:
+Beige uses a **two-host model**:
 
 ```mermaid
 graph TB
-    subgraph "Shell 1: Gateway (Always Running)"
-        GW[Gateway Process]
-        GW --> AM[Agent Manager]
-        GW --> SM[Sandbox Manager]
-        GW --> SS[Socket Server]
-        GW --> PE[Policy Engine]
-        GW --> AL[Audit Logger]
-        GW --> TG[Telegram Bot]
+    subgraph "Gateway (AlwaysRunning)"
+        CH[Channel Processes]
+        AM[Agent Manager]
+        PE[Policy Engine]
+        AL[Audit Logger]
+        SM[Sandbox Manager]
+        SS[Socket Server]
     end
 
-    subgraph "Shell 2: TUI (Optional)"
-        TUI[TUI Process]
-        TUI -->|HTTP API| GW
+    subgraph "External Channels"
+        TUI[TUI]
+        TG[Telegram]
+        TUI -->|HTTP API| CH
+        TG --> CH
     end
 
     subgraph "Docker Sandboxes"
         SB1[Agent 1 Sandbox]
-        SB2[Agent 2 Sandbox]
     end
-
-    SM --> SB1
-    SM --> SB2
     SB1 -->|Unix socket| SS
-    SB2 -->|Unix socket| SS
-
-    TG --> GW
 ```
 
-**The Gateway** is the orchestrator. It manages Docker containers, routes tool calls through Unix sockets, enforces policies (deny by default), logs every action, and exposes an HTTP API for external channels.
+**The Gateway** is the orchestrator. It manages Docker containers, routes tool calls, enforces policies (deny by default), logs every action, and connects and listens to external channels.
 
-**The Sandbox** is where each agent runs — an isolated Docker container with a writable `/workspace`, read-only tool mounts, and no access to host secrets or environment variables.
+**The Sandbox** is where each agent run [core capabilities](/tools/core-capabilities) — an isolated Docker container with a writable `/workspace`, read-only tool mounts, and no access to host secrets or environment variables.
 
 ## Next Steps
 
@@ -83,8 +71,8 @@ graph TB
   <Card icon="download" href="/installation" title="Installation">
     Install Beige, configure your first agent, and run it
   </Card>
-  <Card icon="shield" href="/security-overview" title="Security Overview">
-    What agents can and cannot do, and why
+  <Card icon="shield" href="/why-beige" title="Why Beige">
+    The motivation, inspiration, and use cases behind Beige
   </Card>
   <Card icon="sitemap" href="/gateway" title="The Gateway">
     Deep dive into architecture and the security model

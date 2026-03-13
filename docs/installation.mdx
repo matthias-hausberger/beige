@@ -6,23 +6,60 @@ icon: "download"
 
 ## Quick Start
 
-Get Beige running in under 5 minutes:
+Get Beige running in under 5 minutes.
+
+### Step 1 — Install
 
 ```bash
-# Install globally
 npm install -g matthias-hausberger/beige
+```
 
-# Set your API key
+### Step 2 — Run setup
+
+```bash
+beige setup
+```
+
+This creates `~/.beige/config.json5` and installs the bundled KV tool.
+
+### Step 3 — Add your API key
+
+Open `~/.beige/config.json5` and set your Anthropic API key:
+
+```json5
+{
+  // ...
+  llm: {
+    providers: {
+      anthropic: {
+        apiKey: "sk-ant-...",  // paste your key here, or use ${ANTHROPIC_API_KEY}
+      },
+    },
+  },
+  // ...
+}
+```
+
+Alternatively, keep the default `${ANTHROPIC_API_KEY}` and export it in your shell:
+
+```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
+```
 
-# Shell 1: Start the gateway daemon (first run auto-creates ~/.beige/)
+### Step 4 — Start the gateway and TUI
+
+```bash
 beige gateway start
+```
+This starts the gateway in a background process.
 
-# Shell 2: Start the TUI
+### Step 5 — Start the TUI
+
+```bash
 beige tui
 ```
 
-That's it. The gateway builds the sandbox Docker image automatically on first start.
+That's it. The gateway builds the sandbox Docker image automatically on first start. You can now talk to your agent.
 
 ---
 
@@ -38,16 +75,11 @@ The smallest `~/.beige/config.json5` that works:
     },
   },
 
-  tools: {
-    kv: {
-      path: "~/.beige/tools/kv",
-      target: "gateway",
-    },
-  },
+  // ...
 
   agents: {
     assistant: {
-      model: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
       tools: ["kv"],
     },
   },
@@ -141,7 +173,7 @@ The generated `~/.beige/config.json5` contains:
     beige: {
       model: {
         provider: "anthropic",
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         thinkingLevel: "off",
       },
       tools: ["kv"],
@@ -157,9 +189,10 @@ The `kv` tool path is written as an absolute path at setup time so the config wo
 
 ### Set Your API Key
 
+Open `~/.beige/config.json5` and replace `${ANTHROPIC_API_KEY}` with your key directly, or export it in your shell:
+
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-# or add it directly to ~/.beige/config.json5
 ```
 
 ### Run

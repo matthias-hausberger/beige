@@ -33,11 +33,16 @@
     "test:coverage": "vitest run --coverage",
     "docs:dev": "cd docs && mintlify dev --port 3333",
     "docs:build": "cd docs && mintlify build",
-    "docs:deploy": "cd docs && mintlify deploy"
+    "docs:deploy": "cd docs && mintlify deploy",
+    "pack": "pnpm install --frozen-lockfile && pnpm run build && pnpm pack",
+    "pack:local": "pnpm run pack",
+    "package": "tsx scripts/package.ts",
+    "package:version": "tsx scripts/package.ts",
+    "test:install": "tsx scripts/test-local-install.ts"
   },
   "dependencies": {
     "@mariozechner/pi-ai": "^0.56.1",
-    "@mariozechner/pi-coding-agent": "latest",
+    "@mariozechner/pi-coding-agent": "^0.56.1",
     "@sinclair/typebox": "^0.34.0",
     "dockerode": "^4.0.5",
     "grammy": "^1.35.0",

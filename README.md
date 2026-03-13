@@ -1,6 +1,6 @@
 ![Cover](https://github.com/matthias-hausberger/beige/blob/main/docs/assets/beige_landscape.png?raw=true)
 
-[![NPM](https://nodei.co/npm/@keyflare/cli.png?compact=true)](https://npmjs.org/package/@keyflare/cli)
+[![NPM](https://nodei.co/npm/@matthias-hausberger/beige.svg?style=compact&color=yellow)](https://nodei.co/npm/@matthias-hausberger/beige/)
 [![CI](https://github.com/matthias-hausberger/beige/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/matthias-hausberger/beige/actions/workflows/ci.yml)
 
 Secure, sandboxed agent system. Let agents write and execute code — safely.

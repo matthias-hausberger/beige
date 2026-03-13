@@ -1,211 +1,145 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/matthias-hausberger/beige/main/docs/assets/beige_landscape.png" alt="Beige Landscape" width="100%">
-</p>
-
 Secure, sandboxed agent system. Let agents write and execute code — safely.
 
-**📚 [Documentation](https://beige.mintlify.app)** — Full docs at [beige.mintlify.app](https://beige.mintlify.app)
+**[Documentation](https://beige.mintlify.app)** — Full docs at beige.mintlify.app
 
-## What is Beige?
+---
 
-Beige is an open-source agent gateway that runs AI agents inside Docker sandboxes. Agents have 4 core tools (`read`, `write`, `patch`, `exec`) and can use additional tools exposed as executables. All tool calls route through the gateway for policy enforcement and audit logging.
+## Why Beige?
 
-**Key principles:**
-- 🔒 **Sandboxed** — Every agent runs in its own Docker container. No access to host env vars, secrets, or files.
-- 📋 **Audited** — Every tool call is logged with agent identity, args, timing, and permission decision.
-- 🛡️ **Policy-enforced** — Deny by default. Agents can only use tools explicitly granted in config.
-- 🔌 **Extensible** — Add tools as simple packages. They mount into sandboxes read-only.
-- 🤖 **LLM-agnostic** — Uses [pi SDK](https://pi.dev) for LLM interaction. Supports Anthropic, OpenAI, ZAI, and more.
+Traditional tool-calling requires the LLM to invoke tools one at a time. Each result goes back through the model, wasting tokens and time. Complex workflows require dozens of individual tool calls.
+
+**Beige agents can write and run code.** Instead of calling a tool 20 times, the agent writes a script that does it in a loop. The LLM only sees the final result.
+
+
+| Beige                                                              | Traditional LLM                                            |
+| ------------------------------------------------------------------ | ---------------------------------------------------------- |
+| **1 round-trip** — agent writes a script, runs it, gets one result | **20 round-trips** — each tool call goes through the model |
+| 20 KV lookups happen inside the sandbox                            | 20× the latency, 20× the token overhead                    |
+
+
+### Beige — write then exec
+
+The agent writes a TypeScript file, then executes it. One round-trip to the LLM.
+
+```typescript fetch-users.ts
+const users = [];
+for (let i = 1; i <= 20; i++) {
+  const result = await exec(`/tools/bin/kv get user:${i}`);
+  users.push(JSON.parse(result));
+}
+console.log(JSON.stringify(users));
+```
+
+```bash
+write /workspace/fetch-users.ts
+exec deno run /workspace/fetch-users.ts
+```
+
+**Result returned to LLM:** one JSON array — done.
+
+**Every tool call — including the ones called by a script — is routed through the gateway.** The gateway checks permissions, enforces policy, and ensures secrets never reach the sandbox.
+
+### Traditional LLM
+
+Without a code runtime the LLM must call the tool once per item. Slow, unsafe, error-prone, not easily reproducible:
+
+```
+→ tool_call: kv get user:1
+← result: {"id":1,"name":"Alice"}
+→ tool_call: kv get user:2
+← result: {"id":2,"name":"Bob"}
+... 18 more calls ...
+```
+
+---
+
+## Key Principles
+
+- **Sandboxed** — Every agent runs in its own Docker container. No access to host env vars, secrets, or files.
+- **Audited** — Every tool call is logged with agent identity, args, timing, and permission decision.
+- **Policy-enforced** — Deny by default. Agents can only use tools explicitly granted in config.
+- **Extensible** — Add tools as simple packages. They mount into sandboxes read-only.
+- **LLM-agnostic** — Uses [pi SDK](https://pi.dev) for LLM interaction. Supports Anthropic, OpenAI, ZAI, and more.
+
+---
 
 ## Quick Start
 
-Beige has two install modes. Pick the one that fits you.
-
-### Option A — npm global (recommended for most users)
-
 **Prerequisites:** Node.js 22+, Docker
+
+Install Beige globally:
 
 ```bash
 npm install -g matthias-hausberger/beige
 ```
 
-On first run, beige automatically creates `~/.beige/` with a default config and the bundled KV tool:
+Set your Anthropic API key (you can also set this in your `~/.beige/config.json5` config after you started the gateway for the first time):
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
+```
 
-# Shell 1 — start the gateway
+Start the gateway:
+
+```bash
 beige gateway start
+```
 
-# Shell 2 — open the TUI
+Open the TUI. Alternatively you can also use [Telegram](https://beige.mintlify.app/channels/telegram) or add your own channel plugin:
+
+```bash
 beige tui
 ```
 
-You can also run setup explicitly:
+On first run, Beige creates `~/.beige/` with a default config and the bundled KV tool.
 
-```bash
-beige setup
-```
+You can also use **[any other LLM Provider](https://beige.mintlify.app/agents/providers)**.
 
-### Option B — Source install (contributors / power users)
+See the [installation guide](https://beige.mintlify.app/installation) for details.
 
-**Prerequisites:** Node.js 22+, Docker
+---
+
+## Documentation
+
+Full documentation at **[beige.mintlify.app](https://beige.mintlify.app)**:
+
+
+| Section                                                             | Description                                 |
+| ------------------------------------------------------------------- | ------------------------------------------- |
+| [Getting Started](https://beige.mintlify.app/installation)          | Install and run your first agent            |
+| [Gateway](https://beige.mintlify.app/gateway)                       | Core concepts, tool calls, operations       |
+| [Agents](https://beige.mintlify.app/agents)                         | Configure providers, models, tools, skills  |
+| [Channels](https://beige.mintlify.app/channels)                     | TUI, Telegram, HTTP API                     |
+| [Tools](https://beige.mintlify.app/tools)                           | Core tools, building custom tools, toolkits |
+| [Config Reference](https://beige.mintlify.app/agents/configuration) | Complete config file reference              |
+| [CLI Reference](https://beige.mintlify.app/cli)                     | All CLI commands and flags                  |
+
+
+---
+
+## Contributing
+
+All contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup.
+
+For source installs, Beige runs entirely inside the repo — no files are written to your home directory.
+
+Clone and install:
 
 ```bash
 git clone https://github.com/matthias-hausberger/beige.git
 cd beige
-npm install
-npm run build:sandbox       # build the sandbox Docker image
+pnpm install
 ```
 
-No files are written outside the repo. Configure manually:
+Run setup:
 
 ```bash
-cp examples/config.json5 ~/.beige/config.json5
-# Edit ~/.beige/config.json5: set your API key and adjust tool paths
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-# Shell 1
-npx tsx src/cli.ts gateway start --foreground
-
-# Shell 2
-npx tsx src/cli.ts tui
+pnpm run beige setup
 ```
 
-See [docs/installation.md](docs/installation.md) for a full comparison of both modes.
+This sets `BEIGE_HOME=./.beige` automatically, so the repo is self-contained.
 
-### TUI Commands
-
-Once inside the TUI, these slash commands are available:
-
-| Command | Description |
-|---------|-------------|
-| `/new` | Start a fresh conversation session |
-| `/resume` | Pick a previous session to continue |
-| `/sessions` | List saved sessions for the current agent |
-| `/agent [name]` | Switch to a different beige agent (with tab-completion) |
-
-## Architecture
-
-```
-Channels
-  ├── TUI (pi interactive mode)
-  └── Telegram bot
-        │
-        ▼
-  Gateway (always running)
-  ├── Agent Manager → LLM (via pi SDK) → Core Tools
-  │                                            │
-  │                                            ▼
-  │                                      Docker Sandbox
-  │                                      ├── /workspace (rw)
-  │                                      ├── /tools/bin (ro)
-  │                                      └── /tools/packages (ro)
-  │
-  └── Unix Socket ← Tool launchers call back to gateway
-        │
-        ▼
-  Policy Engine → Audit Logger → Tool Runner
-```
-
-## Documentation
-
-Full documentation is available at **[beige.mintlify.app](https://beige.mintlify.app)**:
-
-| Section | Description |
-|---------|-------------|
-| [**Introduction**](https://beige.mintlify.app/introduction) | What Beige is, why we built it, and how it works |
-| [**Getting Started**](https://beige.mintlify.app/getting-started) | Install and run your first agent |
-| [**The Gateway**](https://beige.mintlify.app/gateway) | Deep dive into architecture and security |
-| [**Agents**](https://beige.mintlify.app/agents) | Configure providers, models, tools, and skills |
-| [**Channels & Tools**](https://beige.mintlify.app/channels-and-tools) | TUI, Telegram, HTTP API, and extensibility |
-
-### Reference Documentation
-
-- [Configuration Reference](docs/configuration.mdx) — Complete config file reference
-- [Tools Reference](docs/tools.mdx) — Tool packages, launchers, socket protocol
-- [Toolkits Reference](docs/toolkits.mdx) — Installing and creating toolkits
-- [Skills Reference](docs/skills.mdx) — Creating knowledge packages
-- [HTTP API Reference](docs/api.mdx) — Full REST API reference
-- [Security Model](docs/security-model.mdx) — Threat model and defense in depth
-
-### Design Documents
-
-- [Vision](docs/design/vision.md) — Original design goals
-- [Use Cases](docs/design/usecases.md) — Personal use cases that motivated the project
-
-### External Resources
-
-- [pi SDK](https://pi.dev) — The LLM SDK that powers Beige
-- [OpenClaw](https://openclaw.ai) — Inspiration for personal agents
-- ["What if you don't need MCP?"](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/) — Why CLI tools beat MCP bloat
-- ["Code Mode"](https://blog.cloudflare.com/code-mode/) — Why LLMs are better at writing code than calling tools
-
-## Configuration
-
-Config is a single JSON5 file (JSON with comments) at `~/.beige/config.json5`. See [examples/config.json5](examples/config.json5) for a template.
-
-```json5
-{
-  llm: {
-    providers: {
-      anthropic: { apiKey: "${ANTHROPIC_API_KEY}" },
-    },
-  },
-  tools: {
-    kv: { path: "./tools/kv", target: "gateway" },
-  },
-  agents: {
-    assistant: {
-      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-      tools: ["kv"],
-    },
-  },
-  channels: {
-    telegram: {
-      enabled: true,
-      token: "${TELEGRAM_BOT_TOKEN}",
-      allowedUsers: [123456789],
-      agentMapping: { default: "assistant" },
-    },
-  },
-}
-```
-
-## Tools
-
-Tools are simple packages:
-
-```
-tools/my-tool/
-├── tool.json     # Name, description, commands
-├── index.ts      # Handler (gateway-targeted) or logic (sandbox-targeted)
-└── README.md     # Documentation (mounted into sandbox for agent context)
-```
-
-The agent calls tools via `exec /tools/bin/my-tool <args>`. The launcher routes through the gateway socket for policy checks and execution.
-
-## Security Model
-
-1. **Sandbox isolation**: Agents run in Docker containers with no host env access
-2. **Read-only mounts**: Tool code and launchers are mounted read-only
-3. **Socket identity**: Agent identity derived from Unix socket (not payload)
-4. **Policy engine**: Deny by default, explicit allow per agent per tool
-5. **Audit log**: Every tool invocation logged as JSONL
-
-## Project Status
-
-**Phase 1 (current):** Core gateway + KV tool MVP
-- [x] Config system
-- [x] Docker sandbox manager
-- [x] Core tools (read, write, patch, exec)
-- [x] Unix socket server for tool routing
-- [x] Policy engine
-- [x] Audit logging
-- [x] KV tool (gateway-hosted)
-- [x] Telegram channel (GrammY)
-- [x] Interactive TUI (via pi SDK InteractiveMode)
-- [x] LLM integration via pi SDK
+---
 
 ## License
 

@@ -1,6 +1,6 @@
 # Contributing to Beige
 
-Thank you for your interest in contributing to Beige! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to Beige! This document provides guidelines and instructions for contributing. Don't take rules here too seariously, **any contribution is appreciated!**
 
 ## Development Setup
 
@@ -8,27 +8,65 @@ Thank you for your interest in contributing to Beige! This document provides gui
 
 - Node.js 22+
 - Docker (for sandbox execution)
-- pnpm (recommended) or npm
+- pnpm
 
 ### Clone and Install
 
 ```bash
 git clone https://github.com/matthias-hausberger/beige.git
 cd beige
-pnpm install  # or: npm install
+pnpm install
 ```
 
-### Run in Development Mode
+### Run Setup
+
+Source installs are self-contained — everything is stored in `./.beige/` inside the repo, not in your home directory:
 
 ```bash
-# Copy example config
-cp examples/config.json5 ~/.beige/config.json5
+pnpm run beige setup
+```
 
-# Edit config with your API keys
-# Then start the gateway
+This creates:
+
+| Path | Purpose |
+|------|---------|
+| `.beige/config.json5` | Main configuration file |
+| `.beige/tools/kv/` | Bundled KV tool |
+| `.beige/workspaces/` | Agent workspaces |
+| `.beige/sessions/` | Persisted conversation sessions |
+| `.beige/logs/` | Gateway and audit logs |
+
+### Configure API Keys
+
+Edit `.beige/config.json5` and set your API key:
+
+```json5
+llm: {
+  providers: {
+    anthropic: { apiKey: "${ANTHROPIC_API_KEY}" },
+  },
+},
+```
+
+Then export the environment variable:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+For the full config schema and all available options, see the [Config Reference](https://beige.mintlify.app/agents/configuration).
+
+### Run the Gateway
+
+```bash
 pnpm run beige gateway start --foreground
+```
 
-# In another terminal, start the TUI
+### Run the TUI
+
+In another terminal:
+
+```bash
 pnpm run beige tui
 ```
 
@@ -81,8 +119,11 @@ pnpm run build
 Before submitting a PR, ensure:
 
 1. Code compiles: `pnpm run build`
-2. Gateway starts: `pnpm run beige gateway start --foreground`
-3. TUI connects: `pnpm run beige tui`
+2. All tests pass: `pnpm test`
+3. Gateway starts: `pnpm run beige gateway start --foreground`
+4. TUI connects: `pnpm run beige tui`
+
+For CLI commands and options, see the [CLI Reference](https://beige.mintlify.app/cli).
 
 ## Pull Request Process
 
@@ -103,7 +144,7 @@ Before submitting a PR, ensure:
 
 ## Adding New Tools
 
-See [docs/tools.md](docs/tools.md) for the complete guide on writing tool packages.
+See the [Tools documentation](https://beige.mintlify.app/tools) for the complete guide on writing tool packages.
 
 Quick overview:
 
@@ -116,12 +157,12 @@ Quick overview:
 
 When reporting issues, please include:
 
-- Beige version (`beige --version` or git commit)
+- Beige version (git commit or `pnpm run beige --version`)
 - Node.js version (`node --version`)
 - Docker version (`docker --version`)
 - Steps to reproduce
 - Expected vs actual behavior
-- Relevant logs (redact any secrets!)
+- Relevant logs from `.beige/logs/` (redact any secrets!)
 
 ## Questions?
 

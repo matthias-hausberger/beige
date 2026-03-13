@@ -35,7 +35,6 @@
     "docs:build": "cd docs && mintlify build",
     "docs:deploy": "cd docs && mintlify deploy",
     "pack": "pnpm install --frozen-lockfile && pnpm run build && pnpm pack",
-    "pack:local": "pnpm run pack",
     "test:install": "npm install -g ./*.tgz"
   },
   "dependencies": {

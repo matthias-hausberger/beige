@@ -9,7 +9,6 @@ The project uses npm/pnpm's built-in packaging commands. No custom packaging scr
 ### Available npm scripts:
 
 - `pnpm run pack` - Install dependencies, build, and create TGZ package
-- `pnpm run pack:local` - Same as above (alias)
 - `pnpm run test:install` - Test global installation of the latest TGZ
 
 ### Simple packaging workflow:

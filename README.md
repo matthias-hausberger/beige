@@ -3,13 +3,33 @@
 [![NPM](https://nodei.co/npm/@matthias-hausberger/beige.svg?style=compact&color=yellow)](https://nodei.co/npm/@matthias-hausberger/beige/)
 [![CI](https://github.com/matthias-hausberger/beige/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/matthias-hausberger/beige/actions/workflows/ci.yml)
 
-Secure, sandboxed agent system. Let agents write and execute code — safely.
+Beige is a secure, open-source, sandboxed agent system where AI agents write and execute code inside Docker containers. The gateway orchestrates LLM calls, enforces policies, audit-logs every tool invocation, and routes tool execution.
 
 **[Documentation](https://beige.mintlify.app)** — Full docs at beige.mintlify.app
 
 ---
 
-## Why Beige?
+## Key Features
+
+### What's common to tools like [OpenClaw](https://openclaw.ai/)
+
+- **Channels** — Interact via TUI, Telegram, HTTP API, or custom channels
+- **Skills** — Read-only knowledge packages for agent context
+- **Tools** — Extensible tool system for agent capabilities
+- **Policy Enforcement** — Fine-grained control over what agents can do
+- **Audit Logging** — Every tool invocation is logged for accountability
+
+### What's _different_
+
+- **[Tools become CLI executables](#true-autonomy)** — Agents write scripts that call tools directly, eliminating round-trips through the LLM
+- **Docker Sandboxing — always** — All code execution happens in isolated containers with no escape hatch. Communication to the gateway via sockets.
+- **Nothing out-of-the-box** — You configure agents the way YOU want
+
+---
+
+## Why Beige? {#why-beige}
+
+### True Autonomy {#true-autonomy}
 
 Traditional tool-calling requires the LLM to invoke tools one at a time. Each result goes back through the model, wasting tokens and time. Complex workflows require dozens of individual tool calls.
 
@@ -55,16 +75,6 @@ Without a code runtime the LLM must call the tool once per item. Slow, unsafe, e
 ← result: {"id":2,"name":"Bob"}
 ... 18 more calls ...
 ```
-
----
-
-## Key Principles
-
-- **Sandboxed** — Every agent runs in its own Docker container. No access to host env vars, secrets, or files.
-- **Audited** — Every tool call is logged with agent identity, args, timing, and permission decision.
-- **Policy-enforced** — Deny by default. Agents can only use tools explicitly granted in config.
-- **Extensible** — Add tools as simple packages. They mount into sandboxes read-only.
-- **LLM-agnostic** — Uses [pi SDK](https://pi.dev) for LLM interaction. Supports Anthropic, OpenAI, ZAI, and more.
 
 ---
 

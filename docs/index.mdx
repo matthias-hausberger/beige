@@ -13,18 +13,23 @@ icon: "hand"
   />
 </Frame>
 
-Beige is a secure, open-source, sandboxed agent system with a **special twist to tools**.
+Beige is a secure, open-source, sandboxed agent system where AI agents write and execute code inside Docker containers. The gateway orchestrates LLM calls, enforces policies, audit-logs every tool invocation, and routes tool execution.
 
 ## Key Features
-Here's what's _different_ from other tools like [Openclaw](https://openclaw.ai/):
-- **LLM calls (almost) NO TOOLS** — LLMs are good at writing code. LLMs only call `EXEC`
-- **Docker Sandboxing - always** — All code execution happens in isolated containers
-- **Nothing out-of-the-box** - You configure the agents the way YOU want
 
-In addition to that, there are also common features:
+### What's common to tools like [OpenClaw](https://openclaw.ai/)
+
+- **Channels** — Interact via TUI, Telegram, HTTP API, or custom channels
+- **Skills** — Read-only knowledge packages for agent context
+- **Tools** — Extensible tool system for agent capabilities
 - **Policy Enforcement** — Fine-grained control over what agents can do
 - **Audit Logging** — Every tool invocation is logged for accountability
-- **Multi-Channel** — Interact via TUI, Telegram, the HTTP API or any custom channel
+
+### What's _different_
+
+- **[Tools become CLI executables](/why-beige#-true-autonomy)** — Agents write scripts that call tools directly, eliminating round-trips through the LLM
+- **Docker Sandboxing — always** — All code execution happens in isolated containers with no escape hatch. Communication to the gateway via sockets.
+- **Nothing out-of-the-box** — You configure agents the way YOU want
 
 ## Why?
 Why build a new agent system if [Openclaw](https://openclaw.ai/), [Picoclaw](https://github.com/sipeed/picoclaw) and others already exist?

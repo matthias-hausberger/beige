@@ -6,16 +6,22 @@ on:
       - 'v*'
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   publish-npm:
     runs-on: ubuntu-latest
+    needs: [ci]
 
     permissions:
-      contents: read
+      contents: write
       id-token: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -63,3 +69,22 @@ jobs:
           pnpm publish --no-git-checks --provenance --tag ${{ steps.version.outputs.npm_tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Commit version update to branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Find the branch containing the tag
+          BRANCH=$(git branch -r --contains "$GITHUB_REF_NAME" | grep -v '\->' | head -1 | sed 's/origin\///' | tr -d ' ')
+          if [[ -z "$BRANCH" ]]; then
+            BRANCH="main"
+          fi
+          echo "Target branch: $BRANCH"
+
+          git checkout "$BRANCH"
+          git add package.json
+          git commit -m "chore: update version to ${{ steps.version.outputs.version }}"
+          git push origin "$BRANCH"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

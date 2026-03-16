@@ -63,7 +63,8 @@ export class Gateway {
 
     // 4. Set up auth and model registry for pi SDK
     const authStorage = this.setupAuth();
-    const modelRegistry = new ModelRegistry(authStorage);
+    const beigeModelsPath = resolve(beigeDir(), "models.json");
+    const modelRegistry = new ModelRegistry(authStorage, beigeModelsPath);
 
     // 5. Create sandbox manager
     this.sandboxManager = new SandboxManager(this.config, this.loadedTools, this.loadedSkills);
@@ -200,7 +201,10 @@ export class Gateway {
   }
 
   private setupAuth(): AuthStorage {
-    const authStorage = AuthStorage.create();
+    // Use beige's own auth file so credentials are isolated from pi's
+    // ~/.pi/agent/auth.json.
+    const beigeAuthPath = resolve(beigeDir(), "auth.json");
+    const authStorage = AuthStorage.create(beigeAuthPath);
     for (const [providerName, providerConfig] of Object.entries(
       this.config.llm.providers
     )) {

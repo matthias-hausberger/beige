@@ -108,13 +108,28 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
   }
 
   // ── Auth (LLM keys — session runs locally) ────────────────
-  const authStorage = AuthStorage.create();
+  // Use beige's own auth/models files so credentials are isolated from pi's
+  // ~/.pi/agent/auth.json.  /login and /logout persist to ~/.beige/auth.json.
+  const beigeAuthPath = resolve(beigeDir(), "auth.json");
+  const beigeModelsPath = resolve(beigeDir(), "models.json");
+  const authStorage = AuthStorage.create(beigeAuthPath);
   for (const [provider, providerConfig] of Object.entries(config.llm.providers)) {
     if (providerConfig.apiKey) {
       authStorage.setRuntimeApiKey(provider, providerConfig.apiKey);
     }
   }
-  const modelRegistry = new ModelRegistry(authStorage);
+  const modelRegistry = new ModelRegistry(authStorage, beigeModelsPath);
+
+  // Register custom providers from config (baseUrl, api overrides)
+  for (const [provider, providerConfig] of Object.entries(config.llm.providers)) {
+    if (providerConfig.baseUrl || providerConfig.api) {
+      modelRegistry.registerProvider(provider, {
+        baseUrl: providerConfig.baseUrl,
+        apiKey: providerConfig.apiKey,
+        api: providerConfig.api as any,
+      });
+    }
+  }
 
   // ── Load skills ────────────────────────────────────────────
   const loadedSkills = await loadSkills(config);

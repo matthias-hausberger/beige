@@ -32,6 +32,7 @@ import {
 } from "fs";
 import { spawn } from "child_process";
 import { watch } from "fs";
+
 import { runSetup } from "./install.js";
 import { beigeDir } from "./paths.js";
 import {
@@ -41,6 +42,63 @@ import {
   getInstalledToolkit,
   sourceToString,
 } from "./toolkit/index.js";
+
+// ── Timestamp helpers ────────────────────────────────────────────────
+
+/** Returns a local-time HH:MM:SS prefix, e.g. "14:03:07". */
+function timestampPrefix(): string {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
+/**
+ * Wraps process.stdout.write / process.stderr.write so that every line
+ * written by the gateway process is prefixed with an HH:MM:SS timestamp.
+ *
+ * Call once at the very start of the foreground gateway path. When the
+ * process is spawned as a daemon its stdout/stderr are already redirected
+ * to gateway.log, so timestamps land directly in the file.
+ */
+function installTimestampInjector(): void {
+  function wrapWrite(
+    original: typeof process.stdout.write
+  ): typeof process.stdout.write {
+    let partial = ""; // incomplete line fragment waiting for a newline
+
+    const wrapped = function (
+      chunk: string | Uint8Array,
+      encodingOrCb?: BufferEncoding | ((err?: Error | null) => void),
+      cb?: (err?: Error | null) => void
+    ): boolean {
+      const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
+      const lines = (partial + text).split("\n");
+      // The last element may be an incomplete line (no trailing newline yet)
+      partial = lines.pop() ?? "";
+
+      let out = "";
+      for (const line of lines) {
+        out += `${timestampPrefix()} ${line}\n`;
+      }
+
+      if (out.length === 0) return true;
+
+      if (typeof encodingOrCb === "function") {
+        return (original as (c: string, cb: (err?: Error | null) => void) => boolean)(out, encodingOrCb);
+      } else if (typeof cb === "function") {
+        return (original as (c: string, e: BufferEncoding, cb: (err?: Error | null) => void) => boolean)(out, encodingOrCb as BufferEncoding, cb);
+      }
+      return (original as (c: string) => boolean)(out);
+    };
+
+    return wrapped as typeof process.stdout.write;
+  }
+
+  process.stdout.write = wrapWrite(process.stdout.write.bind(process.stdout));
+  process.stderr.write = wrapWrite(process.stderr.write.bind(process.stderr));
+}
 
 // ── Paths ────────────────────────────────────────────────────────────
 
@@ -292,6 +350,11 @@ async function cmdGatewayStart(configPath: string, foreground: boolean): Promise
   }
 
   // ── Foreground path (used directly or spawned by the daemon launcher) ──
+
+  // Inject timestamps into every log line written by this process.
+  // When spawned as a daemon the stdout/stderr are redirected to gateway.log,
+  // so timestamps land directly in the file.
+  installTimestampInjector();
 
   const { loadConfig } = await import("./config/loader.js");
   console.log(`[BEIGE] Loading config from: ${resolve(configPath)}`);

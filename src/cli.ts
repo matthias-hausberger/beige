@@ -28,6 +28,7 @@ import {
   readFileSync,
   existsSync,
   openSync,
+  unlinkSync,
 } from "fs";
 import { spawn } from "child_process";
 import { watch } from "fs";
@@ -73,6 +74,120 @@ function isRunning(pid: number): boolean {
   }
 }
 
+/** Check if Docker is running and accessible. */
+async function checkDockerAvailable(): Promise<void> {
+  const Docker = (await import("dockerode")).default;
+  const docker = new Docker();
+  try {
+    await docker.ping();
+  } catch {
+    throw new Error(
+      "Docker is not running or not accessible.\n" +
+      "  Please start Docker and try again."
+    );
+  }
+}
+
+/**
+ * Wait for the gateway to become ready by:
+ * 1. Streaming log file content to stdout
+ * 2. Polling the health endpoint
+ * 3. Watching for child process exit
+ *
+ * Returns true if gateway started successfully, false on error/timeout.
+ */
+async function waitForGatewayReady(
+  childPid: number,
+  logFile: string,
+  port: number,
+  host: string = "127.0.0.1",
+  timeoutMs: number = 30000
+): Promise<boolean> {
+  const startTime = Date.now();
+  const healthUrl = `http://${host}:${port}/api/health`;
+  const pollIntervalMs = 500;
+
+  let lastLogPosition = 0;
+  let childExited = false;
+
+  const flushLogs = () => {
+    try {
+      const buf = readFileSync(logFile);
+      if (buf.length > lastLogPosition) {
+        process.stdout.write(buf.subarray(lastLogPosition));
+        lastLogPosition = buf.length;
+      }
+    } catch {
+      // File not ready yet
+    }
+  };
+
+  const checkHealth = async (): Promise<boolean> => {
+    try {
+      const res = await fetch(healthUrl, { method: "GET", signal: AbortSignal.timeout(2000) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  // Set up Ctrl+C handler to kill child on abort
+  let aborted = false;
+  const onSigint = () => {
+    aborted = true;
+    console.log("\n[BEIGE] Startup aborted, stopping gateway...");
+    try {
+      if (isRunning(childPid)) {
+        process.kill(childPid, "SIGTERM");
+      }
+      const pidFile = getPidFile();
+      if (existsSync(pidFile)) {
+        unlinkSync(pidFile);
+      }
+    } catch {
+      // Ignore cleanup errors
+    }
+    process.exit(1);
+  };
+  process.on("SIGINT", onSigint);
+
+  try {
+    while (Date.now() - startTime < timeoutMs) {
+      // Check if child process exited
+      if (!isRunning(childPid)) {
+        childExited = true;
+        break;
+      }
+
+      // Flush any new log content
+      flushLogs();
+
+      // Check if gateway is healthy
+      if (await checkHealth()) {
+        flushLogs(); // Final flush
+        return true;
+      }
+
+      // Wait before next poll
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+    }
+
+    // Final log flush
+    flushLogs();
+
+    if (childExited) {
+      console.error("\n[BEIGE] Gateway process exited unexpectedly.");
+      return false;
+    }
+
+    console.error(`\n[BEIGE] Gateway startup timed out after ${timeoutMs / 1000}s.`);
+    console.error(`[BEIGE] Check logs for details: ${logFile}`);
+    return false;
+  } finally {
+    process.off("SIGINT", onSigint);
+  }
+}
+
 // ── Commands ─────────────────────────────────────────────────────────
 
 async function cmdSetup(_force: boolean): Promise<void> {
@@ -112,23 +227,30 @@ async function maybeAutoSetup(): Promise<void> {
 
 async function cmdGatewayStart(configPath: string, foreground: boolean): Promise<void> {
   if (!foreground) {
-    // Check whether a daemon is already running
     const existingPid = readPid();
     if (existingPid !== null && isRunning(existingPid)) {
       console.log(`[BEIGE] Gateway is already running (PID ${existingPid})`);
       process.exit(0);
     }
 
+    console.log("[BEIGE] Checking Docker...");
+    try {
+      await checkDockerAvailable();
+    } catch (err) {
+      console.error(`[BEIGE] ${(err as Error).message}`);
+      process.exit(1);
+    }
+
+    const { loadConfig } = await import("./config/loader.js");
+    const config = loadConfig(configPath);
+    const port = config.gateway?.port ?? 7433;
+    const host = config.gateway?.host ?? "127.0.0.1";
+
     ensureDirs();
 
-    // Open log file for append (create if absent)
     const logFile = getLogFile();
     const logFd = openSync(logFile, "a");
 
-    // Re-invoke this same entry point in foreground mode.
-    // argv[0] is always `node` regardless of whether tsx is used as a loader,
-    // so we detect TypeScript source by the .ts extension on argv[1] and
-    // inject `--import tsx/esm` so the child can resolve TS imports.
     const isTs = process.argv[1].endsWith(".ts");
     const spawnArgs = isTs
       ? ["--import", "tsx/esm", process.argv[1], "gateway", "start", "--foreground", "--config", configPath]
@@ -141,11 +263,32 @@ async function cmdGatewayStart(configPath: string, foreground: boolean): Promise
     });
     child.unref();
 
+    if (!child.pid) {
+      console.error("[BEIGE] Failed to spawn gateway process");
+      process.exit(1);
+    }
+
     writeFileSync(getPidFile(), String(child.pid), "utf-8");
-    console.log(`[BEIGE] Gateway daemon started (PID ${child.pid})`);
-    console.log(`[BEIGE] Logs: ${logFile}`);
-    console.log(`[BEIGE] Run 'beige gateway logs -f' to follow`);
-    process.exit(0);
+
+    console.log("[BEIGE] Starting gateway...\n");
+    const success = await waitForGatewayReady(child.pid, logFile, port, host);
+
+    if (success) {
+      console.log(`\n[BEIGE] Gateway daemon started (PID ${child.pid})`);
+      console.log(`[BEIGE] Logs: ${logFile}`);
+      console.log(`[BEIGE] Run 'beige gateway logs -f' to follow`);
+    } else {
+      try {
+        if (isRunning(child.pid)) {
+          process.kill(child.pid, "SIGTERM");
+        }
+        unlinkSync(getPidFile());
+      } catch {
+        // Ignore cleanup errors
+      }
+      process.exit(1);
+    }
+    return;
   }
 
   // ── Foreground path (used directly or spawned by the daemon launcher) ──

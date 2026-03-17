@@ -116,10 +116,14 @@ export function loadConfig(configPath: string): BeigeConfig {
   const parsed = JSON5.parse(raw);
   const resolved = resolveEnvVars(parsed) as BeigeConfig;
 
+  // Toolkit tools must be merged before validateConfig runs its cross-reference
+  // checks — otherwise agent tool references that come from installed toolkits
+  // are rejected as unknown.
+  mergeToolkitTools(resolved, configDir);
+
   const config = validateConfig(resolved);
   resolveToolPaths(config, configDir);
   resolveSkillPaths(config, configDir);
-  mergeToolkitTools(config, configDir);
 
   return config;
 }

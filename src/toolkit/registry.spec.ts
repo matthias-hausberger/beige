@@ -38,7 +38,13 @@ describe("toolkit/registry", () => {
     } else {
       originalRegistry = null;
     }
-    
+
+    // Always start each test with a clean (absent) registry file so tests
+    // don't bleed real on-disk state into assertions that assume empty.
+    if (existsSync(REGISTRY_PATH)) {
+      rmSync(REGISTRY_PATH, { force: true });
+    }
+
     if (!existsSync(BEIGE_DIR)) {
       mkdirSync(BEIGE_DIR, { recursive: true });
     }

@@ -257,7 +257,8 @@ function buildSessionEnvVars(ctx: SessionContext | undefined): Record<string, st
     BEIGE_SESSION_KEY: ctx.sessionKey,
     BEIGE_CHANNEL: ctx.channel,
   };
-  
+
+  if (ctx.agentName) env.BEIGE_AGENT_NAME = ctx.agentName;
   if (ctx.chatId) env.BEIGE_CHAT_ID = ctx.chatId;
   if (ctx.threadId) env.BEIGE_THREAD_ID = ctx.threadId;
   

@@ -46,8 +46,11 @@ export class BeigeSessionStore {
   /**
    * Create a new session file for a given key and agent.
    * Returns the path to the new session file.
+   *
+   * Pass `metadata` to attach arbitrary caller-owned data to the entry.
+   * Beige stores and returns this data as-is and never interprets it.
    */
-  createSession(key: string, agentName: string): string {
+  createSession(key: string, agentName: string, metadata?: Record<string, unknown>): string {
     const agentDir = resolve(this.sessionsDir, agentName);
     mkdirSync(agentDir, { recursive: true });
 
@@ -58,6 +61,7 @@ export class BeigeSessionStore {
       agentName,
       sessionFile,
       createdAt: new Date().toISOString(),
+      ...(metadata !== undefined ? { metadata } : {}),
     };
     this.saveMap();
 
@@ -65,8 +69,22 @@ export class BeigeSessionStore {
   }
 
   /**
+   * Return the raw SessionMapEntry for a session key, or undefined if the
+   * key is not registered.  Callers use this to read back metadata they
+   * previously wrote via createSession().
+   */
+  getEntry(key: string): SessionMapEntry | undefined {
+    return this.sessionMap[key];
+  }
+
+  /**
    * Reset a key's session — creates a new session file.
    * The old session file is kept on disk for history.
+   *
+   * Note: metadata from the previous entry is intentionally not carried over.
+   * The new session starts as a fresh top-level session (no metadata).  Callers
+   * that need to preserve metadata (e.g. to maintain depth tracking) should
+   * call createSession() directly with the desired metadata instead.
    */
   resetSession(key: string, agentName: string): string {
     // Don't delete old file — keep it for /resume
@@ -152,6 +170,13 @@ export interface SessionMapEntry {
   agentName: string;
   sessionFile: string;
   createdAt: string;
+  /**
+   * Arbitrary key-value metadata attached at session creation time.
+   * Beige does not interpret this field — it is owned entirely by the caller
+   * (e.g. a toolkit tool that needs to persist per-session state such as
+   * invocation depth, parent session key, or channel-specific data).
+   */
+  metadata?: Record<string, unknown>;
 }
 
 export interface SessionInfo {

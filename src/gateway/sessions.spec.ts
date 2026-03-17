@@ -246,4 +246,103 @@ describe("BeigeSessionStore", () => {
       expect(existsSync(mapPath)).toBe(true);
     });
   });
+
+  // ── New: metadata support ────────────────────────────────────────────────
+
+  describe("createSession with metadata", () => {
+    it("stores metadata on the session entry", () => {
+      const key = "a2a:tui:coder:default:reviewer:ts1";
+      store.createSession(key, "reviewer", { depth: 1, invokedBy: "coder" });
+
+      const entry = store.getEntry(key);
+      expect(entry?.metadata?.depth).toBe(1);
+      expect(entry?.metadata?.invokedBy).toBe("coder");
+    });
+
+    it("entry has no metadata field when none is supplied", () => {
+      const key = "tui:assistant:default";
+      store.createSession(key, "assistant");
+
+      const entry = store.getEntry(key);
+      expect(entry?.metadata).toBeUndefined();
+    });
+
+    it("metadata is persisted across store instances", () => {
+      const key = "a2a:persist:test";
+      const meta = { depth: 2, parentSessionKey: "tui:coder:default", invokedBy: "coder" };
+      store.createSession(key, "reviewer", meta);
+
+      const newStore = new BeigeSessionStore();
+      const entry = newStore.getEntry(key);
+
+      expect(entry?.metadata?.depth).toBe(2);
+      expect(entry?.metadata?.parentSessionKey).toBe("tui:coder:default");
+      expect(entry?.metadata?.invokedBy).toBe("coder");
+    });
+
+    it("supports arbitrary metadata shapes without schema enforcement", () => {
+      const key = "custom:meta:key";
+      store.createSession(key, "agent", {
+        customToolData: { nested: { value: 42 } },
+        tags: ["a", "b"],
+        active: true,
+      });
+
+      const entry = store.getEntry(key);
+      expect((entry?.metadata?.customToolData as any)?.nested?.value).toBe(42);
+      expect(entry?.metadata?.tags).toEqual(["a", "b"]);
+      expect(entry?.metadata?.active).toBe(true);
+    });
+  });
+
+  describe("getEntry", () => {
+    it("returns undefined for an unregistered key", () => {
+      expect(store.getEntry("nonexistent:key")).toBeUndefined();
+    });
+
+    it("returns the full entry for a registered key", () => {
+      const key = "tui:coder:default";
+      store.createSession(key, "coder");
+
+      const entry = store.getEntry(key);
+      expect(entry).toBeDefined();
+      expect(entry?.agentName).toBe("coder");
+      expect(entry?.sessionFile).toContain("coder");
+      expect(entry?.createdAt).toBeTruthy();
+    });
+
+    it("returns undefined after session file is deleted and getSessionFile cleans the map", () => {
+      const key = "tui:cleanup:test";
+      const file = createSessionWithFile(key, "assistant");
+
+      // Confirm entry exists
+      expect(store.getEntry(key)).toBeDefined();
+
+      // Delete the file and trigger cleanup via getSessionFile
+      rmSync(file, { force: true });
+      store.getSessionFile(key); // triggers map cleanup
+
+      // Entry should now be gone
+      expect(store.getEntry(key)).toBeUndefined();
+    });
+
+    it("reflects the most recent session after resetSession", () => {
+      const key = "tui:reset:test";
+      createSessionWithFile(key, "assistant");
+      const newFile = store.resetSession(key, "assistant");
+
+      const entry = store.getEntry(key);
+      expect(entry?.sessionFile).toBe(newFile);
+    });
+
+    it("resetSession does not carry over metadata from the previous entry", () => {
+      const key = "a2a:reset:meta:test";
+      store.createSession(key, "reviewer", { depth: 1, invokedBy: "coder" });
+
+      store.resetSession(key, "reviewer");
+
+      const entry = store.getEntry(key);
+      expect(entry?.metadata).toBeUndefined();
+    });
+  });
 });

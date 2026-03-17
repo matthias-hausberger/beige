@@ -195,6 +195,69 @@ describe("loadTools", () => {
     expect(tool?.manifest.target).toBe("gateway");
     expect(tool?.path).toBe(join(tempDir, "test"));
   });
+
+  it("passes ToolHandlerContext fields to createHandler", async () => {
+    // Write a tool that captures the context object it receives
+    const toolDir = join(tempDir, "ctx-tool");
+    mkdirSync(toolDir, { recursive: true });
+    writeFileSync(
+      join(toolDir, "tool.json"),
+      JSON.stringify({ name: "ctx-tool", description: "Context test", target: "gateway" })
+    );
+    // The handler records the context it was given into a module-level variable
+    // so the test can inspect it after loadTools() returns.
+    writeFileSync(
+      join(toolDir, "index.ts"),
+      `
+        export let capturedContext = undefined;
+        export function createHandler(config, context) {
+          capturedContext = context;
+          return async (args) => ({ output: "ok", exitCode: 0 });
+        }
+      `
+    );
+
+    const config = createMinimalConfig({
+      tools: { "ctx-tool": { path: toolDir, target: "gateway" } },
+      agents: {
+        assistant: {
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          tools: ["ctx-tool"],
+        },
+      },
+    });
+
+    const agentManagerRef = { current: null };
+    const sessionStore = { getEntry: () => undefined, createSession: () => "" } as any;
+    const beigeConfig = config;
+
+    await loadTools(config, runner, { agentManagerRef, sessionStore, beigeConfig });
+
+    // Import the tool module to read the captured context
+    const mod = await import(join(toolDir, "index.ts"));
+    expect(mod.capturedContext).toBeDefined();
+    expect(mod.capturedContext.agentManagerRef).toBe(agentManagerRef);
+    expect(mod.capturedContext.sessionStore).toBe(sessionStore);
+    expect(mod.capturedContext.beigeConfig).toBe(beigeConfig);
+  });
+
+  it("works without context argument (backward compatible)", async () => {
+    createToolPackage("compat-tool", "gateway", true);
+
+    const config = createMinimalConfig({
+      tools: { "compat-tool": { path: join(tempDir, "compat-tool"), target: "gateway" } },
+      agents: {
+        assistant: {
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          tools: ["compat-tool"],
+        },
+      },
+    });
+
+    // Should not throw — context is optional
+    await expect(loadTools(config, runner)).resolves.toBeDefined();
+    expect(runner.hasHandler("compat-tool")).toBe(true);
+  });
 });
 
 describe("buildToolContext", () => {

@@ -10,6 +10,23 @@ export interface ToolResult {
 
 export interface ToolHandlerContext {
   channelRegistry?: import("../channels/registry.js").ChannelRegistry;
+  /**
+   * Mutable reference to the AgentManager, populated after it is created.
+   * Tools receive a ref (not the instance directly) because tools are loaded
+   * before the AgentManager is constructed — the ref is always resolved by
+   * the time any tool handler is actually invoked.
+   */
+  agentManagerRef?: { current: import("../gateway/agent-manager.js").AgentManager | null };
+  /**
+   * The session store, available to tools that need to read or write
+   * per-session metadata.
+   */
+  sessionStore?: import("../gateway/sessions.js").BeigeSessionStore;
+  /**
+   * The full resolved Beige config.  Tools may use this to validate agent
+   * names, inspect tool lists, etc.
+   */
+  beigeConfig?: import("../config/schema.js").BeigeConfig;
 }
 
 export type ToolHandler = (

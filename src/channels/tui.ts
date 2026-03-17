@@ -36,13 +36,16 @@ import { loadSkills, buildSkillContext, validateSkillDeps, type LoadedSkill } fr
  * - Full pi TUI (editor, streaming, model switching, compaction, history)
  * - Sandboxed tool execution managed by the gateway
  *
- * Commands:
- * - /new           — Start a fresh session
- * - /resume        — Pick a previous session to continue
- * - /sessions      — List saved sessions for the current agent
- * - /agent [name]  — Switch to a different beige agent
- * - /v on|off      — Toggle verbose tool-call notifications
- * - /verbose on|off — Same as /v
+ * Commands (all prefixed with "beige-" to avoid conflicts with pi built-ins):
+ * - /beige-new              — Start a fresh beige session
+ * - /beige-resume [n]       — Resume a previous beige session
+ * - /beige-sessions         — List saved beige sessions for the current agent
+ * - /beige-agent [name]     — Switch to a different beige agent
+ * - /beige-verbose on|off   — Toggle verbose tool-call notifications
+ * - /v on|off               — Shorthand for /beige-verbose
+ *
+ * Note: pi has built-in /new and /resume commands that use pi's own session
+ * storage. Those cannot be overridden or disabled, hence the beige- prefix.
  */
 
 const DEFAULT_GATEWAY_URL = "http://127.0.0.1:7433";
@@ -179,8 +182,11 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
   // ── Launch pi TUI ─────────────────────────────────────────
   console.log(`[TUI] Agent: ${agentName} (${state.agentConfig.model.provider}/${state.agentConfig.model.model})`);
   console.log(`[TUI] Tools: ${agentInfo.tools.join(", ") || "(core only)"}`);
-  console.log(`[TUI] Verbose: ${initialVerbose ? "on" : "off"} — use /verbose on|off to toggle`);
-  console.log(`[TUI] Commands: /new, /resume, /sessions, /agent <name>, /verbose on|off`);
+  console.log(`[TUI] Verbose: ${initialVerbose ? "on" : "off"} — use /beige-verbose on|off to toggle`);
+  console.log(`[TUI] Commands: /beige-new, /beige-resume, /beige-sessions, /beige-agent <name>, /beige-verbose on|off (or /v on|off)`);
+
+  // Suppress pi's "update available" banner — beige manages its own update lifecycle.
+  process.env.PI_SKIP_VERSION_CHECK = "1";
 
   const mode = new InteractiveMode(state.session, {});
   await mode.run();
@@ -267,7 +273,7 @@ async function buildBeigeExtension(
 
     if (!arg || (arg !== "on" && arg !== "off")) {
       const current = state.settingsStore.get(sessionKey, "verbose") ?? false;
-      ctx.ui.notify(`Verbose mode is currently ${current ? "ON" : "OFF"}. Usage: /verbose on|off`, "info");
+      ctx.ui.notify(`Verbose mode is currently ${current ? "ON" : "OFF"}. Usage: /beige-verbose on|off`, "info");
       return;
     }
 
@@ -336,7 +342,7 @@ async function buildBeigeExtension(
       lines.push(`  ... and ${sessions.length - 10} more`);
     }
     lines.push("");
-    lines.push("Use /resume <number> to continue a session.");
+    lines.push("Use /beige-resume <number> to continue a session.");
 
     ctx.ui.notify(lines.join("\n"), "info");
   };
@@ -355,14 +361,14 @@ async function buildBeigeExtension(
       if (arg === "") {
         // Show list if no arg provided
         ctx.ui.notify(
-          `Usage: /resume <number>\n\nSessions:\n${sessions
+          `Usage: /beige-resume <number>\n\nSessions:\n${sessions
             .slice(0, 5)
             .map((s, i) => `  ${i + 1}. ${basename(s.file)}`)
             .join("\n")}`,
           "info"
         );
       } else {
-        ctx.ui.notify(`Invalid session number. Use /sessions to see available sessions.`, "error");
+        ctx.ui.notify(`Invalid session number. Use /beige-sessions to see available sessions.`, "error");
       }
       return;
     }
@@ -405,7 +411,7 @@ async function buildBeigeExtension(
 
     if (!arg) {
       ctx.ui.notify(
-        `Current agent: ${state.agentName}\n\nAvailable agents:\n${availableAgents.map((a) => `  • ${a}`).join("\n")}\n\nUsage: /agent <name>`,
+        `Current agent: ${state.agentName}\n\nAvailable agents:\n${availableAgents.map((a) => `  • ${a}`).join("\n")}\n\nUsage: /beige-agent <name>`,
         "info"
       );
       return;
@@ -465,12 +471,12 @@ async function buildBeigeExtension(
     tools: new Map(),
     messageRenderers: new Map(),
     commands: new Map<string, RegisteredCommand>([
-      ["verbose", { name: "verbose", description: "Toggle tool-call notifications: /verbose on|off", handler: handleVerbose }],
-      ["v", { name: "v", description: "Shorthand for /verbose: /v on|off", handler: handleVerbose }],
-      ["new", { name: "new", description: "Start a fresh session", handler: handleNew }],
-      ["sessions", { name: "sessions", description: "List saved sessions for the current agent", handler: handleSessions }],
-      ["resume", { name: "resume", description: "Resume a previous session: /resume <number>", handler: handleResume }],
-      ["agent", { name: "agent", description: "Switch to a different agent: /agent <name>", handler: handleAgent }],
+      ["beige-verbose", { name: "beige-verbose", description: "Toggle tool-call notifications: /beige-verbose on|off", handler: handleVerbose }],
+      ["v", { name: "v", description: "Shorthand for /beige-verbose: /v on|off", handler: handleVerbose }],
+      ["beige-new", { name: "beige-new", description: "Start a fresh beige session", handler: handleNew }],
+      ["beige-sessions", { name: "beige-sessions", description: "List saved beige sessions for the current agent", handler: handleSessions }],
+      ["beige-resume", { name: "beige-resume", description: "Resume a previous beige session: /beige-resume <number>", handler: handleResume }],
+      ["beige-agent", { name: "beige-agent", description: "Switch to a different beige agent: /beige-agent <name>", handler: handleAgent }],
     ]),
     flags: new Map(),
     shortcuts: new Map(),

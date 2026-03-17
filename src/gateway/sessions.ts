@@ -46,8 +46,11 @@ export class BeigeSessionStore {
   /**
    * Create a new session file for a given key and agent.
    * Returns the path to the new session file.
+   *
+   * Pass `metadata` to attach arbitrary caller-owned data to the entry.
+   * Beige stores and returns this data as-is and never interprets it.
    */
-  createSession(key: string, agentName: string): string {
+  createSession(key: string, agentName: string, metadata?: Record<string, unknown>): string {
     const agentDir = resolve(this.sessionsDir, agentName);
     mkdirSync(agentDir, { recursive: true });
 
@@ -58,6 +61,7 @@ export class BeigeSessionStore {
       agentName,
       sessionFile,
       createdAt: new Date().toISOString(),
+      ...(metadata !== undefined ? { metadata } : {}),
     };
     this.saveMap();
 
@@ -65,8 +69,22 @@ export class BeigeSessionStore {
   }
 
   /**
+   * Return the raw SessionMapEntry for a session key, or undefined if the
+   * key is not registered.  Callers use this to read back metadata they
+   * previously wrote via createSession().
+   */
+  getEntry(key: string): SessionMapEntry | undefined {
+    return this.sessionMap[key];
+  }
+
+  /**
    * Reset a key's session — creates a new session file.
    * The old session file is kept on disk for history.
+   *
+   * Note: metadata from the previous entry is intentionally not carried over.
+   * The new session starts as a fresh top-level session (no metadata).  Callers
+   * that need to preserve metadata (e.g. to maintain depth tracking) should
+   * call createSession() directly with the desired metadata instead.
    */
   resetSession(key: string, agentName: string): string {
     // Don't delete old file — keep it for /resume
@@ -81,30 +99,56 @@ export class BeigeSessionStore {
   }
 
   /**
-   * List all sessions for a given agent.
+   * List sessions for a given agent that were initiated by a human (i.e.
+   * have no metadata, or have metadata without a positive `depth` value).
+   *
+   * Sessions created by toolkit tools (such as agent-to-agent) attach metadata
+   * with a `depth > 0` field.  Those sessions represent internal
+   * agent-to-agent or sub-agent invocations and are intentionally excluded
+   * from user-facing session lists — they would be confusing to resume and
+   * are not the user's direct conversation history.
+   *
+   * Pass `{ includeToolSessions: true }` to bypass this filter and return
+   * every session file on disk regardless of metadata.
    */
-  listSessions(agentName: string): SessionInfo[] {
+  listSessions(agentName: string, opts?: { includeToolSessions?: boolean }): SessionInfo[] {
     const agentDir = resolve(this.sessionsDir, agentName);
     if (!existsSync(agentDir)) return [];
 
+    // Build a reverse map: sessionFile path → entry, for O(1) metadata lookup.
+    const fileToEntry = this.buildFileToEntryMap();
+
     const files = readdirSync(agentDir).filter((f) => f.endsWith(".jsonl"));
-    return files.map((f) => {
-      const filePath = resolve(agentDir, f);
-      const firstLine = readFirstLine(filePath);
-      return {
-        sessionFile: filePath,
-        sessionId: f.replace(".jsonl", ""),
-        agentName,
-        firstMessage: extractFirstMessage(firstLine),
-        createdAt: extractTimestamp(firstLine),
-      };
-    }).sort((a, b) => b.createdAt.localeCompare(a.createdAt)); // newest first
+    return files
+      .map((f) => {
+        const filePath = resolve(agentDir, f);
+        const entry = fileToEntry.get(filePath);
+
+        // Exclude tool-initiated sessions unless caller explicitly opts in.
+        if (!opts?.includeToolSessions) {
+          const depth = entry?.metadata?.depth;
+          if (typeof depth === "number" && depth > 0) return null;
+        }
+
+        const firstLine = readFirstLine(filePath);
+        return {
+          sessionFile: filePath,
+          sessionId: f.replace(".jsonl", ""),
+          agentName,
+          firstMessage: extractFirstMessage(firstLine),
+          createdAt: extractTimestamp(firstLine),
+        };
+      })
+      .filter((s): s is SessionInfo => s !== null)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)); // newest first
   }
 
   /**
    * List all sessions across all agents.
+   * Tool-initiated sessions (depth > 0 in metadata) are excluded by default.
+   * Pass `{ includeToolSessions: true }` to include them.
    */
-  listAllSessions(): SessionInfo[] {
+  listAllSessions(opts?: { includeToolSessions?: boolean }): SessionInfo[] {
     if (!existsSync(this.sessionsDir)) return [];
 
     const agents = readdirSync(this.sessionsDir).filter((f) => {
@@ -116,7 +160,7 @@ export class BeigeSessionStore {
       }
     });
 
-    return agents.flatMap((agent) => this.listSessions(agent));
+    return agents.flatMap((agent) => this.listSessions(agent, opts));
   }
 
   /**
@@ -135,6 +179,18 @@ export class BeigeSessionStore {
 
   // ── Private ────────────────────────────────────────────
 
+  /**
+   * Build a reverse lookup: absolute session file path → SessionMapEntry.
+   * Used by listSessions() to check metadata without a linear scan per file.
+   */
+  private buildFileToEntryMap(): Map<string, SessionMapEntry> {
+    const map = new Map<string, SessionMapEntry>();
+    for (const entry of Object.values(this.sessionMap)) {
+      map.set(entry.sessionFile, entry);
+    }
+    return map;
+  }
+
   private loadMap(): Record<string, SessionMapEntry> {
     try {
       return JSON.parse(readFileSync(this.mapFile, "utf-8"));
@@ -152,6 +208,13 @@ export interface SessionMapEntry {
   agentName: string;
   sessionFile: string;
   createdAt: string;
+  /**
+   * Arbitrary key-value metadata attached at session creation time.
+   * Beige does not interpret this field — it is owned entirely by the caller
+   * (e.g. a toolkit tool that needs to persist per-session state such as
+   * invocation depth, parent session key, or channel-specific data).
+   */
+  metadata?: Record<string, unknown>;
 }
 
 export interface SessionInfo {

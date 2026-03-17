@@ -16,7 +16,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 import { resolve, basename } from "path";
-import { readdirSync, existsSync } from "fs";
+import { existsSync } from "fs";
 import { beigeDir } from "../paths.js";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
@@ -217,12 +217,8 @@ async function createSession(state: TUIState, extensionsResult: LoadExtensionsRe
   const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
 
   const sessionsDir = resolve(beigeDir(), "sessions", agentName);
-  let sessionManager: ReturnType<typeof SessionManager.create>;
-  try {
-    sessionManager = SessionManager.continueRecent(process.cwd(), sessionsDir);
-  } catch {
-    sessionManager = SessionManager.create(process.cwd(), sessionsDir);
-  }
+  // Always start a fresh session. Users can resume via /beige-resume.
+  const sessionManager = SessionManager.create(process.cwd(), sessionsDir);
 
   const resourceLoader: ResourceLoader = {
     getExtensions: () => extensionsResult,
@@ -528,37 +524,22 @@ interface SessionEntry {
   timestamp: Date;
 }
 
+/**
+ * List human-initiated sessions for an agent, sorted newest-first.
+ *
+ * Delegates to BeigeSessionStore.listSessions() so that sessions created
+ * by toolkit tools (e.g. agent-to-agent sub-agent sessions, which carry
+ * metadata.depth > 0) are automatically excluded.  Only sessions the user
+ * started directly appear in /beige-sessions and /beige-resume.
+ */
 function listSessions(agentName: string): SessionEntry[] {
-  const sessionsDir = resolve(beigeDir(), "sessions", agentName);
-  if (!existsSync(sessionsDir)) return [];
-
-  const files = readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl"));
-
-  return files
-    .map((f) => ({
-      file: resolve(sessionsDir, f),
-      timestamp: extractTimestampFromFilename(f),
-    }))
-    .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  const store = new BeigeSessionStore();
+  return store.listSessions(agentName).map((info) => ({
+    file: info.sessionFile,
+    timestamp: new Date(info.createdAt),
+  }));
 }
 
-function extractTimestampFromFilename(filename: string): Date {
-  // Format: 20260305-120000-a1b2c3.jsonl
-  const match = filename.match(/^(\d{8})-(\d{6})-/);
-  if (!match) return new Date(0);
-
-  const dateStr = match[1]; // 20260305
-  const timeStr = match[2]; // 120000
-
-  const year = parseInt(dateStr.slice(0, 4), 10);
-  const month = parseInt(dateStr.slice(4, 6), 10) - 1;
-  const day = parseInt(dateStr.slice(6, 8), 10);
-  const hour = parseInt(timeStr.slice(0, 2), 10);
-  const minute = parseInt(timeStr.slice(2, 4), 10);
-  const second = parseInt(timeStr.slice(4, 6), 10);
-
-  return new Date(year, month, day, hour, minute, second);
-}
 
 // ── TUI tool-start handler ────────────────────────────────────────────────────
 

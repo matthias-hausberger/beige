@@ -12,7 +12,7 @@ export interface LoadedTool {
 export async function loadTools(
   config: BeigeConfig,
   runner: ToolRunner,
-  channelRegistry?: import("../channels/registry.js").ChannelRegistry
+  context?: ToolHandlerContext
 ): Promise<Map<string, LoadedTool>> {
   const tools = new Map<string, LoadedTool>();
 
@@ -29,7 +29,7 @@ export async function loadTools(
       try {
         const mod = await import(handlerPath);
         if (typeof mod.createHandler === "function") {
-          const handlerContext: ToolHandlerContext = channelRegistry ? { channelRegistry } : {};
+          const handlerContext: ToolHandlerContext = { ...context };
           const handler = mod.createHandler(toolConfig.config ?? {}, handlerContext);
           runner.registerHandler(name, handler);
           loaded.handler = handler;

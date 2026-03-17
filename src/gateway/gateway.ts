@@ -34,6 +34,13 @@ export class Gateway {
   private loadedSkills!: Map<string, LoadedSkill>;
   private channelRegistry!: ChannelRegistry;
   private restarting = false;
+  /**
+   * Stable mutable reference to the AgentManager passed to gateway tools at
+   * load time.  Tools close over this object and dereference `.current` at
+   * call time, so it must be the *same object* across restarts — only
+   * `.current` is updated, not the ref itself.
+   */
+  private readonly agentManagerRef: { current: AgentManager | null } = { current: null };
 
   constructor(config: BeigeConfig, configPath: string) {
     this.config = config;
@@ -53,8 +60,18 @@ export class Gateway {
     // 1. Create channel registry
     this.channelRegistry = new ChannelRegistry();
 
-    // 2. Load tool packages and register handlers
-    this.loadedTools = await loadTools(this.config, this.toolRunner, this.channelRegistry);
+    // 2. Load tool packages and register handlers.
+    //    Tools are loaded before AgentManager exists, so we pass agentManagerRef
+    //    (a stable class-level object).  Tool handlers dereference .current at
+    //    call time, so they always see the live manager — including after a
+    //    restart, which updates .current on the same ref object.
+    this.agentManagerRef.current = null; // clear stale ref from any previous start()
+    this.loadedTools = await loadTools(this.config, this.toolRunner, {
+      channelRegistry: this.channelRegistry,
+      agentManagerRef: this.agentManagerRef,
+      sessionStore: this.sessionStore,
+      beigeConfig: this.config,
+    });
     console.log(`[GATEWAY] Loaded ${this.loadedTools.size} tool(s)`);
 
     // 3. Load skill packages
@@ -69,7 +86,7 @@ export class Gateway {
     // 5. Create sandbox manager
     this.sandboxManager = new SandboxManager(this.config, this.loadedTools, this.loadedSkills);
 
-    // 6. Create agent manager
+    // 6. Create agent manager and resolve the ref so gateway tools can use it.
     this.agentManager = new AgentManager(
       this.config,
       this.sandboxManager,
@@ -80,6 +97,7 @@ export class Gateway {
       modelRegistry,
       this.sessionStore
     );
+    this.agentManagerRef.current = this.agentManager;
 
     // 7. Build beige-sandbox image if any agent needs it (no-op otherwise)
     await this.sandboxManager.ensureSandboxImage();

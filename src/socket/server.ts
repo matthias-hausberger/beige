@@ -138,10 +138,14 @@ export class AgentSocketServer {
         exitCode: result.exitCode,
         outputBytes: Buffer.byteLength(result.output ?? ""),
       });
+      // On failure, populate both output and error with the tool's message so
+      // the sandbox tool-client (which only prints parsed.error on non-success)
+      // surfaces the diagnostic text to the agent.
       return {
         type: "tool_response",
         success: result.exitCode === 0,
         output: result.output,
+        error: result.exitCode !== 0 ? result.output : undefined,
         exitCode: result.exitCode,
       };
     } catch (err) {

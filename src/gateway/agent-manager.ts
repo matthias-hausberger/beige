@@ -122,7 +122,7 @@ export class AgentManager {
     // Build pi session — wire onToolStart so channels get notified on tool calls.
     // Store the ref on the ManagedSession so it can be mutated at runtime (verbose toggle).
     const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
-    const sessionContext = parseSessionKey(sessionKey);
+    const sessionContext = { ...parseSessionKey(sessionKey), agentName };
     const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
     const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
@@ -513,7 +513,7 @@ export class AgentManager {
 
     // Build pi session
     const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
-    const sessionContext = parseSessionKey(sessionKey);
+    const sessionContext = { ...parseSessionKey(sessionKey), agentName };
     const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
     const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);

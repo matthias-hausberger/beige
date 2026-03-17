@@ -288,7 +288,17 @@ export class GatewayAPI {
       case "exec": {
         const timer = audit.start(agentName, "core_tool", "exec", [params.command], "allowed");
         const timeout = (params.timeout ?? 120) * 1000;
-        const result = await sandbox.exec(agentName, ["sh", "-c", params.command], undefined, timeout);
+        // Inject session context env vars so gateway tools (e.g. agent-to-agent)
+        // can identify the calling agent. agentName is always known from the route.
+        // BEIGE_CHANNEL is "tui" since the HTTP exec endpoint is only used by the TUI.
+        // BEIGE_SESSION_KEY uses the standard TUI key format so the session store
+        // lookup works for depth metadata retrieval.
+        const env: Record<string, string> = {
+          BEIGE_AGENT_NAME: agentName,
+          BEIGE_CHANNEL: "tui",
+          BEIGE_SESSION_KEY: `tui:${agentName}:default`,
+        };
+        const result = await sandbox.exec(agentName, ["sh", "-c", params.command], undefined, timeout, env);
         const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
         timer.finish({ exitCode: result.exitCode, outputBytes: Buffer.byteLength(output) });
 

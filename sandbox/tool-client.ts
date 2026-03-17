@@ -21,6 +21,7 @@ if (!toolName) {
 function buildSessionContext(): Record<string, string> | undefined {
   const sessionKey = Deno.env.get("BEIGE_SESSION_KEY");
   const channel = Deno.env.get("BEIGE_CHANNEL");
+  const agentName = Deno.env.get("BEIGE_AGENT_NAME");
   const chatId = Deno.env.get("BEIGE_CHAT_ID");
   const threadId = Deno.env.get("BEIGE_THREAD_ID");
 
@@ -29,6 +30,7 @@ function buildSessionContext(): Record<string, string> | undefined {
   }
 
   const ctx: Record<string, string> = { sessionKey, channel };
+  if (agentName) ctx.agentName = agentName;
   if (chatId) ctx.chatId = chatId;
   if (threadId) ctx.threadId = threadId;
   return ctx;

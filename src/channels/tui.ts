@@ -217,12 +217,8 @@ async function createSession(state: TUIState, extensionsResult: LoadExtensionsRe
   const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
 
   const sessionsDir = resolve(beigeDir(), "sessions", agentName);
-  let sessionManager: ReturnType<typeof SessionManager.create>;
-  try {
-    sessionManager = SessionManager.continueRecent(process.cwd(), sessionsDir);
-  } catch {
-    sessionManager = SessionManager.create(process.cwd(), sessionsDir);
-  }
+  // Always start a fresh session. Users can resume via /beige-resume.
+  const sessionManager = SessionManager.create(process.cwd(), sessionsDir);
 
   const resourceLoader: ResourceLoader = {
     getExtensions: () => extensionsResult,

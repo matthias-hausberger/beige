@@ -764,9 +764,16 @@ ${skillContext}
 
 function resolveModel(agentConfig: AgentConfig, modelRegistry: ModelRegistry | RestrictedModelRegistry) {
   const { provider, model: modelId } = agentConfig.model;
+  // Prefer ModelRegistry.find() over the static getModel() because the registry
+  // applies OAuth provider transformations (e.g. modifyModels) that update baseUrl.
+  // For GitHub Copilot business subscriptions, the OAuth provider rewrites baseUrl
+  // from api.individual.githubcopilot.com → api.business.githubcopilot.com based
+  // on the proxy-ep in the access token. Using the static getModel() would return
+  // the unmodified built-in model with the wrong baseUrl, causing 421 Misdirected
+  // Request errors.
+  const registryModel = modelRegistry.find(provider, modelId);
+  if (registryModel) return registryModel;
   const model = getModel(provider as any, modelId);
   if (model) return model;
-  const custom = modelRegistry.find(provider, modelId);
-  if (custom) return custom;
   throw new Error(`Model not found: ${provider}/${modelId}`);
 }

@@ -691,10 +691,14 @@ export class AgentManager {
 
   private resolveModelFromRef(modelRef: ModelRef) {
     const { provider, model: modelId } = modelRef;
+    // Prefer ModelRegistry.find() over the static getModel() because the registry
+    // applies OAuth provider transformations (e.g. modifyModels) that update baseUrl.
+    // This is critical for GitHub Copilot business subscriptions where the baseUrl
+    // must be rewritten based on the proxy-ep in the access token.
+    const registryModel = this.modelRegistry.find(provider, modelId);
+    if (registryModel) return registryModel;
     const model = getModel(provider as any, modelId);
     if (model) return model;
-    const custom = this.modelRegistry.find(provider, modelId);
-    if (custom) return custom;
     throw new Error(`Model not found: ${provider}/${modelId}. Check your config and API keys.`);
   }
 

@@ -312,41 +312,12 @@ async function buildBeigeExtension(
 
   // ── /new ──────────────────────────────────────────────────
   const handleNew = async (_args: string, ctx: any) => {
-    const oldSession = state.session;
-    if (oldSession) {
-      oldSession.dispose();
-    }
-
-    // Create new session directory entry
-    const sessionsDir = resolve(beigeDir(), "sessions", state.agentName);
-    const sessionManager = SessionManager.create(process.cwd(), sessionsDir);
-
-    const resourceLoader = await buildResourceLoader(state);
-    // Use underlying registry for model lookup
-    const model = resolveModel(state.agentConfig, state.underlyingModelRegistry);
-    const coreTools = createProxyTools(state.agentName, state.gatewayUrl, state.toolStartHandlerRef);
-
-    const { session } = await createAgentSession({
-      model,
-      thinkingLevel: (state.agentConfig.model.thinkingLevel as any) ?? "off",
-      tools: [],
-      customTools: coreTools,
-      sessionManager,
-      settingsManager: SettingsManager.inMemory({
-        compaction: { enabled: true },
-        retry: { enabled: true, maxRetries: 3 },
-      }),
-      resourceLoader,
-      authStorage: state.authStorage,
-      // Pass underlying registry for session creation
-      modelRegistry: state.modelRegistry.getUnderlying(),
-    });
-
-    // Replace the session's modelRegistry with our restricted version
-    (session as any)._modelRegistry = state.modelRegistry;
-
-    state.session = session;
-    ctx.ui.notify("🆕 New session started.", "info");
+    // Delegate to the pi SDK's newSession(), which resets the existing
+    // AgentSession in-place, creates a new session file, and clears all
+    // InteractiveMode UI state. This avoids a stale-session-reference bug
+    // where InteractiveMode's internal this.session would still point to
+    // the old disposed session.
+    await ctx.newSession();
   };
 
   // ── /sessions ─────────────────────────────────────────────
@@ -401,38 +372,11 @@ async function buildBeigeExtension(
 
     const targetSession = sessions[index];
 
-    // Dispose old session
-    if (state.session) {
-      state.session.dispose();
-    }
-
-    // Resume the selected session
-    const sessionManager = SessionManager.open(targetSession.file);
-    const resourceLoader = await buildResourceLoader(state);
-    // Use underlying registry for model lookup
-    const model = resolveModel(state.agentConfig, state.underlyingModelRegistry);
-    const coreTools = createProxyTools(state.agentName, state.gatewayUrl, state.toolStartHandlerRef);
-
-    const { session } = await createAgentSession({
-      model,
-      thinkingLevel: (state.agentConfig.model.thinkingLevel as any) ?? "off",
-      tools: [],
-      customTools: coreTools,
-      sessionManager,
-      settingsManager: SettingsManager.inMemory({
-        compaction: { enabled: true },
-        retry: { enabled: true, maxRetries: 3 },
-      }),
-      resourceLoader,
-      authStorage: state.authStorage,
-      // Pass underlying registry for session creation
-      modelRegistry: state.modelRegistry.getUnderlying(),
-    });
-
-    // Replace the session's modelRegistry with our restricted version
-    (session as any)._modelRegistry = state.modelRegistry;
-
-    state.session = session;
+    // Delegate to the pi SDK's switchSession(), which loads the session
+    // file into the existing AgentSession and re-renders the chat UI.
+    // This avoids a stale-session-reference bug where InteractiveMode's
+    // internal this.session would still point to the old disposed session.
+    await ctx.switchSession(targetSession.file);
     ctx.ui.notify(`📂 Resumed session: ${basename(targetSession.file)}`, "info");
   };
 

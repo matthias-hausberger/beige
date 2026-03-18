@@ -8,6 +8,21 @@ export interface SessionContext {
    * without needing to look up the session store.
    */
   agentName?: string;
+  /**
+   * The absolute path to the agent's directory on the gateway host.
+   * This is <beigeDir>/agents/<agentName>/ and contains launchers,
+   * browser profiles, and other agent-specific data that is NOT user workspace.
+   * Set by AgentManager when building session context.
+   */
+  agentDir?: string;
+  /**
+   * The absolute path to the agent's workspace directory on the gateway host.
+   * This is mounted at /workspace inside the sandbox. Defaults to
+   * <beigeDir>/agents/<agentName>/workspace/ but can be configured per-agent
+   * to point anywhere on the host.
+   * Set by AgentManager when building session context.
+   */
+  workspaceDir?: string;
   chatId?: string;
   threadId?: string;
 }

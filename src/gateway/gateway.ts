@@ -205,12 +205,16 @@ export class Gateway {
 
   private async startAgentInfra(agentName: string): Promise<void> {
     const socketPath = resolve(beigeDir(), "sockets", `${agentName}.sock`);
+    const agentDir = resolve(beigeDir(), "agents", agentName);
+    const workspaceDir = resolve(agentDir, "workspace");
     const socketServer = new AgentSocketServer(
       agentName,
       socketPath,
       this.audit,
       this.policy,
-      this.toolRunner
+      this.toolRunner,
+      agentDir,
+      workspaceDir
     );
     await socketServer.start();
     this.socketServers.set(agentName, socketServer);

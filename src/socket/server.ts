@@ -10,6 +10,7 @@ import {
 import type { AuditLogger } from "../gateway/audit.js";
 import type { PolicyEngine } from "../gateway/policy.js";
 import type { ToolRunner } from "../tools/runner.js";
+import type { SessionContext } from "../types/session.js";
 
 /**
  * Unix domain socket server for a single agent.
@@ -23,7 +24,9 @@ export class AgentSocketServer {
     private socketPath: string,
     private audit: AuditLogger,
     private policy: PolicyEngine,
-    private toolRunner: ToolRunner
+    private toolRunner: ToolRunner,
+    private agentDir: string,
+    private workspaceDir: string
   ) {}
 
   start(): Promise<void> {
@@ -122,6 +125,17 @@ export class AgentSocketServer {
       };
     }
 
+    // Enrich session context with agent identity and paths
+    // The request may have partial context from the sandbox launcher
+    const sessionContext: SessionContext = {
+      sessionKey: req.sessionContext?.sessionKey ?? `socket:${this.agentName}`,
+      channel: req.sessionContext?.channel ?? "socket",
+      ...req.sessionContext,
+      agentName: this.agentName,
+      agentDir: this.agentDir,
+      workspaceDir: this.workspaceDir,
+    };
+
     // Execute tool
     const timer = this.audit.start(
       this.agentName,
@@ -133,7 +147,7 @@ export class AgentSocketServer {
     );
 
     try {
-      const result = await this.toolRunner.run(tool, args, req.sessionContext);
+      const result = await this.toolRunner.run(tool, args, sessionContext);
       timer.finish({
         exitCode: result.exitCode,
         outputBytes: Buffer.byteLength(result.output ?? ""),

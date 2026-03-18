@@ -204,6 +204,30 @@ Optional array of fallback models tried in order when the primary model fails (r
 | `extraMounts` | No | `{ "/host/path": "/container/path" }` — reduces isolation |
 | `extraEnv` | No | `{ "KEY": "value" }` — visible to the agent, never use for secrets |
 
+### `agents.<name>.workspaceDir`
+
+Optional. Absolute or relative path (relative to the config file) for the agent's workspace directory. 
+
+- **Default**: `~/.beige/agents/<agentName>/workspace/`
+- **Inside sandbox**: Always mounted at `/workspace`
+
+The workspace is where the agent reads and writes files. If the directory doesn't exist, it will be created. An `AGENTS.md` file is automatically created in the workspace if it doesn't exist.
+
+```json5
+agents: {
+  assistant: {
+    model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+    tools: ["kv"],
+    workspaceDir: "./workspaces/assistant",  // relative to config file
+  },
+  projectBot: {
+    model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+    tools: [],
+    workspaceDir: "/home/user/projects/my-project",  // absolute path
+  },
+}
+```
+
 ### `gateway`
 
 | Field | Default | Description |
@@ -277,7 +301,8 @@ The gateway creates and manages these directories under `~/.beige/`:
 ├── config.json5                   # main config file
 ├── agents/
 │   └── <agent>/
-│       ├── workspace/             # mounted as /workspace (rw) in sandbox
+│       ├── workspace/             # mounted as /workspace (rw) in sandbox (default location)
+│       │                          # can be configured via workspaceDir to any path
 │       └── launchers/             # generated launcher scripts, mounted as /tools/bin (ro)
 ├── sessions/
 │   ├── session-map.json           # maps session keys → .jsonl file paths

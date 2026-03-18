@@ -166,7 +166,8 @@ export class AgentManager {
     // Store the ref on the ManagedSession so it can be mutated at runtime (verbose toggle).
     const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
     const agentDir = resolve(this.beigeDir, "agents", agentName);
-    const workspaceDir = resolve(agentDir, "workspace");
+    const workspaceDir = agentConfig.workspaceDir 
+      ?? resolve(agentDir, "workspace");
     const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir };
     const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
     const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
@@ -563,7 +564,8 @@ export class AgentManager {
     // Build pi session
     const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
     const agentDir = resolve(this.beigeDir, "agents", agentName);
-    const workspaceDir = resolve(agentDir, "workspace");
+    const workspaceDir = agentConfig.workspaceDir 
+      ?? resolve(agentDir, "workspace");
     const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir };
     const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
     const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);

@@ -238,6 +238,10 @@
                 "type": "string"
               }
             },
+            "workspaceDir": {
+              "description": "Absolute or relative path (to config file) for the agent's workspace. Defaults to ~/.beige/agents/<agentName>/workspace/. Mounted at /workspace in sandbox.",
+              "type": "string"
+            },
             "sandbox": {
               "title": "SandboxConfig",
               "type": "object",

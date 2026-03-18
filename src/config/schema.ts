@@ -68,6 +68,12 @@ const AgentConfig = Type.Object(
         description: "Skill names from the skills registry mounted into this agent's sandbox",
       })
     ),
+    workspaceDir: Type.Optional(
+      Type.String({
+        description:
+          "Absolute or relative path (to config file) for the agent's workspace. Defaults to ~/.beige/agents/<agentName>/workspace/. Mounted at /workspace in sandbox.",
+      })
+    ),
     sandbox: Type.Optional(SandboxConfig),
   },
   { title: "AgentConfig" }

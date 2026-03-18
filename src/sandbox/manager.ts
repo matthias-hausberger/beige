@@ -47,8 +47,7 @@ export class SandboxManager {
 
     const image = agentConfig.sandbox?.image ?? "beige-sandbox:latest";
 
-    // Prepare host directories
-    const workspaceDir = resolve(this.beigeDir, "agents", agentName, "workspace");
+    const workspaceDir = this.getWorkspaceDir(agentName, agentConfig);
     const socketsDir = resolve(this.beigeDir, "sockets");
     const socketPath = resolve(socketsDir, `${agentName}.sock`);
     const launchersDir = resolve(this.beigeDir, "agents", agentName, "launchers");
@@ -334,6 +333,17 @@ export class SandboxManager {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Get the workspace directory for an agent.
+   * Returns the configured workspaceDir if set, otherwise the default path.
+   */
+  private getWorkspaceDir(agentName: string, agentConfig: AgentConfig): string {
+    if (agentConfig.workspaceDir) {
+      return agentConfig.workspaceDir;
+    }
+    return resolve(this.beigeDir, "agents", agentName, "workspace");
   }
 
   /**

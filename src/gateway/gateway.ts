@@ -204,9 +204,11 @@ export class Gateway {
   }
 
   private async startAgentInfra(agentName: string): Promise<void> {
+    const agentConfig = this.config.agents[agentName];
     const socketPath = resolve(beigeDir(), "sockets", `${agentName}.sock`);
     const agentDir = resolve(beigeDir(), "agents", agentName);
-    const workspaceDir = resolve(agentDir, "workspace");
+    const workspaceDir = agentConfig.workspaceDir 
+      ?? resolve(agentDir, "workspace");
     const socketServer = new AgentSocketServer(
       agentName,
       socketPath,

@@ -106,6 +106,17 @@ function resolveSkillPaths(config: BeigeConfig, configDir: string): void {
 }
 
 /**
+ * Resolve relative workspace paths against the config file directory.
+ */
+function resolveWorkspacePaths(config: BeigeConfig, configDir: string): void {
+  for (const agent of Object.values(config.agents)) {
+    if (agent.workspaceDir && !agent.workspaceDir.startsWith("/")) {
+      agent.workspaceDir = resolve(configDir, agent.workspaceDir);
+    }
+  }
+}
+
+/**
  * Load and validate a beige config file (JSON5 format).
  */
 export function loadConfig(configPath: string): BeigeConfig {
@@ -124,6 +135,7 @@ export function loadConfig(configPath: string): BeigeConfig {
   const config = validateConfig(resolved);
   resolveToolPaths(config, configDir);
   resolveSkillPaths(config, configDir);
+  resolveWorkspacePaths(config, configDir);
 
   return config;
 }

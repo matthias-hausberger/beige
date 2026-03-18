@@ -37,16 +37,18 @@ import { RestrictedModelRegistry, buildAllowedModels } from "../config/restricte
  * - Full pi TUI (editor, streaming, model switching, compaction, history)
  * - Sandboxed tool execution managed by the gateway
  *
- * Commands (all prefixed with "beige-" to avoid conflicts with pi built-ins):
- * - /beige-new              — Start a fresh beige session
+ * Commands:
+ * - /new                     — Start a fresh session (pi built-in, works correctly)
  * - /beige-resume [n]       — Resume a previous beige session
  * - /beige-sessions         — List saved beige sessions for the current agent
  * - /beige-agent [name]     — Switch to a different beige agent
  * - /beige-verbose on|off   — Toggle verbose tool-call notifications
  * - /v on|off               — Shorthand for /beige-verbose
  *
- * Note: pi has built-in /new and /resume commands that use pi's own session
- * storage. Those cannot be overridden or disabled, hence the beige- prefix.
+ * Note: Beige-specific commands use the "beige-" prefix to avoid conflicts
+ * with pi built-ins. /new is pi's built-in command which resets the session
+ * in-place — this is the correct approach (creating a new AgentSession would
+ * leave InteractiveMode with a stale reference).
  */
 
 const DEFAULT_GATEWAY_URL = "http://127.0.0.1:7433";
@@ -202,7 +204,7 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
 
   console.log(`[TUI] Tools: ${agentInfo.tools.join(", ") || "(core only)"}`);
   console.log(`[TUI] Verbose: ${initialVerbose ? "on" : "off"} — use /beige-verbose on|off to toggle`);
-  console.log(`[TUI] Commands: /beige-new, /beige-resume, /beige-sessions, /beige-agent <name>, /beige-verbose on|off (or /v on|off)`);
+  console.log(`[TUI] Commands: /new, /beige-resume, /beige-sessions, /beige-agent <name>, /beige-verbose on|off (or /v on|off)`);
 
   // Suppress pi's "update available" banner — beige manages its own update lifecycle.
   process.env.PI_SKIP_VERSION_CHECK = "1";
@@ -308,16 +310,6 @@ async function buildBeigeExtension(
         : "🔇 Verbose mode OFF — tool calls are hidden.",
       "info"
     );
-  };
-
-  // ── /new ──────────────────────────────────────────────────
-  const handleNew = async (_args: string, ctx: any) => {
-    // Delegate to the pi SDK's newSession(), which resets the existing
-    // AgentSession in-place, creates a new session file, and clears all
-    // InteractiveMode UI state. This avoids a stale-session-reference bug
-    // where InteractiveMode's internal this.session would still point to
-    // the old disposed session.
-    await ctx.newSession();
   };
 
   // ── /sessions ─────────────────────────────────────────────
@@ -452,7 +444,6 @@ async function buildBeigeExtension(
     commands: new Map<string, RegisteredCommand>([
       ["beige-verbose", { name: "beige-verbose", description: "Toggle tool-call notifications: /beige-verbose on|off", handler: handleVerbose }],
       ["v", { name: "v", description: "Shorthand for /beige-verbose: /v on|off", handler: handleVerbose }],
-      ["beige-new", { name: "beige-new", description: "Start a fresh beige session", handler: handleNew }],
       ["beige-sessions", { name: "beige-sessions", description: "List saved beige sessions for the current agent", handler: handleSessions }],
       ["beige-resume", { name: "beige-resume", description: "Resume a previous beige session: /beige-resume <number>", handler: handleResume }],
       ["beige-agent", { name: "beige-agent", description: "Switch to a different beige agent: /beige-agent <name>", handler: handleAgent }],

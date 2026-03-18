@@ -95,6 +95,8 @@ Agents are defined in `config.json5` under `agents`:
 | `skills` | No | Skill names from the skills registry |
 | `sandbox` | No | Docker image, extra host mounts, extra env vars |
 
+**Model Restriction**: The `model` and `fallbackModels` together define the **only** models an agent can use. Users cannot switch to other models via the TUI or API — even if other providers are configured. This ensures predictable behavior and cost control. See [LLM Providers → Model Restriction](/agents/providers#model-restriction) for details.
+
 For provider and model configuration details, see [LLM Providers](/agents/providers). For the complete list of all config fields and their defaults, see the [Config Reference](/agents/configuration).
 
 ---

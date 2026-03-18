@@ -21,6 +21,7 @@ import { buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skill
 import { ProviderHealthTracker, extractRateLimitInfo } from "./provider-health.js";
 import { parseSessionKey, type SessionContext } from "../types/session.js";
 import { beigeDir } from "../paths.js";
+import { validateModelAllowed } from "../config/restricted-model-registry.js";
 
 /**
  * Callback fired by the gateway when the agent is about to execute a tool.
@@ -476,6 +477,15 @@ export class AgentManager {
       await this.disposeSession(sessionKey);
     }
 
+    const agentConfig = this.config.agents[agentName];
+    if (!agentConfig) {
+      throw new Error(`Unknown agent: ${agentName}`);
+    }
+
+    // Validate that the requested model is allowed for this agent
+    const allowedModels = this.getAllowedModels(agentConfig);
+    validateModelAllowed(modelRef.provider, modelRef.model, allowedModels);
+
     // Check if we need to recreate the session with a different model
     const existing = this.sessions.get(sessionKey);
 
@@ -494,11 +504,6 @@ export class AgentManager {
       );
       existing.session.dispose();
       this.sessions.delete(sessionKey);
-    }
-
-    const agentConfig = this.config.agents[agentName];
-    if (!agentConfig) {
-      throw new Error(`Unknown agent: ${agentName}`);
     }
 
     // Determine session file
@@ -691,6 +696,23 @@ export class AgentManager {
     const custom = this.modelRegistry.find(provider, modelId);
     if (custom) return custom;
     throw new Error(`Model not found: ${provider}/${modelId}. Check your config and API keys.`);
+  }
+
+  /**
+   * Build the list of allowed models for an agent.
+   */
+  private getAllowedModels(agentConfig: AgentConfig): Array<{ provider: string; modelId: string }> {
+    const allowed: Array<{ provider: string; modelId: string }> = [
+      { provider: agentConfig.model.provider, modelId: agentConfig.model.model },
+    ];
+
+    if (agentConfig.fallbackModels) {
+      for (const fallback of agentConfig.fallbackModels) {
+        allowed.push({ provider: fallback.provider, modelId: fallback.model });
+      }
+    }
+
+    return allowed;
   }
 }
 

@@ -184,6 +184,18 @@ Tool `path` values are resolved relative to the config file's directory, unless 
 | `model` | Yes | Model ID as the provider expects it |
 | `thinkingLevel` | No | `off` \| `minimal` \| `low` \| `medium` \| `high` — extended thinking budget |
 
+### `agents.<name>.fallbackModels`
+
+Optional array of fallback models tried in order when the primary model fails (rate limits, errors).
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `provider` | Yes | Must match a key in `llm.providers` |
+| `model` | Yes | Model ID as the provider expects it |
+| `thinkingLevel` | No | `off` \| `minimal` \| `low` \| `medium` \| `high` |
+
+**Model restriction**: The `model` and `fallbackModels` define the **only** models an agent can use. Users cannot switch to other models via the TUI or API. This ensures predictable behavior and cost control.
+
 ### `agents.<name>.sandbox`
 
 | Field | Required | Description |

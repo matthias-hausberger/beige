@@ -23,6 +23,7 @@ import type { OnToolStart } from "../gateway/agent-manager.js";
 import { SessionSettingsStore, resolveSessionSetting } from "../gateway/session-settings.js";
 import { BeigeSessionStore } from "../gateway/sessions.js";
 import { loadSkills, buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
+import { RestrictedModelRegistry, buildAllowedModels } from "../config/restricted-model-registry.js";
 
 /**
  * TUI channel — runs in a separate process and connects to the gateway HTTP API.
@@ -67,7 +68,10 @@ interface TUIState {
   gatewayUrl: string;
   config: BeigeConfig;
   authStorage: AuthStorage;
-  modelRegistry: ModelRegistry;
+  /** Restricted registry that only exposes models allowed for this agent */
+  modelRegistry: RestrictedModelRegistry;
+  /** Underlying unrestricted registry for internal lookups */
+  underlyingModelRegistry: ModelRegistry;
   settingsStore: SessionSettingsStore;
   sessionStore: BeigeSessionStore;
   loadedSkills: Map<string, LoadedSkill>;
@@ -137,6 +141,12 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
   // ── Load skills ────────────────────────────────────────────
   const loadedSkills = await loadSkills(config);
 
+  // ── Create restricted model registry ──────────────────────
+  // The agent can only use models defined in its config (model + fallbackModels)
+  const agentConfig = config.agents[agentName];
+  const allowedModels = buildAllowedModels(agentConfig.model, agentConfig.fallbackModels);
+  const restrictedModelRegistry = new RestrictedModelRegistry(modelRegistry, allowedModels);
+
   // ── Shared state ──────────────────────────────────────────
   const settingsStore = new SessionSettingsStore();
   const sessionStore = new BeigeSessionStore();
@@ -144,13 +154,14 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
 
   const state: TUIState = {
     agentName,
-    agentConfig: config.agents[agentName],
+    agentConfig,
     session: null,
     toolStartHandlerRef,
     gatewayUrl,
     config,
     authStorage,
-    modelRegistry,
+    modelRegistry: restrictedModelRegistry,
+    underlyingModelRegistry: modelRegistry,
     settingsStore,
     sessionStore,
     loadedSkills,
@@ -181,6 +192,14 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
 
   // ── Launch pi TUI ─────────────────────────────────────────
   console.log(`[TUI] Agent: ${agentName} (${state.agentConfig.model.provider}/${state.agentConfig.model.model})`);
+
+  // Show allowed models (for model switching)
+  const availableModels = state.modelRegistry.getAvailable();
+  if (availableModels.length > 1) {
+    const modelList = availableModels.map(m => `${m.provider}/${m.id}`).join(", ");
+    console.log(`[TUI] Allowed models: ${modelList}`);
+  }
+
   console.log(`[TUI] Tools: ${agentInfo.tools.join(", ") || "(core only)"}`);
   console.log(`[TUI] Verbose: ${initialVerbose ? "on" : "off"} — use /beige-verbose on|off to toggle`);
   console.log(`[TUI] Commands: /beige-new, /beige-resume, /beige-sessions, /beige-agent <name>, /beige-verbose on|off (or /v on|off)`);
@@ -198,7 +217,7 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
  * Create a new pi session for the current agent in state.
  */
 async function createSession(state: TUIState, extensionsResult: LoadExtensionsResult): Promise<void> {
-  const { agentName, agentConfig, gatewayUrl, authStorage, modelRegistry, toolStartHandlerRef, loadedSkills } = state;
+  const { agentName, agentConfig, gatewayUrl, authStorage, modelRegistry, underlyingModelRegistry, toolStartHandlerRef, loadedSkills } = state;
 
   // Fetch agent info from gateway
   const agentsRes = await fetch(`${gatewayUrl}/api/agents`);
@@ -210,7 +229,8 @@ async function createSession(state: TUIState, extensionsResult: LoadExtensionsRe
   // Validate skill dependencies
   validateSkillDeps(skillNames, toolNames, loadedSkills);
 
-  const model = resolveModel(agentConfig, modelRegistry);
+  // Use underlying registry for model lookup (restricted registry delegates find())
+  const model = resolveModel(agentConfig, underlyingModelRegistry);
   const coreTools = createProxyTools(agentName, gatewayUrl, toolStartHandlerRef);
   const toolContext = buildToolContext(toolNames);
   const skillContext = buildSkillContext(skillNames, loadedSkills);
@@ -245,8 +265,13 @@ async function createSession(state: TUIState, extensionsResult: LoadExtensionsRe
     }),
     resourceLoader,
     authStorage,
-    modelRegistry,
+    // Pass underlying registry for session creation
+    modelRegistry: modelRegistry.getUnderlying(),
   });
+
+  // Replace the session's modelRegistry with our restricted version
+  // This ensures the TUI's model switcher only shows allowed models
+  (session as any)._modelRegistry = modelRegistry;
 
   state.session = session;
 }
@@ -297,7 +322,8 @@ async function buildBeigeExtension(
     const sessionManager = SessionManager.create(process.cwd(), sessionsDir);
 
     const resourceLoader = await buildResourceLoader(state);
-    const model = resolveModel(state.agentConfig, state.modelRegistry);
+    // Use underlying registry for model lookup
+    const model = resolveModel(state.agentConfig, state.underlyingModelRegistry);
     const coreTools = createProxyTools(state.agentName, state.gatewayUrl, state.toolStartHandlerRef);
 
     const { session } = await createAgentSession({
@@ -312,8 +338,12 @@ async function buildBeigeExtension(
       }),
       resourceLoader,
       authStorage: state.authStorage,
-      modelRegistry: state.modelRegistry,
+      // Pass underlying registry for session creation
+      modelRegistry: state.modelRegistry.getUnderlying(),
     });
+
+    // Replace the session's modelRegistry with our restricted version
+    (session as any)._modelRegistry = state.modelRegistry;
 
     state.session = session;
     ctx.ui.notify("🆕 New session started.", "info");
@@ -379,7 +409,8 @@ async function buildBeigeExtension(
     // Resume the selected session
     const sessionManager = SessionManager.open(targetSession.file);
     const resourceLoader = await buildResourceLoader(state);
-    const model = resolveModel(state.agentConfig, state.modelRegistry);
+    // Use underlying registry for model lookup
+    const model = resolveModel(state.agentConfig, state.underlyingModelRegistry);
     const coreTools = createProxyTools(state.agentName, state.gatewayUrl, state.toolStartHandlerRef);
 
     const { session } = await createAgentSession({
@@ -394,8 +425,12 @@ async function buildBeigeExtension(
       }),
       resourceLoader,
       authStorage: state.authStorage,
-      modelRegistry: state.modelRegistry,
+      // Pass underlying registry for session creation
+      modelRegistry: state.modelRegistry.getUnderlying(),
     });
+
+    // Replace the session's modelRegistry with our restricted version
+    (session as any)._modelRegistry = state.modelRegistry;
 
     state.session = session;
     ctx.ui.notify(`📂 Resumed session: ${basename(targetSession.file)}`, "info");
@@ -441,6 +476,10 @@ async function buildBeigeExtension(
     // Update state
     state.agentName = arg;
     state.agentConfig = newAgentConfig;
+
+    // Update restricted model registry for new agent's allowed models
+    const allowedModels = buildAllowedModels(newAgentConfig.model, newAgentConfig.fallbackModels);
+    state.modelRegistry = new RestrictedModelRegistry(state.underlyingModelRegistry, allowedModels);
 
     // Create new session for the new agent
     const extensionsResult = await buildBeigeExtension(state, availableAgents);
@@ -723,7 +762,7 @@ ${skillContext}
 `;
 }
 
-function resolveModel(agentConfig: AgentConfig, modelRegistry: ModelRegistry) {
+function resolveModel(agentConfig: AgentConfig, modelRegistry: ModelRegistry | RestrictedModelRegistry) {
   const { provider, model: modelId } = agentConfig.model;
   const model = getModel(provider as any, modelId);
   if (model) return model;

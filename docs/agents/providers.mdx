@@ -118,6 +118,14 @@ agents: {
 }
 ```
 
+### Model Restriction {#model-restriction}
+
+The `model` and `fallbackModels` fields define the **only** models an agent can use. Users cannot switch to other models via the TUI or API — even if other providers are configured. This ensures:
+
+- **Predictable behavior** — agents always use known, tested models
+- **Cost control** — no accidental usage of expensive models
+- **Compliance** — enforce model policies per agent
+
 ```mermaid
 flowchart TD
     A[Request arrives] --> B{Primary model<br/>available?}

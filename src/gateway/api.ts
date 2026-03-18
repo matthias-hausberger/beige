@@ -83,6 +83,7 @@ export class GatewayAPI {
         const agents = Object.entries(this.opts.config.agents).map(([name, config]) => ({
           name,
           model: config.model,
+          fallbackModels: config.fallbackModels ?? [],
           tools: config.tools,
           skills: config.skills ?? [],
         }));

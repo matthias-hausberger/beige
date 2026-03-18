@@ -1,5 +1,5 @@
 import Docker from "dockerode";
-import { mkdirSync, writeFileSync, chmodSync } from "fs";
+import { mkdirSync, writeFileSync, chmodSync, existsSync, readFileSync } from "fs";
 import { resolve, join } from "path";
 import { beigeDir } from "../paths.js";
 import { PassThrough } from "stream";
@@ -56,6 +56,9 @@ export class SandboxManager {
     mkdirSync(workspaceDir, { recursive: true });
     mkdirSync(socketsDir, { recursive: true });
     mkdirSync(launchersDir, { recursive: true });
+
+    // Populate AGENTS.md in the workspace if it doesn't exist yet
+    this.ensureAgentsMd(agentName, workspaceDir);
 
     // Generate tool launcher scripts
     this.generateLaunchers(agentName, agentConfig, launchersDir);
@@ -330,6 +333,30 @@ export class SandboxManager {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Write the default AGENTS.md into the agent's workspace if it doesn't already exist.
+   * The template lives alongside this module at src/gateway/default-agents-md.md.
+   * Once written the agent is free to edit the file — we never overwrite it.
+   */
+  private ensureAgentsMd(agentName: string, workspaceDir: string): void {
+    const agentsMdPath = join(workspaceDir, "AGENTS.md");
+    if (existsSync(agentsMdPath)) return;
+
+    try {
+      // Resolve relative to this compiled file: dist/sandbox/manager.js → up two levels
+      // → project root, then into dist/gateway/default-agents-md.md (copied by build)
+      const templatePath = fileURLToPath(
+        new URL("../gateway/default-agents-md.md", import.meta.url)
+      );
+      const content = readFileSync(templatePath, "utf-8");
+      writeFileSync(agentsMdPath, content, "utf-8");
+      console.log(`[SANDBOX] Created AGENTS.md for agent '${agentName}'`);
+    } catch (err) {
+      // Non-fatal — agent will simply start without a pre-populated AGENTS.md
+      console.warn(`[SANDBOX] Could not write AGENTS.md for agent '${agentName}': ${err}`);
     }
   }
 

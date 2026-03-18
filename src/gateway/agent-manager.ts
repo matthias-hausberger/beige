@@ -11,6 +11,8 @@ import {
   type ResourceLoader,
 } from "@mariozechner/pi-coding-agent";
 import { resolve } from "path";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
 import type { BeigeConfig, AgentConfig, ModelRef } from "../config/schema.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { AuditLogger } from "./audit.js";
@@ -18,6 +20,42 @@ import type { BeigeSessionStore } from "./sessions.js";
 import { createCoreTools, type ToolStartHandlerRef } from "../tools/core.js";
 import { buildToolContext, type LoadedTool } from "../tools/registry.js";
 import { buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
+
+/**
+ * Load the system prompt template from the file alongside this module.
+ * Falls back to a hardcoded default if the file cannot be read (e.g. in tests).
+ */
+function loadSystemPromptTemplate(): string {
+  try {
+    const templatePath = fileURLToPath(new URL("./system-prompt.template.md", import.meta.url));
+    return readFileSync(templatePath, "utf-8");
+  } catch {
+    // Fallback — keeps the system working even if the template file is missing
+    return [
+      'You are an AI agent named "{{agentName}}" running inside a secure sandbox managed by the Beige agent system.',
+      "",
+      "## Environment",
+      "",
+      "- You run inside a Docker container with a writable workspace at `/workspace`.",
+      "- You have 4 core tools: `read`, `write`, `patch`, and `exec`.",
+      "- Additional tools are available as executables in `/tools/bin/`. Run them with `exec`.",
+      "- Tool documentation is available in `/tools/packages/<name>/`.",
+      "- Your working directory is `/workspace`. Files you create persist here.",
+      "- You can write and execute scripts (TypeScript via Deno, shell scripts, Python, etc.).",
+      "- Your AGENTS.md file is at `/workspace/AGENTS.md`. Read it at the start of a session.",
+      "",
+      "{{toolContext}}",
+      "{{skillContext}}",
+      "## Guidelines",
+      "",
+      "- Be helpful and proactive.",
+      "- When tasks require multiple steps, write scripts to chain tool calls.",
+      "- Always handle errors gracefully.",
+    ].join("\n");
+  }
+}
+
+const SYSTEM_PROMPT_TEMPLATE = loadSystemPromptTemplate();
 import { ProviderHealthTracker, extractRateLimitInfo } from "./provider-health.js";
 import { parseSessionKey, type SessionContext } from "../types/session.js";
 import { beigeDir } from "../paths.js";
@@ -721,38 +759,8 @@ export class AgentManager {
 }
 
 export function buildSystemPrompt(agentName: string, toolContext: string, skillContext: string = ""): string {
-  return `You are an AI agent named "${agentName}" running inside a secure sandbox managed by the Beige agent system.
-
-## Environment
-
-- You run inside a Docker container with a writable workspace at \`/workspace\`.
-- You have 4 core tools: \`read\`, \`write\`, \`patch\`, and \`exec\`.
-- Additional tools are available as executables in \`/tools/bin/\`. Run them with \`exec\`.
-- Tool documentation is available in \`/tools/packages/<name>/\`.
-- Your working directory is \`/workspace\`. Files you create persist here.
-- You can write and execute scripts (TypeScript via Deno, shell scripts, Python, etc.).
-- Your AGENTS.md file is at \`/workspace/AGENTS.md\`. You can read and modify it.
-
-## How to Use Tools
-
-To call a tool, use the \`exec\` core tool:
-\`\`\`
-exec: /tools/bin/<tool-name> <args...>
-\`\`\`
-
-To write and run a script:
-1. Use \`write\` to create a script file in \`/workspace\`
-2. Use \`exec\` to run it (e.g., \`exec deno run --allow-all /workspace/script.ts\`)
-
-Scripts can call tools by executing \`/tools/bin/<tool-name>\` as subprocesses.
-
-${toolContext}
-${skillContext}
-## Guidelines
-
-- Be helpful and proactive.
-- When tasks require multiple steps, write scripts to chain tool calls.
-- If you're unsure about a tool, read its documentation in \`/tools/packages/<name>/\`.
-- Always handle errors gracefully.
-`;
+  return SYSTEM_PROMPT_TEMPLATE
+    .replace(/\{\{agentName\}\}/g, agentName)
+    .replace(/\{\{toolContext\}\}/g, toolContext)
+    .replace(/\{\{skillContext\}\}/g, skillContext);
 }

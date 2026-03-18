@@ -24,7 +24,8 @@
   ],
   "scripts": {
     "beige": "BEIGE_HOME=./.beige tsx src/cli.ts",
-    "build": "tsc",
+    "build": "tsc && pnpm run build:assets",
+    "build:assets": "mkdir -p dist/gateway && cp src/gateway/system-prompt.template.md dist/gateway/ && cp src/gateway/default-agents-md.md dist/gateway/",
     "start": "node dist/cli.js",
     "build:sandbox": "docker build -t beige-sandbox:latest ./sandbox",
     "schema:generate": "tsx scripts/generate-schema.ts",

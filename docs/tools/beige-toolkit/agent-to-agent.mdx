@@ -6,7 +6,7 @@ title: "Agent-to-Agent Tool"
 {/* Run: pnpm run docs:sync-toolkit */}
 
 
-Invoke another Beige agent and hold a multi-turn conversation with it. Every call returns the target agent's full response plus a **session key** you can pass back via `--session` to continue the same conversation.
+Invoke another Beige agent **or sub-agents (self)** and hold a multi-turn conversation with it. Every call returns the target agent's full response plus a **session key** you can pass back via `--session` to continue the same conversation.
 
 Sub-agent calls (an agent calling itself) work identically — include the agent's own name in its `allowedTargets` list.
 

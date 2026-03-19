@@ -125,6 +125,10 @@ Single config file (JSON5 — JSON with comments) drives the entire system. No d
         { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
       ],
       tools: ["kv"],
+      // Per-agent tool config overrides — deep-merged with tools.kv.config
+      // toolConfigs: {
+      //   kv: { denyCommands: ["del"] },
+      // },
       sandbox: { image: "beige-sandbox:latest" },
     },
   },
@@ -205,10 +209,13 @@ tools/kv/
 The gateway:
 
 1. Reads tool packages from config
-2. Generates a launcher script per tool per agent
-3. Mounts launchers read-only into `/tools/bin/`
-4. Mounts tool packages read-only into `/tools/packages/`
-5. Registers tool handlers for gateway-targeted tools
+2. Calls `createHandler(config)` for each tool to create base handlers
+3. For agents with `toolConfigs`, deep-merges the agent override with the base `tools.<name>.config` and calls `createHandler(mergedConfig)` to create a dedicated handler for that agent
+4. Generates a launcher script per tool per agent
+5. Mounts launchers read-only into `/tools/bin/`
+6. Mounts tool packages read-only into `/tools/packages/`
+
+At runtime, `ToolRunner` looks up the agent-specific handler first (if one exists), falling back to the base handler. Tools are unaware of this — they just receive the final merged config in `createHandler()`.
 
 ### 5. Tool Launcher (generated, mounted into sandbox)
 

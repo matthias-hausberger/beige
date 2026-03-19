@@ -104,6 +104,11 @@ Tool `path` values are resolved relative to the config file's directory, unless 
       ],
       tools: ["kv"],                              // tool names from the tools registry above
       skills: ["code-review"],                    // skill names from the skills registry above
+      toolConfigs: {                              // per-agent tool config overrides (deep-merged
+        kv: {                                     //   with the top-level tools.kv.config)
+          denyCommands: ["del"],
+        },
+      },
       sandbox: {
         image: "beige-sandbox:latest",            // Docker image (default)
         extraMounts: {                            // additional host→container bind mounts
@@ -228,6 +233,32 @@ agents: {
 }
 ```
 
+### `agents.<name>.toolConfigs`
+
+Optional. Per-agent tool config overrides. Each key must reference a tool in the agent's `tools` array. Values are **deep-merged** with the top-level `tools.<name>.config` — nested objects are recursively merged, while arrays and primitives from the agent override replace the base value.
+
+This is an alternative to registering the same tool under multiple names (e.g. `kv`, `kv-readonly`, `kv-nodelete`). When the only difference between agents is config, `toolConfigs` is cleaner.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `toolConfigs` | No | `{ "<toolName>": { ... } }` — overrides deep-merged with `tools.<toolName>.config` |
+
+```json5
+agents: {
+  // Instead of registering kv-nodelete as a separate tool,
+  // override the kv config for this specific agent:
+  "no-delete-agent": {
+    model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+    tools: ["kv"],
+    toolConfigs: {
+      kv: {
+        denyCommands: ["del"],  // merged with top-level tools.kv.config
+      },
+    },
+  },
+}
+```
+
 ### `gateway`
 
 | Field | Default | Description |
@@ -259,6 +290,7 @@ The gateway checks the following at startup and exits with an error if any check
 | Each agent has `model.provider` + `model.model` | Missing model config |
 | Agent's `model.provider` exists in `llm.providers` | Unknown provider |
 | Agent's tools all exist in `tools` registry | Unknown tool |
+| Agent's `toolConfigs` keys all exist in agent's `tools` | `toolConfigs` key not in agent's tools |
 | Agent's skills all exist in `skills` registry | Unknown skill |
 | Skill's `requires.tools` all in agent's `tools` | Missing required tool |
 | Skill's `requires.skills` all in agent's `skills` | Missing required skill |

@@ -160,6 +160,61 @@ describe("validateConfig", () => {
       });
       expect(() => validateConfig(config)).not.toThrow();
     });
+
+    it("accepts config with toolConfigs for a tool in agent.tools", () => {
+      const config = createMinimalConfig({
+        tools: {
+          kv: { path: "/tools/kv", target: "gateway", config: { timeout: 1000 } },
+        },
+        agents: {
+          assistant: {
+            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+            tools: ["kv"],
+            toolConfigs: {
+              kv: { timeout: 5000 },
+            },
+          },
+        },
+      });
+      expect(() => validateConfig(config)).not.toThrow();
+    });
+
+    it("accepts config with empty toolConfigs", () => {
+      const config = createMinimalConfig({
+        tools: {
+          kv: { path: "/tools/kv", target: "gateway" },
+        },
+        agents: {
+          assistant: {
+            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+            tools: ["kv"],
+            toolConfigs: {},
+          },
+        },
+      });
+      expect(() => validateConfig(config)).not.toThrow();
+    });
+
+    it("throws when toolConfigs references a tool not in agent.tools", () => {
+      const config = createMinimalConfig({
+        tools: {
+          kv: { path: "/tools/kv", target: "gateway" },
+          browser: { path: "/tools/browser", target: "gateway" },
+        },
+        agents: {
+          assistant: {
+            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+            tools: ["kv"],
+            toolConfigs: {
+              browser: { headless: true },
+            },
+          },
+        },
+      });
+      expect(() => validateConfig(config)).toThrow(
+        "has toolConfigs for 'browser' but that tool is not in agent.tools"
+      );
+    });
   });
 
   describe("channel validation", () => {

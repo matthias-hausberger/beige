@@ -9,6 +9,35 @@ export interface LoadedTool {
   handler?: ToolHandler;
 }
 
+/**
+ * Deep-merge two plain objects. Arrays and non-object values from `override`
+ * replace those in `base`; nested plain objects are merged recursively.
+ */
+export function deepMerge(
+  base: Record<string, unknown>,
+  override: Record<string, unknown>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...base };
+  for (const [key, val] of Object.entries(override)) {
+    if (
+      val !== null &&
+      typeof val === "object" &&
+      !Array.isArray(val) &&
+      typeof result[key] === "object" &&
+      result[key] !== null &&
+      !Array.isArray(result[key])
+    ) {
+      result[key] = deepMerge(
+        result[key] as Record<string, unknown>,
+        val as Record<string, unknown>
+      );
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
 export async function loadTools(
   config: BeigeConfig,
   runner: ToolRunner,
@@ -16,6 +45,10 @@ export async function loadTools(
 ): Promise<Map<string, LoadedTool>> {
   const tools = new Map<string, LoadedTool>();
 
+  // Cache imported modules so agent-specific overrides don't re-import
+  const moduleCache = new Map<string, Record<string, unknown>>();
+
+  // ── Phase 1: Load base (top-level) tool handlers ──────────────────────
   for (const [name, toolConfig] of Object.entries(config.tools)) {
     const manifest = loadToolManifest(toolConfig.path);
     const loaded: LoadedTool = {
@@ -27,10 +60,11 @@ export async function loadTools(
     if (toolConfig.target === "gateway") {
       const handlerPath = resolve(toolConfig.path, "index.ts");
       try {
-        const mod = await import(handlerPath);
+        const mod = await import(handlerPath) as Record<string, unknown>;
+        moduleCache.set(name, mod);
         if (typeof mod.createHandler === "function") {
           const handlerContext: ToolHandlerContext = { ...context };
-          const handler = mod.createHandler(toolConfig.config ?? {}, handlerContext);
+          const handler = (mod.createHandler as Function)(toolConfig.config ?? {}, handlerContext);
           runner.registerHandler(name, handler);
           loaded.handler = handler;
         } else {
@@ -42,6 +76,44 @@ export async function loadTools(
     }
 
     tools.set(name, loaded);
+  }
+
+  // ── Phase 2: Load agent-specific tool handler overrides ───────────────
+  for (const [agentName, agentConfig] of Object.entries(config.agents)) {
+    if (!agentConfig.toolConfigs) continue;
+
+    for (const [toolName, agentOverride] of Object.entries(agentConfig.toolConfigs)) {
+      const toolConfig = config.tools[toolName];
+      if (!toolConfig || toolConfig.target !== "gateway") continue;
+
+      const mod = moduleCache.get(toolName);
+      if (!mod || typeof mod.createHandler !== "function") continue;
+
+      const baseConfig = toolConfig.config ?? {};
+      const mergedConfig = deepMerge(baseConfig, agentOverride);
+      const handlerContext: ToolHandlerContext = { ...context };
+      const agentKey = `${agentName}:${toolName}`;
+
+      try {
+        const handler = (mod.createHandler as Function)(mergedConfig, handlerContext);
+        runner.registerHandler(agentKey, handler);
+
+        // Register the agent-specific loaded tool entry
+        const baseTool = tools.get(toolName);
+        if (baseTool) {
+          tools.set(agentKey, {
+            name: toolName,
+            manifest: baseTool.manifest,
+            path: baseTool.path,
+            handler,
+          });
+        }
+
+        console.log(`[TOOLS] Registered agent-specific handler '${agentKey}' (merged config)`);
+      } catch (err) {
+        console.error(`[TOOLS] Failed to load agent handler '${agentKey}':`, err);
+      }
+    }
   }
 
   return tools;

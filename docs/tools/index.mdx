@@ -70,6 +70,39 @@ Register the tool in `config.json5` and add it to the agent's `tools` list:
 
 For all tool config fields, see the [Config Reference](/agents/configuration).
 
+### Per-Agent Config Overrides
+
+If different agents need different configs for the same tool, you have two options:
+
+**Option A: Register the tool multiple times** under different names, each with its own config:
+
+```json5
+tools: {
+  kv:          { path: "./tools/kv", target: "gateway" },
+  "kv-readonly": { path: "./tools/kv", target: "gateway", config: { allowCommands: ["get", "list"] } },
+},
+agents: {
+  writer:  { tools: ["kv"] },
+  reader:  { tools: ["kv-readonly"] },
+},
+```
+
+**Option B: Use `toolConfigs`** to override config per agent. The override is deep-merged with the top-level `tools.<name>.config`:
+
+```json5
+tools: {
+  kv: { path: "./tools/kv", target: "gateway" },
+},
+agents: {
+  writer:  { tools: ["kv"] },                          // uses base config
+  reader:  { tools: ["kv"], toolConfigs: {              // overrides merged in
+    kv: { allowCommands: ["get", "list"] },
+  }},
+},
+```
+
+Option B is cleaner when the only difference is config — it avoids duplicating tool entries. See the [Config Reference](/agents/configuration#agentstoolconfigs) for details on the merge behavior.
+
 The agent can then read the tool's docs and invoke it:
 
 ```

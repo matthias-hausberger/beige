@@ -102,6 +102,48 @@ describe("ToolRunner", () => {
 
       expect(result.output).toBe("async result");
     });
+
+    it("prefers agent-specific handler when sessionContext.agentName is set", async () => {
+      const baseHandler: ToolHandler = async () => ({ output: "base", exitCode: 0 });
+      const agentHandler: ToolHandler = async () => ({ output: "agent-specific", exitCode: 0 });
+
+      runner.registerHandler("my-tool", baseHandler);
+      runner.registerHandler("researcher:my-tool", agentHandler);
+
+      // With agent name — should use agent-specific handler
+      const agentResult = await runner.run("my-tool", [], {
+        channel: "test",
+        agentName: "researcher",
+      } as any);
+      expect(agentResult.output).toBe("agent-specific");
+
+      // Without agent name — should fall back to base handler
+      const baseResult = await runner.run("my-tool", []);
+      expect(baseResult.output).toBe("base");
+    });
+
+    it("falls back to base handler when no agent-specific handler exists", async () => {
+      const baseHandler: ToolHandler = async () => ({ output: "base", exitCode: 0 });
+
+      runner.registerHandler("my-tool", baseHandler);
+
+      // Agent name provided but no agent-specific handler registered
+      const result = await runner.run("my-tool", [], {
+        channel: "test",
+        agentName: "assistant",
+      } as any);
+      expect(result.output).toBe("base");
+    });
+
+    it("returns error when neither agent-specific nor base handler exists", async () => {
+      const result = await runner.run("missing", [], {
+        channel: "test",
+        agentName: "assistant",
+      } as any);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("Unknown tool");
+    });
   });
 });
 

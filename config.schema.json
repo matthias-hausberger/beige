@@ -269,6 +269,18 @@
                   }
                 }
               }
+            },
+            "toolConfigs": {
+              "description": "Per-agent tool config overrides. Keys must reference tools in this agent's tools array. Values are deep-merged with the top-level tool config from config.tools.<name>.config.",
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  }
+                }
+              }
             }
           }
         }

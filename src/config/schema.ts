@@ -75,6 +75,17 @@ const AgentConfig = Type.Object(
       })
     ),
     sandbox: Type.Optional(SandboxConfig),
+    toolConfigs: Type.Optional(
+      Type.Record(
+        Type.String(),
+        Type.Record(Type.String(), Type.Unknown()),
+        {
+          description:
+            "Per-agent tool config overrides. Keys must reference tools in this agent's tools array. " +
+            "Values are deep-merged with the top-level tool config from config.tools.<name>.config.",
+        }
+      )
+    ),
   },
   { title: "AgentConfig" }
 );
@@ -310,6 +321,13 @@ export function validateConfig(config: unknown): BeigeConfig {
       if (!c.skills?.[skillName]) {
         throw new Error(
           `Config: agent '${agentName}' references unknown skill '${skillName}'`
+        );
+      }
+    }
+    for (const toolName of Object.keys(agent.toolConfigs ?? {})) {
+      if (!agent.tools.includes(toolName)) {
+        throw new Error(
+          `Config: agent '${agentName}' has toolConfigs for '${toolName}' but that tool is not in agent.tools`
         );
       }
     }

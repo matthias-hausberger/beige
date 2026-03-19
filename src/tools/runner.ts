@@ -48,7 +48,13 @@ export class ToolRunner {
   }
 
   async run(toolName: string, args: string[], sessionContext?: SessionContext): Promise<ToolResult> {
-    const handler = this.handlers.get(toolName);
+    // Prefer agent-specific handler (registered as "agentName:toolName"),
+    // fall back to the base handler.
+    const agentKey = sessionContext?.agentName
+      ? `${sessionContext.agentName}:${toolName}`
+      : undefined;
+    const handler =
+      (agentKey && this.handlers.get(agentKey)) ?? this.handlers.get(toolName);
     if (!handler) {
       return {
         output: `Unknown tool: ${toolName}`,

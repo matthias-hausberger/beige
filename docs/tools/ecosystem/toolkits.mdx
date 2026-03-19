@@ -163,6 +163,31 @@ After installing a toolkit, its tools are automatically available in your config
 
 The gateway automatically discovers tools from installed toolkits at startup.
 
+### Per-Agent Config Overrides
+
+Toolkit tools support `toolConfigs` just like manually registered tools. If a toolkit tool accepts config via `createHandler(config)`, you can override it per agent without re-registering the tool:
+
+```json5
+{
+  agents: {
+    assistant: {
+      tools: ["slack"],
+      toolConfigs: {
+        slack: { defaultChannel: "#general" },  // deep-merged with base config
+      },
+    },
+    ops: {
+      tools: ["slack"],
+      toolConfigs: {
+        slack: { defaultChannel: "#ops-alerts" },
+      },
+    },
+  },
+}
+```
+
+See the [Config Reference](/agents/configuration#agentstoolconfigs) for details on the merge behavior.
+
 ## Conflict Resolution
 
 If two toolkits contain tools with the same name, installation will fail:

@@ -1,10 +1,79 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { loadTools, buildToolContext } from "./registry.js";
+import { loadTools, buildToolContext, deepMerge } from "./registry.js";
 import { ToolRunner } from "./runner.js";
 import { createMinimalConfig } from "../test/fixtures.js";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+
+describe("deepMerge", () => {
+  it("merges flat objects", () => {
+    const base = { a: 1, b: 2 };
+    const override = { b: 3, c: 4 };
+    expect(deepMerge(base, override)).toEqual({ a: 1, b: 3, c: 4 });
+  });
+
+  it("deep-merges nested objects", () => {
+    const base = { viewport: { width: 1280, height: 720 }, timeout: 30000 };
+    const override = { viewport: { width: 1920 } };
+    expect(deepMerge(base, override)).toEqual({
+      viewport: { width: 1920, height: 720 },
+      timeout: 30000,
+    });
+  });
+
+  it("replaces arrays (does not merge them)", () => {
+    const base = { items: [1, 2, 3] };
+    const override = { items: [4, 5] };
+    expect(deepMerge(base, override)).toEqual({ items: [4, 5] });
+  });
+
+  it("replaces null values", () => {
+    const base = { a: { nested: true } };
+    const override = { a: null };
+    expect(deepMerge(base, override)).toEqual({ a: null });
+  });
+
+  it("replaces primitives in override", () => {
+    const base = { a: "string" };
+    const override = { a: 42 };
+    expect(deepMerge(base, override)).toEqual({ a: 42 });
+  });
+
+  it("does not mutate base or override", () => {
+    const base = { a: { x: 1 }, b: 2 };
+    const override = { a: { y: 2 }, c: 3 };
+    const baseCopy = JSON.parse(JSON.stringify(base));
+    const overrideCopy = JSON.parse(JSON.stringify(override));
+
+    deepMerge(base, override);
+
+    expect(base).toEqual(baseCopy);
+    expect(override).toEqual(overrideCopy);
+  });
+
+  it("handles empty base", () => {
+    expect(deepMerge({}, { a: 1 })).toEqual({ a: 1 });
+  });
+
+  it("handles empty override", () => {
+    expect(deepMerge({ a: 1 }, {})).toEqual({ a: 1 });
+  });
+
+  it("handles deeply nested merges", () => {
+    const base = { level1: { level2: { level3: { a: 1, b: 2 } } } };
+    const override = { level1: { level2: { level3: { b: 99 } } } };
+    expect(deepMerge(base, override)).toEqual({
+      level1: { level2: { level3: { a: 1, b: 99 } } },
+    });
+  });
+
+  it("override can replace an object with a primitive", () => {
+    const base = { a: { nested: true } };
+    const override = { a: "flat" };
+    expect(deepMerge(base, override)).toEqual({ a: "flat" });
+  });
+});
 
 describe("loadTools", () => {
   let tempDir: string;
@@ -257,6 +326,160 @@ describe("loadTools", () => {
     // Should not throw — context is optional
     await expect(loadTools(config, runner)).resolves.toBeDefined();
     expect(runner.hasHandler("compat-tool")).toBe(true);
+  });
+
+  it("registers agent-specific handlers for toolConfigs overrides", async () => {
+    // Create a tool that echoes its config back so we can verify the merge
+    const toolDir = join(tempDir, "configurable");
+    mkdirSync(toolDir, { recursive: true });
+    writeFileSync(
+      join(toolDir, "tool.json"),
+      JSON.stringify({ name: "configurable", description: "Configurable tool", target: "gateway" })
+    );
+    writeFileSync(
+      join(toolDir, "index.ts"),
+      `
+        export function createHandler(config) {
+          return async (args) => {
+            return { output: JSON.stringify(config), exitCode: 0 };
+          };
+        }
+      `
+    );
+
+    const config = createMinimalConfig({
+      tools: {
+        configurable: {
+          path: toolDir,
+          target: "gateway",
+          config: { timeout: 1000, headless: true },
+        },
+      },
+      agents: {
+        assistant: {
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          tools: ["configurable"],
+          // No toolConfigs — uses top-level config
+        },
+        researcher: {
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          tools: ["configurable"],
+          toolConfigs: {
+            configurable: { timeout: 5000 },
+          },
+        },
+      },
+    });
+
+    const tools = await loadTools(config, runner);
+
+    // Base handler registered
+    expect(runner.hasHandler("configurable")).toBe(true);
+    // Agent-specific handler registered
+    expect(runner.hasHandler("researcher:configurable")).toBe(true);
+
+    // Verify base handler returns top-level config
+    const baseResult = await runner.run("configurable", []);
+    expect(JSON.parse(baseResult.output)).toEqual({ timeout: 1000, headless: true });
+
+    // Verify agent-specific handler returns deep-merged config
+    const agentResult = await runner.run("researcher:configurable", []);
+    expect(JSON.parse(agentResult.output)).toEqual({ timeout: 5000, headless: true });
+  });
+
+  it("does not register agent-specific handlers when no toolConfigs", async () => {
+    createToolPackage("plain-tool", "gateway", true);
+
+    const config = createMinimalConfig({
+      tools: {
+        "plain-tool": { path: join(tempDir, "plain-tool"), target: "gateway" },
+      },
+      agents: {
+        assistant: {
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          tools: ["plain-tool"],
+        },
+      },
+    });
+
+    await loadTools(config, runner);
+
+    expect(runner.hasHandler("plain-tool")).toBe(true);
+    expect(runner.hasHandler("assistant:plain-tool")).toBe(false);
+  });
+
+  it("skips agent-specific handlers for sandbox tools", async () => {
+    createToolPackage("sandbox-cfg", "sandbox", true);
+
+    const config = createMinimalConfig({
+      tools: {
+        "sandbox-cfg": { path: join(tempDir, "sandbox-cfg"), target: "sandbox" },
+      },
+      agents: {
+        assistant: {
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          tools: ["sandbox-cfg"],
+          toolConfigs: {
+            "sandbox-cfg": { some: "override" },
+          },
+        },
+      },
+    });
+
+    await loadTools(config, runner);
+
+    expect(runner.hasHandler("sandbox-cfg")).toBe(false);
+    expect(runner.hasHandler("assistant:sandbox-cfg")).toBe(false);
+  });
+
+  it("deep-merges nested tool config with agent override", async () => {
+    const toolDir = join(tempDir, "nested-cfg");
+    mkdirSync(toolDir, { recursive: true });
+    writeFileSync(
+      join(toolDir, "tool.json"),
+      JSON.stringify({ name: "nested-cfg", description: "Nested config tool", target: "gateway" })
+    );
+    writeFileSync(
+      join(toolDir, "index.ts"),
+      `
+        export function createHandler(config) {
+          return async () => ({ output: JSON.stringify(config), exitCode: 0 });
+        }
+      `
+    );
+
+    const config = createMinimalConfig({
+      tools: {
+        "nested-cfg": {
+          path: toolDir,
+          target: "gateway",
+          config: {
+            viewport: { width: 1280, height: 720 },
+            blockedDomains: [],
+          },
+        },
+      },
+      agents: {
+        researcher: {
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          tools: ["nested-cfg"],
+          toolConfigs: {
+            "nested-cfg": {
+              viewport: { width: 1920 },
+              blockedDomains: ["ads.example.com"],
+            },
+          },
+        },
+      },
+    });
+
+    await loadTools(config, runner);
+
+    const result = await runner.run("researcher:nested-cfg", []);
+    expect(JSON.parse(result.output)).toEqual({
+      viewport: { width: 1920, height: 720 },
+      blockedDomains: ["ads.example.com"],
+    });
   });
 });
 

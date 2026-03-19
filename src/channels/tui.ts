@@ -671,7 +671,7 @@ function buildToolContext(toolNames: string[]): string {
   }
 
   lines.push("");
-  lines.push("Read tool documentation: `exec: cat /tools/packages/<name>/README.md`");
+  lines.push("Read tool usage guide: `exec: cat /tools/packages/<name>/SKILL.md`");
   return lines.join("\n");
 }
 
@@ -683,7 +683,8 @@ function buildSystemPrompt(agentName: string, toolContext: string, skillContext:
 - You run inside a Docker container with a writable workspace at \`/workspace\`.
 - You have 4 core tools: \`read\`, \`write\`, \`patch\`, and \`exec\`.
 - Additional tools are available as executables in \`/tools/bin/\`. Run them with \`exec\`.
-- Tool documentation is available in \`/tools/packages/<name>/\`.
+- Tool usage guides are at \`/tools/packages/<name>/SKILL.md\` — read this first when using a tool.
+- Tool reference documentation (config, prerequisites) is at \`/tools/packages/<name>/README.md\`.
 - Your working directory is \`/workspace\`. Files you create persist here.
 - You can write and execute scripts (TypeScript via Deno, shell scripts, Python, etc.).
 
@@ -706,7 +707,7 @@ ${skillContext}
 
 - Be helpful and proactive.
 - When tasks require multiple steps, write scripts to chain tool calls.
-- If you're unsure about a tool, read its documentation in \`/tools/packages/<name>/\`.
+- If you're unsure about a tool, read its usage guide at \`/tools/packages/<name>/SKILL.md\`.
 - Always handle errors gracefully.
 `;
 }

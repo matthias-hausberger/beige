@@ -80,8 +80,7 @@ Use beige's `toolConfigs` to give different agents different Slack permissions:
 ```json5
 tools: {
   slack: {
-    path: "~/.beige/toolkits/beige-toolkit/tools/slack",
-    target: "gateway",
+    // installed via: beige tools install npm:@matthias-hausberger/beige-toolkit
     config: {
       // Baseline: read-only, no sending
       denyCommands: ["messages send", "messages draft",

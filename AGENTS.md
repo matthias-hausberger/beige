@@ -55,7 +55,7 @@ src/
 ├── skills/           # Skill loading and context building (registry.ts)
 ├── socket/           # Unix socket server + protocol (server.ts, protocol.ts)
 ├── tools/            # Tool registry, runner, core tools (registry.ts, runner.ts, core.ts)
-├── toolkit/          # Toolkit system (schema.ts, registry.ts, installer.ts)
+├── tools/            # Tool registry, runner, core tools, installer (registry.ts, runner.ts, core.ts, installer.ts)
 ├── cli.ts            # CLI entry point
 └── index.ts          # Programmatic exports
 sandbox/              # Dockerfile + tool-client for sandbox containers
@@ -76,7 +76,8 @@ project/              # Vision + use cases
 - `docs/configuration.md` — full config reference, directory layout
 - `docs/tools.md` — writing tools, protocol, mounting
 - `docs/skills.md` — writing skills, dependencies, mounting
-- `docs/toolkits.md` — creating, publishing, and installing toolkits
+- `docs/tools/installing.mdx` — installing tools from npm, GitHub, local
+- `docs/tools/building/` — creating and distributing tools
 - `docs/api.md` — HTTP API reference for gateway endpoints
 - `docs/design/vision.md` — project vision and goals
 - `docs/design/usecases.md` — use cases

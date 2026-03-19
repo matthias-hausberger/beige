@@ -133,8 +133,7 @@ Use beige's `toolConfigs` to give different agents different Confluence permissi
 ```json5
 tools: {
   confluence: {
-    path: "~/.beige/toolkits/beige-toolkit/tools/confluence",
-    target: "gateway",
+    // installed via: beige tools install npm:@matthias-hausberger/beige-toolkit
     config: {
       // Baseline: read-only, all spaces
       denyCommands: ["create", "create-child", "update", "delete", "move", "copy-tree",

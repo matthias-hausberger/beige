@@ -1,0 +1,176 @@
+---
+title: "Distributing Tools"
+description: "Share tools via GitHub or npm — single tools or multi-tool repositories"
+---
+
+Tools can be distributed as standalone repositories, as part of a multi-tool repository, or as npm packages.
+
+## Single Tool Repository
+
+The simplest distribution: a Git repository that IS a tool.
+
+```
+my-tool/
+├── tool.json
+├── package.json     # optional — for npm dependencies and/or publishing
+├── index.ts
+├── README.md
+└── SKILL.md
+```
+
+Users install with:
+
+```bash
+beige tools install github:owner/my-tool
+```
+
+## Multi-Tool Repository
+
+A single repository containing multiple tools. No special manifest needed — the installer discovers tools by scanning for `tool.json` files.
+
+```
+beige-toolkit/
+├── package.json              # for npm publishing + dev dependencies
+├── pnpm-workspace.yaml       # optional — for pnpm workspace development
+├── tools/
+│   ├── github/
+│   │   ├── tool.json
+│   │   ├── package.json      # tool's own dependencies (if any)
+│   │   ├── index.ts
+│   │   └── README.md
+│   ├── chrome/
+│   │   ├── tool.json
+│   │   ├── package.json
+│   │   ├── index.ts
+│   │   ├── mcp-client.ts
+│   │   └── README.md
+│   └── slack/
+│       ├── tool.json
+│       ├── index.ts
+│       └── README.md
+```
+
+Users can install all tools at once:
+
+```bash
+beige tools install github:owner/beige-toolkit
+```
+
+Or cherry-pick individual tools:
+
+```bash
+beige tools install github:owner/beige-toolkit/tools/github
+beige tools install github:owner/beige-toolkit/tools/chrome
+```
+
+### Development with pnpm Workspaces
+
+For multi-tool repositories, pnpm workspaces give you per-tool dependency management and testing:
+
+```yaml
+# pnpm-workspace.yaml
+packages:
+  - "tools/*"
+```
+
+Each tool is a workspace package with its own `package.json`. Development commands work per-tool:
+
+```bash
+pnpm install                               # install all tool dependencies
+pnpm --filter @beige/tool-chrome test      # test one tool
+pnpm test                                   # test all tools
+```
+
+The choice of development package manager (pnpm, npm, yarn) is invisible to the installer — it always runs `npm install --production` per tool.
+
+## Publishing to npm
+
+Publishing to npm gives you versioned releases and easy installation.
+
+### Root package.json
+
+The root `package.json` defines what goes into the npm tarball:
+
+```json
+{
+  "name": "@myorg/beige-toolkit",
+  "version": "1.0.0",
+  "files": [
+    "tools/*/*.ts",
+    "tools/*/tool.json",
+    "tools/*/package.json",
+    "tools/*/README.md",
+    "tools/*/SKILL.md",
+    "tools/*/skills/**"
+  ],
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.0"
+  }
+}
+```
+
+<Warning>
+Don't put runtime `dependencies` in the root `package.json` — put them in each tool's own `package.json`. The installer runs `npm install --production` per tool directory, not at the package root.
+</Warning>
+
+### Publishing
+
+```bash
+npm publish --access public
+```
+
+Users install with:
+
+```bash
+beige tools install npm:@myorg/beige-toolkit
+beige tools install npm:@myorg/beige-toolkit@1.0.0
+beige tools install npm:@myorg/beige-toolkit@1.2.0-beta.1
+```
+
+### Both npm and GitHub
+
+A multi-tool repository can support both install methods:
+
+| Method | Command | What happens |
+|--------|---------|-------------|
+| npm (all tools) | `beige tools install npm:@myorg/toolkit` | Fetches the published package, installs all tools |
+| GitHub (all tools) | `beige tools install github:owner/toolkit` | Fetches the repo, installs all tools |
+| GitHub (one tool) | `beige tools install github:owner/toolkit/tools/github` | Fetches the repo, installs just that tool |
+
+For this to work, each tool's `package.json` must list its own dependencies (not rely on the root `package.json`), since the GitHub individual-install path only copies the tool's directory.
+
+## Tool Discovery Rules
+
+The installer finds tools by recursively scanning for `tool.json` files. It skips:
+
+- `node_modules/`
+- `.git/`
+- `__tests__/`, `test/`, `tests/`
+- Hidden directories (starting with `.`)
+- `dist/`, `scripts/`
+
+Once a `tool.json` is found, the installer does NOT recurse into that directory — a `tool.json` marks a leaf node.
+
+## Best Practices
+
+### Naming
+- Use descriptive, unique tool names in `tool.json`
+- For npm packages, use your scope: `@myorg/beige-toolkit`
+- The tool's `name` in `tool.json` is what users reference in configs
+
+### Self-Contained Tools
+- Never import from the Beige source tree
+- Define types inline or include them in the tool package
+- Keep each tool's dependencies in its own `package.json`
+
+### Documentation
+- Include `SKILL.md` (for agents) and `README.md` (for humans) in every tool
+- Document all config options in `README.md`
+- Show practical examples in `SKILL.md`
+
+### Versioning
+Use semantic versioning for npm packages:
+- **Patch**: bug fixes
+- **Minor**: new tools added, non-breaking changes to existing tools
+- **Major**: breaking changes to tool interfaces or config

@@ -1,6 +1,6 @@
 ---
-title: "Build your own tools"
-description: "Create custom tools for agents to use via exec"
+title: "Tool Anatomy"
+description: "Package structure, manifest, handler API, and documentation"
 ---
 
 A tool is a directory containing a manifest (`tool.json`), a handler (`index.ts`), and documentation (`README.md` + `SKILL.md`). The gateway mounts each tool into the sandbox as an executable at `/tools/bin/<name>`.
@@ -11,10 +11,11 @@ A tool is a directory containing a manifest (`tool.json`), a handler (`index.ts`
 
 ```
 tools/my-tool/
-├── tool.json     # Manifest: name, description, commands, target
-├── index.ts      # Handler (runs on the gateway host)
-├── README.md     # User/developer documentation (overview, config, prerequisites)
-└── SKILL.md      # Agent usage guide (examples, workflows, calling conventions)
+├── tool.json      # Manifest: name, description, commands, target
+├── package.json   # Optional: npm dependencies for this tool
+├── index.ts       # Handler (runs on the gateway host)
+├── README.md      # User/developer documentation (overview, config, prerequisites)
+└── SKILL.md       # Agent usage guide (examples, workflows, calling conventions)
 ```
 
 ---
@@ -35,18 +36,39 @@ tools/my-tool/
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `name` | Tool identifier — used in config, launchers, audit logs, and `/tools/bin/` |
-| `description` | Short description included in the LLM's system prompt |
-| `commands` | Usage hints shown in the system prompt |
-| `target` | Where the handler executes: `"gateway"` (current) or `"sandbox"` (future) |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Tool identifier — used in config, launchers, audit logs, and `/tools/bin/` |
+| `description` | Yes | Short description included in the LLM's system prompt |
+| `commands` | No | Usage hints shown in the system prompt |
+| `target` | Yes | Where the handler executes: `"gateway"` (current) or `"sandbox"` (future) |
+
+---
+
+## package.json — Dependencies (Optional)
+
+If your tool needs npm packages at runtime, add a `package.json` with `dependencies`:
+
+```json
+{
+  "name": "@beige/tool-my-tool",
+  "dependencies": {
+    "some-api-client": "1.2.3"
+  }
+}
+```
+
+When the tool is installed via `beige tools install`, the installer runs `npm install --production` in the tool's directory automatically.
+
+<Note>
+Pin exact versions (e.g., `"1.2.3"` not `"^1.2.3"`) for reproducibility, since lockfiles are not included when tools are installed.
+</Note>
 
 ---
 
 ## index.ts — Handler
 
-Tool handlers export a `createHandler` factory function. The handler receives an array of string arguments (the command and its arguments) and returns `{ output, exitCode }`.
+Tool handlers export a `createHandler` factory function. The handler receives an array of string arguments and returns `{ output, exitCode }`.
 
 **Important:** Tool packages must be **self-contained** — do not import from the Beige source tree. Installed tools live at `~/.beige/tools/<name>/` with no source tree available.
 
@@ -80,7 +102,7 @@ export function createHandler(config: Record<string, unknown>): ToolHandler {
 }
 ```
 
-The `config` parameter receives the `config` field from `config.json5` for this tool (useful for per-tool settings like API keys or allowed channels).
+The `config` parameter receives the `config` field from `config.json5` for this tool.
 
 ---
 
@@ -90,8 +112,8 @@ Each tool has two documentation files, both mounted into the sandbox at `/tools/
 
 | File | Audience | Purpose |
 |---|---|---|
-| `README.md` | **Users / developers** | Overview, prerequisites, configuration reference, setup instructions. Written for humans browsing GitHub. |
-| `SKILL.md` | **AI agents** | Usage examples, calling conventions, practical workflows. Written for the LLM. |
+| `README.md` | **Users / developers** | Overview, prerequisites, configuration reference, setup instructions |
+| `SKILL.md` | **AI agents** | Usage examples, calling conventions, practical workflows |
 
 Agents are instructed to read `SKILL.md` first when using a tool:
 
@@ -102,7 +124,7 @@ exec cat /tools/packages/kv/README.md   # for config details if needed
 
 ### SKILL.md — Agent Usage Guide
 
-Write `SKILL.md` as a practical guide for the agent — examples, calling conventions, workflows:
+Write `SKILL.md` as a practical guide for the agent:
 
 ```markdown
 # My Tool — Usage Guide
@@ -124,39 +146,17 @@ Write `SKILL.md` as a practical guide for the agent — examples, calling conven
 \`\`\`
 ```
 
-### README.md — User Documentation
-
-Write `README.md` for humans looking at the project on GitHub — what the tool does, how to configure it, what the prerequisites are:
-
-```markdown
-# My Tool
-
-Brief description of what this tool does.
-
-## Prerequisites
-
-- Node.js ≥ 22
-
-## Configuration
-
-\`\`\`json5
-config: {
-  allowedCommands: ["greet"],
-}
-\`\`\`
-```
-
 ### skills/ subfolder (optional)
 
-For complex tools with many capabilities, you can create a `skills/` subfolder with specialized guides. The main `SKILL.md` references them so the agent can load them on demand:
+For complex tools with many capabilities, create a `skills/` subfolder with specialized guides:
 
 ```
 tools/chrome/
 ├── SKILL.md              # Main agent guide, references skills/
 └── skills/
-    ├── navigation.md     # Navigation & page management
-    ├── interaction.md    # DOM inspection & form filling
-    └── network-performance.md  # Network monitoring & perf analysis
+    ├── navigation.md
+    ├── interaction.md
+    └── network-performance.md
 ```
 
 ---
@@ -166,7 +166,7 @@ tools/chrome/
 ```mermaid
 flowchart TD
     subgraph Host["Gateway Host"]
-        TP["tools/kv/<br/>tool.json, index.ts, README.md, SKILL.md"]
+        TP["~/.beige/tools/kv/<br/>tool.json, index.ts, README.md, SKILL.md"]
         GL["~/.beige/agents/assistant/launchers/<br/>kv (generated launcher script)"]
     end
 
@@ -190,8 +190,6 @@ The gateway generates a launcher script for each tool:
 # Tool: kv | Target: gateway
 exec /beige/tool-client "kv" "$@"
 ```
-
-The launcher calls `tool-client` — a Deno script baked into the sandbox image that connects to the gateway Unix socket, sends the request, and returns the result.
 
 ---
 
@@ -221,7 +219,6 @@ tools/my-tool/
 ### Step 3: Implement the handler
 
 ```typescript
-// tools/my-tool/index.ts
 type ToolHandler = (
   args: string[],
   config?: Record<string, unknown>
@@ -240,6 +237,8 @@ export function createHandler(config: Record<string, unknown>): ToolHandler {
 
 ### Step 4: Register in config
 
+For local development, register the tool with an explicit path:
+
 ```json5
 {
   tools: {
@@ -250,7 +249,22 @@ export function createHandler(config: Record<string, unknown>): ToolHandler {
   },
   agents: {
     assistant: {
-      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+      tools: ["my-tool"],
+    },
+  },
+}
+```
+
+Or install it and skip the path/target:
+
+```bash
+beige tools install ./tools/my-tool
+```
+
+```json5
+{
+  agents: {
+    assistant: {
       tools: ["my-tool"],
     },
   },
@@ -263,43 +277,6 @@ export function createHandler(config: Record<string, unknown>): ToolHandler {
 beige gateway restart
 ```
 
-The agent can now invoke the tool:
-
-```
-exec cat /tools/packages/my-tool/SKILL.md    # learn how to use it
-exec /tools/bin/my-tool run hello
-→ Processed: hello
-```
-
----
-
-## Config-Driven Tool Variants
-
-The same tool package can be registered multiple times with different configs:
-
-```json5
-{
-  tools: {
-    "slack": {
-      path: "./tools/slack",
-      target: "gateway",
-      config: { allowedChannels: ["#general"] },
-    },
-    "slack-admin": {
-      path: "./tools/slack",
-      target: "gateway",
-      config: { allowedChannels: ["*"] },
-    },
-  },
-  agents: {
-    intern: { tools: ["slack"] },
-    admin:  { tools: ["slack-admin"] },
-  },
-}
-```
-
-The `config` object is passed to `createHandler(config)` at startup.
-
 ---
 
 ## Execution Targets
@@ -310,9 +287,3 @@ The `config` object is passed to `createHandler(config)` at startup.
 | `sandbox` | Inside the agent's Docker container | 🔮 Future |
 
 Gateway-targeted tools are appropriate for anything requiring host resources: databases, external APIs, host filesystem access that the agent shouldn't reach directly.
-
----
-
-## Distributing Tools as Toolkits
-
-To package and share multiple tools together, see [Toolkits](/tools/toolkits).

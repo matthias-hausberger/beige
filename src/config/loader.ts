@@ -3,53 +3,42 @@ import { resolve, dirname } from "path";
 import { beigeDir } from "../paths.js";
 import JSON5 from "json5";
 import { type BeigeConfig, type ToolConfig, type SkillConfig, validateConfig } from "./schema.js";
-import { listInstalledToolkits, getToolkitsDir } from "../toolkit/registry.js";
+import { listInstalledTools } from "../tools/installer.js";
 
-const TOOLKIT_MARK = "_toolkit";
+/**
+ * Merge installed tools (from ~/.beige/tools/) into the config.
+ *
+ * For each installed tool:
+ * - If the tool is already in config.tools with path+target: skip (user override)
+ * - If the tool is in config.tools without path/target: enrich with installed path+target
+ * - If the tool is not in config.tools: add it with path+target from disk
+ */
+function mergeInstalledTools(config: BeigeConfig): void {
+  const installed = listInstalledTools();
 
-interface ToolkitRegistry {
-  version: number;
-  toolkits: Record<string, {
-    name: string;
-    path: string;
-    tools: string[];
-  }>;
-}
+  for (const tool of installed) {
+    const existing = config.tools[tool.name];
 
-function loadToolkitRegistry(): ToolkitRegistry | null {
-  const registryPath = resolve(beigeDir(), "toolkit-registry.json");
-  if (!existsSync(registryPath)) {
-    return null;
-  }
-  try {
-    const content = readFileSync(registryPath, "utf-8");
-    return JSON.parse(content);
-  } catch {
-    return null;
-  }
-}
+    if (existing && existing.path && existing.target) {
+      // User has fully specified this tool — skip
+      continue;
+    }
 
-function mergeToolkitTools(config: BeigeConfig, configDir: string): void {
-  const registry = loadToolkitRegistry();
-  if (!registry) {
-    return;
-  }
-
-  for (const [toolkitName, toolkit] of Object.entries(registry.toolkits)) {
-    for (const toolName of toolkit.tools) {
-      if (config.tools[toolName]) {
-        continue;
+    if (existing) {
+      // User defined the tool (likely for config overrides) but without path/target.
+      // Enrich from the installed tool.
+      if (!existing.path) {
+        existing.path = tool.path;
       }
-      
-      const toolPath = resolve(toolkit.path, "tools", toolName);
-      
-      const toolConfig: ToolConfig & { [TOOLKIT_MARK]?: string } = {
-        path: toolPath,
-        target: "gateway",
-        [TOOLKIT_MARK]: toolkitName,
+      if (!existing.target) {
+        existing.target = tool.manifest.target;
+      }
+    } else {
+      // Tool not in config at all — auto-add from installed tools.
+      config.tools[tool.name] = {
+        path: tool.path,
+        target: tool.manifest.target,
       };
-      
-      config.tools[toolName] = toolConfig;
     }
   }
 }
@@ -127,13 +116,17 @@ export function loadConfig(configPath: string): BeigeConfig {
   const parsed = JSON5.parse(raw);
   const resolved = resolveEnvVars(parsed) as BeigeConfig;
 
-  // Toolkit tools must be merged before validateConfig runs its cross-reference
-  // checks — otherwise agent tool references that come from installed toolkits
+  // Resolve relative tool paths BEFORE merging installed tools.
+  // This ensures user-specified relative paths are resolved first,
+  // then mergeInstalledTools can fill in missing paths from disk.
+  resolveToolPaths(resolved, configDir);
+
+  // Installed tools must be merged before validateConfig runs its cross-reference
+  // checks — otherwise agent tool references that come from installed tools
   // are rejected as unknown.
-  mergeToolkitTools(resolved, configDir);
+  mergeInstalledTools(resolved);
 
   const config = validateConfig(resolved);
-  resolveToolPaths(config, configDir);
   resolveSkillPaths(config, configDir);
   resolveWorkspacePaths(config, configDir);
 

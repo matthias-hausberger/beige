@@ -4,7 +4,7 @@ description: "All beige commands, flags, and usage patterns"
 icon: "terminal"
 ---
 
-The `beige` CLI controls the gateway daemon, launches the TUI, and manages toolkits.
+The `beige` CLI controls the gateway daemon, launches the TUI, and manages tools.
 
 ```bash
 beige <command> [subcommand] [flags]
@@ -33,11 +33,12 @@ The daemon writes its PID to `~/.beige/gateway.pid` and logs to `~/.beige/logs/g
 
 On startup, the gateway:
 1. Loads and validates `config.json5`
-2. Builds the sandbox Docker image if it doesn't exist
-3. Creates a Docker container for each configured agent
-4. Starts a Unix socket server for each agent
-5. Starts the HTTP API on port 7433
-6. Starts the Telegram bot (if configured)
+2. Discovers installed tools from `~/.beige/tools/`
+3. Builds the sandbox Docker image if it doesn't exist
+4. Creates a Docker container for each configured agent
+5. Starts a Unix socket server for each agent
+6. Starts the HTTP API on port 7433
+7. Starts the Telegram bot (if configured)
 
 ### `beige gateway stop`
 
@@ -137,56 +138,61 @@ Setup is **idempotent** — existing files are never overwritten.
 
 ---
 
-## Toolkit Commands
+## Tool Commands
 
-### `beige install <source>`
+### `beige tools install <source>`
 
-Install a toolkit.
+Install tools from a source.
 
 ```bash
-beige install @myorg/toolkit-name          # From npm
-beige install github:owner/repo            # From GitHub
-beige install github:owner/repo#v1.2.0    # Specific tag/branch
-beige install ./path/to/toolkit            # Local directory
-beige install https://example.com/tk.tgz  # From URL (.tar.gz)
+# From npm
+beige tools install npm:@scope/package                 # Latest version
+beige tools install npm:@scope/package@1.2.3          # Specific version
+beige tools install npm:@scope/package@2.0.0-beta.1   # Pre-release
 
-beige install @myorg/toolkit --force       # Override tool name conflicts
+# From GitHub
+beige tools install github:owner/repo                  # All tools from repo
+beige tools install github:owner/repo/tools/github    # Single tool from subfolder
+beige tools install github:owner/repo#v1.2.0          # Specific tag/branch
+
+# From local path
+beige tools install ./path/to/tool                     # Local directory
+
+# Override conflicts
+beige tools install npm:@scope/package --force
 ```
 
-Toolkits are installed to `~/.beige/toolkits/`. After installation, add the toolkit's tools to your agent config.
+The installer discovers tools by scanning for `tool.json` files. Single tools are copied directly to `~/.beige/tools/`. Multi-tool packages are stored in `~/.beige/packages/` with symlinks in `~/.beige/tools/`.
 
-### `beige toolkit list`
+After installing, add tools to your agent's `tools` array in `config.json5` and restart the gateway.
 
-List all installed toolkits.
+### `beige tools list`
+
+List all installed tools.
 
 ```bash
-beige toolkit list
+beige tools list
 ```
 
-### `beige toolkit show <name>`
+Shows each tool's name, description, and install source.
 
-Show details about an installed toolkit.
+### `beige tools remove <name>`
+
+Remove an installed tool.
 
 ```bash
-beige toolkit show my-toolkit
+beige tools remove github
 ```
 
-### `beige toolkit remove <name>`
+Removes the tool from `~/.beige/tools/` and cleans up the meta file. If the tool came from a multi-tool package, the package directory is removed when the last tool from it is deleted.
 
-Uninstall a toolkit.
+### `beige tools update [name]`
 
-```bash
-beige toolkit remove my-toolkit
-```
-
-Removes the toolkit and its tools. Agent configs referencing removed tools will fail validation at next gateway start.
-
-### `beige toolkit update`
-
-Re-install all toolkits from their original sources, pulling the latest versions.
+Update a tool or all tools by re-fetching from the original install source.
 
 ```bash
-beige toolkit update
+beige tools update github    # Update one tool (and all tools from same source)
+beige tools update           # Update all installed tools
 ```
 
 ---
@@ -207,6 +213,9 @@ beige toolkit update
 # First time
 beige setup
 export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Install tools
+beige tools install npm:@matthias-hausberger/beige-toolkit
 
 # Every time
 beige gateway start                  # Shell 1: start gateway daemon

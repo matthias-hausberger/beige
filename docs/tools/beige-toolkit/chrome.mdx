@@ -74,8 +74,7 @@ Beige supports per-agent `toolConfigs` overrides that are deep-merged with the t
 ```json5
 tools: {
   chrome: {
-    path: "~/.beige/toolkits/beige-toolkit/tools/chrome",
-    target: "gateway",
+    // installed via: beige tools install npm:@matthias-hausberger/beige-toolkit
     config: {
       // Baseline: headless, standard timeout
       headless: true,

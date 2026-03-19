@@ -6,11 +6,29 @@ title: "Apple Calendar Tool"
 {/* Run: pnpm run docs:sync-toolkit */}
 
 
-Read events from macOS Calendar (Apple Calendar). The tool uses a compiled Swift binary that reads directly from the EventKit store — it does **not** launch Calendar.app, making it fast (~0.1–0.5s per query).
+Read events from macOS Calendar (Apple Calendar). Uses a compiled Swift binary that reads directly from the EventKit store — fast (~0.1–0.5s per query), supports all calendar sources (iCloud, Google, Exchange, CalDAV, subscribed, birthdays). Read-only — no event creation or modification.
 
-Supports all calendar sources configured in macOS: iCloud, Google, Exchange, CalDAV, subscribed calendars, birthdays, etc.
+## Configuration
 
-**Read-only** — no event creation or modification.
+| Key | Default | Description |
+|-----|---------|-------------|
+| `allowedCommands` | all commands | If set, only these command paths are permitted. Prefix matching: `"events"` covers all events subcommands. |
+| `deniedCommands` | *(none)* | Command paths that are always blocked, even if in `allowedCommands`. Deny beats allow. Prefix matching applies. |
+| `timeout` | `10` | Timeout in seconds per calendar-cli invocation. |
+| `binaryPath` | auto-detected | Absolute path to the compiled calendar-cli binary. If omitted, the tool compiles it automatically from the bundled Swift source on first use. |
+
+All commands are permitted by default. No deny/allow restrictions until explicitly configured.
+
+### Command Paths
+
+| Args | Command path |
+|---|---|
+| `calendars` | `calendars` |
+| `events today` | `events today` |
+| `events tomorrow` | `events tomorrow` |
+| `events date 2026-03-20` | `events date` |
+| `events range 2026-03-18 2026-03-21` | `events range` |
+| `events search "standup" --from ...` | `events search` |
 
 ## Prerequisites
 
@@ -20,30 +38,24 @@ Supports all calendar sources configured in macOS: iCloud, Google, Exchange, Cal
 | **Xcode Command Line Tools** | Needed to compile the Swift binary on first use. Install with: `xcode-select --install` |
 | **Calendar access permission** | macOS will prompt once to grant access. Approve in System Settings → Privacy & Security → Calendars. |
 
-## Default Configuration
+## Binary Compilation
 
-All commands are permitted by default. No deny/allow restrictions until explicitly configured.
+The tool bundles a Swift source file (`calendar-cli.swift`). On first invocation, if no compiled binary is found, the handler compiles it automatically using `swiftc` (~5–10 seconds). Subsequent calls use the cached binary.
 
-## Access Control
+To compile manually:
+```sh
+cd tools/apple-calendar
+swiftc calendar-cli.swift -o calendar-cli -O
+```
 
-| Config field | Type | Default | Description |
-|---|---|---|---|
-| `allowedCommands` | `string \| string[]` | all | Only these command paths are permitted. Prefix matching. |
-| `deniedCommands` | `string \| string[]` | *(none)* | Always blocked. Deny beats allow. Prefix matching. |
-| `timeout` | `number` | `10` | Timeout in seconds per invocation. |
-| `binaryPath` | `string` | auto-detected | Override path to the compiled calendar-cli binary. |
+To use a pre-compiled binary:
+```json5
+config: {
+  binaryPath: "/usr/local/bin/calendar-cli",
+}
+```
 
-Command paths:
-
-| Args | Command path |
-|---|---|
-| `calendars` | `calendars` |
-| `events today` | `events today` |
-| `events date 2026-03-20` | `events date` |
-| `events search "standup" --from ...` | `events search` |
-| `events range 2026-03-18 2026-03-21` | `events range` |
-
-### Config Examples
+## Config Examples
 
 **Today-only agent:**
 ```json5
@@ -66,21 +78,37 @@ config: {
 }
 ```
 
-## Binary Compilation
+### Per-Agent Configuration (toolConfigs)
 
-The tool bundles a Swift source file (`calendar-cli.swift`). On first invocation, if no compiled binary is found, the handler compiles it automatically using `swiftc` (~5–10 seconds). Subsequent calls use the cached binary.
+Use beige's `toolConfigs` to give different agents different calendar permissions:
 
-To compile manually:
-```sh
-cd tools/apple-calendar
-swiftc calendar-cli.swift -o calendar-cli -O
-```
-
-To use a pre-compiled binary:
 ```json5
-config: {
-  binaryPath: "/usr/local/bin/calendar-cli",
-}
+tools: {
+  "apple-calendar": {
+    path: "~/.beige/toolkits/beige-toolkit/tools/apple-calendar",
+    target: "gateway",
+    config: {
+      // Baseline: all commands allowed
+    },
+  },
+},
+
+agents: {
+  // Scheduler agent — full calendar access
+  scheduler: {
+    tools: ["apple-calendar"],
+  },
+
+  // Summary bot — today and tomorrow only
+  summary: {
+    tools: ["apple-calendar"],
+    toolConfigs: {
+      "apple-calendar": {
+        allowedCommands: ["events today", "events tomorrow", "calendars"],
+      },
+    },
+  },
+},
 ```
 
 ## Error Reference

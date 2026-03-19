@@ -85,7 +85,7 @@
                 "root": "tools/beige-toolkit/index",
                 "pages": [
                   "tools/beige-toolkit/github",
-                  "tools/beige-toolkit/agent-to-agent",
+                  "tools/beige-toolkit/spawn",
                   "tools/beige-toolkit/sessions",
                   "tools/beige-toolkit/slack",
                   "tools/beige-toolkit/confluence",

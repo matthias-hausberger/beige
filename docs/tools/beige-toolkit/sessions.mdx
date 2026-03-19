@@ -6,13 +6,33 @@ title: "Sessions Tool"
 {/* Run: pnpm run docs:sync-toolkit */}
 
 
-Browse and search conversation history. An agent can list its past sessions, read full message histories, and search across sessions by pattern.
+Browse and search your own conversation history. Agents can list past sessions, read full message histories, and search across sessions by pattern. Access is strictly scoped — an agent can only see its own sessions.
 
-Access is strictly scoped to the calling agent — an agent cannot read another agent's sessions.
-
-## Default Configuration
+## Configuration
 
 No configuration needed. The tool works out of the box with no config block. All commands (`list`, `get`, `grep`) are always available.
+
+## Prerequisites
+
+No external dependencies. The tool uses beige's internal session store. Requires beige ≥ 0.1.3 for agent identity injection (`BEIGE_AGENT_NAME`).
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `list` | List sessions (newest first). Tool-initiated sessions excluded by default. |
+| `list --include-active` | Also include the currently running session. |
+| `list --format json` | Machine-readable list. |
+| `get <key>` | Full message history of a session. Truncated at 50 messages by default. |
+| `get <key> --all` | Show all messages (no truncation). |
+| `get <key> --format json` | Machine-readable message list. |
+| `grep <pattern>` | Search message content across sessions (up to 100, newest first). |
+| `grep <pattern> --session <key>` | Search within one session only. |
+| `grep <pattern> --max-sessions <n>` | Search up to N sessions (default: 100). |
+| `grep <pattern> --max-matches <n>` | Stop after N total matches (default: 50). |
+| `grep <pattern> --format json` | Machine-readable matches. |
+
+All commands accept `--format json` for structured output suitable for scripting or further processing.
 
 ## Security Model
 
@@ -23,18 +43,6 @@ No configuration needed. The tool works out of the box with no config block. All
 | **No cross-agent access** | There is no config option to allow reading another agent's sessions. |
 | **Read-only** | The tool never writes, modifies, or deletes sessions. |
 | **No raw file paths** | File paths are never exposed in output — only session keys and message content. |
-
-## Commands
-
-| Command | Description |
-|---|---|
-| `list` | List sessions (newest first). Tool-initiated sessions excluded by default. |
-| `get <key>` | Full message history of a session. Truncated at 50 messages by default. |
-| `grep <pattern>` | Search message content across sessions. |
-
-## JSON Output
-
-All commands accept `--format json` for structured output suitable for scripting or further processing.
 
 ## Error Reference
 

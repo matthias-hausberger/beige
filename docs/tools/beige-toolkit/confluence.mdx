@@ -6,7 +6,21 @@ title: "Confluence Tool"
 {/* Run: pnpm run docs:sync-toolkit */}
 
 
-Interact with Atlassian Confluence via the [`confluence-cli`](https://github.com/pchuri/confluence-cli) binary installed on the gateway host. Agents pass `confluence` arguments directly; the tool enforces two independent, optional permission layers before executing anything.
+Interact with Atlassian Confluence via the [`confluence-cli`](https://github.com/pchuri/confluence-cli) binary installed on the gateway host. Agents pass confluence arguments directly; the tool enforces two independent, optional permission layers before executing anything.
+
+## Configuration
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `allowCommands` | all commands | If set, only these command paths are permitted. Prefix matching: `"create"` covers `create-child`. Omit to allow all (subject to `denyCommands`). |
+| `denyCommands` | *(none)* | Command paths that are always blocked, even if in `allowCommands`. Deny beats allow. Prefix matching applies. |
+| `allowReadSpaces` | all spaces | If set, read operations are only permitted for pages/spaces in this list. Space keys matched case-insensitively. |
+| `allowWriteSpaces` | all spaces | If set, write operations are only permitted for pages/spaces in this list. Space keys matched case-insensitively. |
+| `requireSpaceOnSearch` | `false` | When `true`, `search` calls without a `--space` flag are rejected. Forces agents to always scope searches. CQL in query strings is NOT enforced. |
+| `timeout` | `30` | Timeout in seconds for each confluence invocation (including internal `info` lookups for space resolution). |
+| `profile` | *(none)* | Default profile name. Prepended as `--profile <value>` to every call when `--profile` is not already in the agent's args. |
+
+By default, all commands are permitted and all spaces are accessible — both permission layers are fully open until explicitly configured.
 
 ## Prerequisites
 
@@ -14,10 +28,6 @@ Interact with Atlassian Confluence via the [`confluence-cli`](https://github.com
 |---|---|
 | `confluence-cli` | Must be installed on the gateway host ([install guide](https://github.com/pchuri/confluence-cli)) |
 | Authentication | Run `confluence init` on the gateway host to set up credentials |
-
-## Default Configuration
-
-By default, **all commands are permitted** and **all spaces are accessible** — no denylist and no space restrictions are applied. Both permission layers are fully open until explicitly configured.
 
 ## Permission Model
 
@@ -73,36 +83,7 @@ The `search` command accepts free-text queries that may contain CQL expressions.
 
 `comment-delete <commentId>` takes a comment ID, not a page ID. Space enforcement cannot be applied. Use `denyCommands: ["comment-delete"]` to block it entirely if needed.
 
-## Configuration
-
-```json5
-tools: {
-  confluence: {
-    path: "~/.beige/toolkits/beige-toolkit/tools/confluence",
-    target: "gateway",
-    config: {
-      // Layer 1: command-level (omit to allow all commands)
-      allowCommands: ["read", "search", "info", "spaces", "find", "children"],
-      denyCommands: ["create", "update", "delete", "move"],
-
-      // Layer 2: space-level (omit either to allow all spaces for that operation)
-      allowReadSpaces: ["DOCS", "TEAM"],
-      allowWriteSpaces: ["DRAFTS"],
-
-      // Reject search without --space (default: false)
-      requireSpaceOnSearch: true,
-
-      // Timeout per confluence call in seconds (default: 30)
-      timeout: 30,
-
-      // Default profile — prepended as --profile when not specified by agent
-      profile: "production",
-    },
-  },
-},
-```
-
-### Config Examples
+## Config Examples
 
 **Read-only agent, all spaces:**
 ```json5
@@ -143,6 +124,55 @@ config: {
 config: {
   profile: "production",
 }
+```
+
+### Per-Agent Configuration (toolConfigs)
+
+Use beige's `toolConfigs` to give different agents different Confluence permissions:
+
+```json5
+tools: {
+  confluence: {
+    path: "~/.beige/toolkits/beige-toolkit/tools/confluence",
+    target: "gateway",
+    config: {
+      // Baseline: read-only, all spaces
+      denyCommands: ["create", "create-child", "update", "delete", "move", "copy-tree",
+                     "attachment-upload", "attachment-delete", "comment",
+                     "property-set", "property-delete"],
+      profile: "production",
+    },
+  },
+},
+
+agents: {
+  // Research agent — read-only, scoped to specific spaces
+  researcher: {
+    tools: ["confluence"],
+    toolConfigs: {
+      confluence: {
+        allowReadSpaces: ["DOCS", "TEAM"],
+        requireSpaceOnSearch: true,
+      },
+    },
+  },
+
+  // Documentation bot — can also write, but only to DRAFTS
+  docbot: {
+    tools: ["confluence"],
+    toolConfigs: {
+      confluence: {
+        denyCommands: [],              // override: remove all command denials
+        allowWriteSpaces: ["DRAFTS"],  // added: restrict writes to DRAFTS
+      },
+    },
+  },
+
+  // Default agent — uses baseline config (read-only, all spaces)
+  assistant: {
+    tools: ["confluence"],
+  },
+},
 ```
 
 ## Available Commands

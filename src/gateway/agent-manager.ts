@@ -10,8 +10,8 @@ import {
   type AgentSession,
   type ResourceLoader,
 } from "@mariozechner/pi-coding-agent";
-import { resolve } from "path";
-import { readFileSync } from "fs";
+import { resolve, join } from "path";
+import { readFileSync, existsSync } from "fs";
 import { fileURLToPath } from "url";
 import type { BeigeConfig, AgentConfig, ModelRef } from "../config/schema.js";
 import type { SandboxManager } from "../sandbox/manager.js";
@@ -157,6 +157,7 @@ export class AgentManager {
     const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
     const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
+    const agentsFiles = readWorkspaceAgentsMd(workspaceDir);
 
     const model = this.resolveModel(agentConfig);
 
@@ -165,7 +166,7 @@ export class AgentManager {
       getSkills: () => ({ skills: [], diagnostics: [] }),
       getPrompts: () => ({ prompts: [], diagnostics: [] }),
       getThemes: () => ({ themes: [], diagnostics: [] }),
-      getAgentsFiles: () => ({ agentsFiles: [] }),
+      getAgentsFiles: () => ({ agentsFiles }),
       getSystemPrompt: () => systemPrompt,
       getAppendSystemPrompt: () => [],
       getPathMetadata: () => new Map(),
@@ -555,6 +556,7 @@ export class AgentManager {
     const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
     const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
+    const agentsFiles = readWorkspaceAgentsMd(workspaceDir);
 
     const model = this.resolveModelFromRef(modelRef);
 
@@ -563,7 +565,7 @@ export class AgentManager {
       getSkills: () => ({ skills: [], diagnostics: [] }),
       getPrompts: () => ({ prompts: [], diagnostics: [] }),
       getThemes: () => ({ themes: [], diagnostics: [] }),
-      getAgentsFiles: () => ({ agentsFiles: [] }),
+      getAgentsFiles: () => ({ agentsFiles }),
       getSystemPrompt: () => systemPrompt,
       getAppendSystemPrompt: () => [],
       getPathMetadata: () => new Map(),
@@ -742,6 +744,24 @@ export class AgentManager {
 
     return allowed;
   }
+}
+
+/**
+ * Read the workspace AGENTS.md file from the host filesystem.
+ * Returns the content as an agentsFiles array suitable for the resource loader,
+ * or an empty array if the file doesn't exist.
+ */
+export function readWorkspaceAgentsMd(workspaceDir: string): Array<{ path: string; content: string }> {
+  const agentsMdPath = join(workspaceDir, "AGENTS.md");
+  try {
+    if (existsSync(agentsMdPath)) {
+      const content = readFileSync(agentsMdPath, "utf-8");
+      return [{ path: "/workspace/AGENTS.md", content }];
+    }
+  } catch {
+    // Non-fatal — agent will just not have AGENTS.md in context
+  }
+  return [];
 }
 
 export function buildSystemPrompt(agentName: string, toolContext: string, skillContext: string = ""): string {

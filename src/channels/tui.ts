@@ -20,7 +20,7 @@ import { existsSync, mkdirSync } from "fs";
 import { beigeDir } from "../paths.js";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
-import { buildSystemPrompt } from "../gateway/agent-manager.js";
+import { buildSystemPrompt, readWorkspaceAgentsMd } from "../gateway/agent-manager.js";
 import { SessionSettingsStore, resolveSessionSetting } from "../gateway/session-settings.js";
 import { BeigeSessionStore } from "../gateway/sessions.js";
 import { loadSkills, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
@@ -192,12 +192,13 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
   }
 
   // ── Build extension and create session ───────────────────
-  // systemPromptRef is shared between the extension (handleAgent writes to it)
-  // and createSession (populates it + the resource loader reads from it).
-  // We create it up front so both can reference the same object.
+  // systemPromptRef and agentsFilesRef are shared mutable refs read by the
+  // resource loader.  They are updated by /beige-agent (switch agent) and by
+  // the session_switch handler (re-read AGENTS.md after /new).
   const systemPromptRef: { value: string } = { value: "" };
-  const extensionsResult = await buildBeigeExtension(state, agentNames, systemPromptRef);
-  await createSession(state, extensionsResult, systemPromptRef);
+  const agentsFilesRef: { value: Array<{ path: string; content: string }> } = { value: [] };
+  const extensionsResult = await buildBeigeExtension(state, agentNames, systemPromptRef, agentsFilesRef);
+  await createSession(state, extensionsResult, systemPromptRef, agentsFilesRef);
 
   if (!state.session) {
     console.error("[TUI] Failed to create initial session");
@@ -239,7 +240,8 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
 async function createSession(
   state: TUIState,
   extensionsResult: LoadExtensionsResult,
-  systemPromptRef: { value: string }
+  systemPromptRef: { value: string },
+  agentsFilesRef: { value: Array<{ path: string; content: string }> }
 ): Promise<void> {
   const { agentName, agentConfig, gatewayUrl, authStorage, modelRegistry, underlyingModelRegistry, toolStartHandlerRef, loadedSkills } = state;
 
@@ -266,6 +268,11 @@ async function createSession(
   // Populate the shared mutable ref with the initial system prompt.
   systemPromptRef.value = buildSystemPrompt(agentName, toolContext, skillContext);
 
+  // Read workspace AGENTS.md so it's injected into the system prompt context.
+  const agentDir = resolve(beigeDir(), "agents", agentName);
+  const workspaceDir = agentConfig.workspaceDir ?? resolve(agentDir, "workspace");
+  agentsFilesRef.value = readWorkspaceAgentsMd(workspaceDir);
+
   const sessionsDir = resolve(beigeDir(), "sessions", agentName);
   // Always start a fresh session. Users can resume via /beige-resume.
   const sessionManager = SessionManager.create(process.cwd(), sessionsDir);
@@ -275,7 +282,7 @@ async function createSession(
     getSkills: () => ({ skills: [], diagnostics: [] }),
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
-    getAgentsFiles: () => ({ agentsFiles: [] }),
+    getAgentsFiles: () => ({ agentsFiles: agentsFilesRef.value }),
     // Read from mutable ref so updates from /beige-agent are reflected.
     getSystemPrompt: () => systemPromptRef.value,
     getAppendSystemPrompt: () => [],
@@ -315,7 +322,8 @@ async function createSession(
 async function buildBeigeExtension(
   state: TUIState,
   availableAgents: string[],
-  systemPromptRef: { value: string }
+  systemPromptRef: { value: string },
+  agentsFilesRef: { value: Array<{ path: string; content: string }> }
 ): Promise<LoadExtensionsResult> {
   const runtime = createExtensionRuntime();
 
@@ -456,8 +464,18 @@ async function buildBeigeExtension(
     const skillContext = agentInfo?.skillContext ?? "";
     const newSystemPrompt = buildSystemPrompt(arg, toolContext, skillContext);
     systemPromptRef.value = newSystemPrompt;
+
+    // Update agents files for the new agent's workspace.
+    const newAgentDir = resolve(beigeDir(), "agents", arg);
+    const newWorkspaceDir = newAgentConfig.workspaceDir ?? resolve(newAgentDir, "workspace");
+    agentsFilesRef.value = readWorkspaceAgentsMd(newWorkspaceDir);
+
     if (state.session) {
-      (state.session as any)._baseSystemPrompt = newSystemPrompt;
+      // Trigger a full rebuild so pi's buildSystemPrompt picks up both the
+      // updated system prompt ref AND the fresh AGENTS.md from getAgentsFiles().
+      const toolNames = state.session.getActiveToolNames();
+      (state.session as any)._baseSystemPrompt = (state.session as any)._rebuildSystemPrompt(toolNames);
+      (state.session as any).agent.setSystemPrompt((state.session as any)._baseSystemPrompt);
     }
 
     // Update verbose handler for new session key.
@@ -499,7 +517,20 @@ async function buildBeigeExtension(
   const extension: Extension = {
     path: "<beige-tui>",
     resolvedPath: "<beige-tui>",
-    handlers: new Map(),
+    handlers: new Map<string, Array<(...args: unknown[]) => Promise<unknown>>>([
+      // Re-read AGENTS.md on /new and session switches so that edits the
+      // agent made during the previous session are picked up.
+      ["session_switch", [async () => {
+        const dir = resolve(beigeDir(), "agents", state.agentName);
+        const ws = state.agentConfig.workspaceDir ?? resolve(dir, "workspace");
+        agentsFilesRef.value = readWorkspaceAgentsMd(ws);
+        if (state.session) {
+          const toolNames = state.session.getActiveToolNames();
+          (state.session as any)._baseSystemPrompt = (state.session as any)._rebuildSystemPrompt(toolNames);
+          (state.session as any).agent.setSystemPrompt((state.session as any)._baseSystemPrompt);
+        }
+      }]],
+    ]),
     tools: new Map(),
     messageRenderers: new Map(),
     commands: new Map<string, RegisteredCommand>([

@@ -3,7 +3,7 @@ title: "Build your own tools"
 description: "Create custom tools for agents to use via exec"
 ---
 
-A tool is a directory containing a manifest (`tool.json`), a handler (`index.ts`), and documentation (`README.md`). The gateway mounts each tool into the sandbox as an executable at `/tools/bin/<name>`.
+A tool is a directory containing a manifest (`tool.json`), a handler (`index.ts`), and documentation (`README.md` + `SKILL.md`). The gateway mounts each tool into the sandbox as an executable at `/tools/bin/<name>`.
 
 ---
 
@@ -13,7 +13,8 @@ A tool is a directory containing a manifest (`tool.json`), a handler (`index.ts`
 tools/my-tool/
 ├── tool.json     # Manifest: name, description, commands, target
 ├── index.ts      # Handler (runs on the gateway host)
-└── README.md     # Documentation (mounted into sandbox for agent context)
+├── README.md     # User/developer documentation (overview, config, prerequisites)
+└── SKILL.md      # Agent usage guide (examples, workflows, calling conventions)
 ```
 
 ---
@@ -83,35 +84,79 @@ The `config` parameter receives the `config` field from `config.json5` for this 
 
 ---
 
-## README.md — Documentation
+## Documentation: README.md + SKILL.md
 
-The README is mounted into the sandbox at `/tools/packages/<name>/README.md`. The agent reads it to learn how to use the tool:
+Each tool has two documentation files, both mounted into the sandbox at `/tools/packages/<name>/`:
+
+| File | Audience | Purpose |
+|---|---|---|
+| `README.md` | **Users / developers** | Overview, prerequisites, configuration reference, setup instructions. Written for humans browsing GitHub. |
+| `SKILL.md` | **AI agents** | Usage examples, calling conventions, practical workflows. Written for the LLM. |
+
+Agents are instructed to read `SKILL.md` first when using a tool:
 
 ```bash
-exec cat /tools/packages/kv/README.md
+exec cat /tools/packages/kv/SKILL.md    # agent reads this first
+exec cat /tools/packages/kv/README.md   # for config details if needed
 ```
 
-Write your README as if explaining the tool to the LLM:
+### SKILL.md — Agent Usage Guide
+
+Write `SKILL.md` as a practical guide for the agent — examples, calling conventions, workflows:
+
+```markdown
+# My Tool — Usage Guide
+
+## Calling Convention
+
+\`\`\`sh
+/tools/bin/my-tool <command> [args...]
+\`\`\`
+
+## Examples
+
+\`\`\`sh
+# Greet someone
+/tools/bin/my-tool greet Alice
+
+# Shout text in uppercase
+/tools/bin/my-tool shout hello world
+\`\`\`
+```
+
+### README.md — User Documentation
+
+Write `README.md` for humans looking at the project on GitHub — what the tool does, how to configure it, what the prerequisites are:
 
 ```markdown
 # My Tool
 
 Brief description of what this tool does.
 
-## Commands
+## Prerequisites
 
-- `my-tool greet [name]` — Greet someone
-- `my-tool shout [text]` — Shout the text in uppercase
+- Node.js ≥ 22
 
-## Examples
+## Configuration
 
+\`\`\`json5
+config: {
+  allowedCommands: ["greet"],
+}
 \`\`\`
-exec /tools/bin/my-tool greet Alice
-→ Hello, Alice!
+```
 
-exec /tools/bin/my-tool shout hello world
-→ HELLO WORLD
-\`\`\`
+### skills/ subfolder (optional)
+
+For complex tools with many capabilities, you can create a `skills/` subfolder with specialized guides. The main `SKILL.md` references them so the agent can load them on demand:
+
+```
+tools/chrome/
+├── SKILL.md              # Main agent guide, references skills/
+└── skills/
+    ├── navigation.md     # Navigation & page management
+    ├── interaction.md    # DOM inspection & form filling
+    └── network-performance.md  # Network monitoring & perf analysis
 ```
 
 ---
@@ -121,7 +166,7 @@ exec /tools/bin/my-tool shout hello world
 ```mermaid
 flowchart TD
     subgraph Host["Gateway Host"]
-        TP["tools/kv/<br/>tool.json, index.ts, README.md"]
+        TP["tools/kv/<br/>tool.json, index.ts, README.md, SKILL.md"]
         GL["~/.beige/agents/assistant/launchers/<br/>kv (generated launcher script)"]
     end
 
@@ -158,7 +203,8 @@ The launcher calls `tool-client` — a Deno script baked into the sandbox image 
 tools/my-tool/
 ├── tool.json
 ├── index.ts
-└── README.md
+├── README.md
+└── SKILL.md
 ```
 
 ### Step 2: Write the manifest
@@ -220,7 +266,7 @@ beige gateway restart
 The agent can now invoke the tool:
 
 ```
-exec cat /tools/packages/my-tool/README.md   # learn how to use it
+exec cat /tools/packages/my-tool/SKILL.md    # learn how to use it
 exec /tools/bin/my-tool run hello
 → Processed: hello
 ```

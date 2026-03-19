@@ -1,0 +1,140 @@
+---
+title: "Slack Tool"
+---
+
+{/* Auto-generated from beige-toolkit — do not edit manually. */}
+{/* Run: pnpm run docs:sync-toolkit */}
+
+
+Interact with Slack workspaces via the [`slackcli`](https://github.com/shaharia-lab/slackcli) binary installed on the gateway host. Agents pass `slackcli` arguments directly; the tool enforces a permission layer before executing anything.
+
+## Prerequisites
+
+| Requirement | Details |
+|---|---|
+| `slackcli` | Must be installed and authenticated on the gateway host |
+
+## Default Configuration
+
+When **no config is provided**, a built-in denylist is applied:
+
+```
+auth login, auth login-browser, auth logout, auth remove,
+auth extract-tokens, auth parse-curl, update
+```
+
+These are auth-mutating and update operations that agents should not run autonomously. `messages send` is intentionally **not** in the default denylist — you must explicitly deny it if you don't want agents to send messages.
+
+When **any config is provided** (even just `timeout`), the default denylist is replaced entirely by whatever you configure.
+
+## Permission Model
+
+Access is controlled at the **command path** level. A command path is the leading 1–2 subcommand tokens before any flags.
+
+**Matching is by prefix:** `"messages"` in a deny list blocks `messages send`, `messages react`, and `messages draft`. `"messages send"` blocks only send.
+
+**Precedence:** deny beats allow. Checked in order:
+1. `denyCommands` — if any entry matches → rejected immediately
+2. `allowCommands` — if set and no entry matches → rejected
+3. Otherwise → permitted
+
+## Configuration
+
+```json5
+tools: {
+  slack: {
+    path: "~/.beige/toolkits/beige-toolkit/tools/slack",
+    target: "gateway",
+    config: {
+      // Allow only specific command paths (omit to allow all)
+      allowCommands: ["conversations list", "conversations read", "messages react"],
+
+      // Always block these command paths (deny beats allow)
+      denyCommands: ["messages send", "messages draft"],
+
+      // Timeout per slackcli call in seconds (default: 30)
+      timeout: 30,
+
+      // Default workspace — appended as --workspace when not specified by agent
+      workspace: "my-workspace",
+    },
+  },
+},
+```
+
+### Config Examples
+
+**Read-only agent** (can read everything, cannot send or mutate auth):
+```json5
+config: {
+  denyCommands: ["messages send", "messages draft", "auth login", "auth logout", "update"],
+}
+```
+
+**Strictly scoped agent** (can only list channels and read history):
+```json5
+config: {
+  allowCommands: ["conversations list", "conversations read"],
+}
+```
+
+**Notification agent** (can only send messages, nothing else):
+```json5
+config: {
+  allowCommands: ["messages send"],
+}
+```
+
+**React-only agent** (can only add emoji reactions):
+```json5
+config: {
+  allowCommands: ["messages react"],
+}
+```
+
+**Full access except sending** (everything allowed except send and draft):
+```json5
+config: {
+  denyCommands: ["messages send", "messages draft"],
+}
+```
+
+## Available Commands
+
+### `conversations`
+
+```sh
+conversations list [--types <types>] [--limit <n>] [--exclude-archived] [--workspace <id>]
+conversations read <channel-id> [--limit <n>] [--thread-ts <ts>] [--oldest <ts>] [--latest <ts>] [--json] [--workspace <id>]
+```
+
+### `messages`
+
+```sh
+messages send --recipient-id <id> --message <text> [--thread-ts <ts>] [--workspace <id>]
+messages react --channel-id <id> --timestamp <ts> --emoji <name> [--workspace <id>]
+messages draft --recipient-id <id> --message <text> [--thread-ts <ts>] [--workspace <id>]
+```
+
+### `auth`
+
+```sh
+auth list
+auth set-default <workspace-id>
+# auth login, auth logout, auth remove — blocked by default denylist
+```
+
+## Error Reference
+
+| Error | Cause |
+|---|---|
+| `slackcli not found on PATH` | Binary not installed or not on gateway's PATH |
+| `Permission denied: command 'X' is blocked by denyCommands` | Command matched a deny entry |
+| `Permission denied: command 'X' is not in allowCommands` | allowCommands is set and command not listed |
+| *(empty output, exit 1)* | slackcli itself returned an error — check stderr in output |
+
+## Implementation Details
+
+- **Target**: Gateway (runs on the host, not in the sandbox)
+- **Dependency**: `slackcli` binary
+- **Stateless**: Each invocation spawns a fresh `slackcli` process

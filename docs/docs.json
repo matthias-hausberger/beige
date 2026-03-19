@@ -76,6 +76,24 @@
               "tools/ecosystem/build-tools",
               "tools/ecosystem/toolkits"
             ]
+          },
+          {
+            "group": "Toolkits",
+            "pages": [
+              {
+                "group": "@matthias-hausberger/beige-toolkit",
+                "root": "tools/beige-toolkit/index",
+                "pages": [
+                  "tools/beige-toolkit/github",
+                  "tools/beige-toolkit/agent-to-agent",
+                  "tools/beige-toolkit/sessions",
+                  "tools/beige-toolkit/slack",
+                  "tools/beige-toolkit/confluence",
+                  "tools/beige-toolkit/chrome",
+                  "tools/beige-toolkit/apple-calendar"
+                ]
+              }
+            ]
           }
         ]
       },

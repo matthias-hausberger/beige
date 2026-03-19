@@ -1,0 +1,83 @@
+---
+title: "Agent-to-Agent Tool"
+---
+
+{/* Auto-generated from beige-toolkit — do not edit manually. */}
+{/* Run: pnpm run docs:sync-toolkit */}
+
+
+Invoke another Beige agent and hold a multi-turn conversation with it. Every call returns the target agent's full response plus a **session key** you can pass back via `--session` to continue the same conversation.
+
+Sub-agent calls (an agent calling itself) work identically — include the agent's own name in its `allowedTargets` list.
+
+## Default Configuration
+
+**Default deny** — no calls are permitted unless `allowedTargets` is explicitly configured. Installing the tool changes nothing until you opt in.
+
+## Configuration
+
+```json5
+tools: {
+  "agent-to-agent": {
+    path: "~/.beige/toolkits/beige-toolkit/tools/agent-to-agent",
+    target: "gateway",
+    config: {
+      // Which agents may call which other agents.
+      // Absent entirely → no agent-to-agent calls are permitted.
+      allowedTargets: {
+        coder:    ["reviewer", "coder"],   // coder can call reviewer and itself
+        reviewer: ["coder"],               // reviewer can call coder
+      },
+
+      // Maximum nesting depth. Default: 1.
+      maxDepth: 1,
+    },
+  },
+},
+
+agents: {
+  coder: {
+    tools: ["agent-to-agent"],
+  },
+  reviewer: {
+    tools: ["agent-to-agent"],
+  },
+},
+```
+
+### Depth Limiting
+
+| `maxDepth` | What is allowed |
+|---|---|
+| `0` | No agent-to-agent calls at all, even if `allowedTargets` is set |
+| `1` *(default)* | Agents may call agents; sub-agents may **not** call further agents |
+| `2` | Two levels of nesting; agents at depth 2 may not call further agents |
+
+## Security Model
+
+| Concern | How it is handled |
+|---|---|
+| **Default deny** | No calls permitted unless `allowedTargets` is configured. |
+| **Per-caller whitelisting** | Each caller has its own target list. A→B does not imply B→A. |
+| **Depth cap** | `maxDepth` prevents runaway recursive calls. |
+| **Unknown targets** | Calls to non-existent agents are rejected immediately. |
+| **Session integrity** | Resuming a session with a mismatched `--target` is rejected. |
+
+## Error Reference
+
+| Error | Cause |
+|---|---|
+| `--target <agent> is required` | No `--target` flag provided and `--info` not used |
+| `No allowedTargets configured` | Config has no `allowedTargets` key |
+| `Agent 'X' is not permitted to call agent 'Y'` | Caller not allowed to call this target |
+| `Agent call depth limit reached` | Session is at `maxDepth` |
+| `Unknown agent 'X'` | Target not defined in beige config |
+| `Session 'X' not found` | `--session` key doesn't exist |
+| `Session 'X' belongs to agent 'Y'` | Session was created for a different target |
+| `No message provided` | No message text or file given |
+
+## Implementation Details
+
+- **Target**: Gateway (runs on the host, not in the sandbox)
+- **No dependencies**: Uses beige's internal agent manager
+- **Session persistence**: Sessions persist across gateway restarts in `~/.beige/sessions/`

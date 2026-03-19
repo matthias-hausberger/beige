@@ -48,6 +48,8 @@ tools/kv/                              →   /tools/packages/kv/ (read-only)
 
 The agent calls a tool by running the launcher. The launcher connects to the gateway over a Unix socket, the gateway policy-checks and executes the handler, and returns the result.
 
+The tool's entire directory is mounted read-only at `/tools/packages/<name>/`, giving agents access to both `SKILL.md` (usage guide) and `README.md` (reference documentation).
+
 ## Adding a Tool to an Agent
 
 Register the tool in `config.json5` and add it to the agent's `tools` list:
@@ -106,7 +108,7 @@ Option B is cleaner when the only difference is config — it avoids duplicating
 The agent can then read the tool's docs and invoke it:
 
 ```
-exec cat /tools/packages/kv/README.md
+exec cat /tools/packages/kv/SKILL.md      # learn how to use it
 exec /tools/bin/kv set mykey myvalue
 exec /tools/bin/kv get mykey
 ```

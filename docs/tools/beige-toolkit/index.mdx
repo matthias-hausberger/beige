@@ -1,0 +1,233 @@
+---
+title: "@matthias-hausberger/beige-toolkit"
+---
+
+{/* Auto-generated from beige-toolkit — do not edit manually. */}
+{/* Run: pnpm run docs:sync-toolkit */}
+
+
+🛠️ A collection of tools for [Beige](https://github.com/matthias-hausberger/beige) agents.
+
+Beige is an open-source AI agent framework with a gateway/sandbox architecture. This toolkit provides gateway-side tools that give agents access to external services — GitHub, Slack, Confluence, Chrome, macOS Calendar, conversation history, and other agents.
+
+All tools run on the **gateway** (host machine), not inside agent sandboxes. Each tool supports fine-grained access control via config-level allow/deny lists so you can scope exactly what each agent is permitted to do.
+
+## Tools
+
+| Tool | Description | Requires |
+|------|-------------|----------|
+| [github](./tools/github/) | Interact with GitHub via the `gh` CLI — repos, issues, PRs, releases, workflow runs, and more. Repository deletion is permanently blocked. Raw API access is off by default. | [`gh`](https://cli.github.com/) installed and authenticated |
+| [slack](./tools/slack/) | Interact with Slack workspaces — list conversations, read message history, send messages, add reactions. Access controlled via command-level allow/deny lists. | `slackcli` installed and authenticated |
+| [confluence](./tools/confluence/) | Read and write Atlassian Confluence — pages, spaces, search, attachments, comments, content properties, and exports. Supports both command-level and space-level access control. | `confluence-cli` installed and authenticated |
+| [chrome](./tools/chrome/) | Control a Chrome browser — navigation, screenshots, DOM inspection, JS evaluation, network monitoring, performance analysis. Each agent gets its own persistent browser profile. | Google Chrome installed |
+| [apple-calendar](./tools/apple-calendar/) | Read events from macOS Calendar — supports iCloud, Google, Exchange, and subscribed calendars. List calendars, view events by date/range, and search by title, notes, or location. Read-only. | macOS, Xcode Command Line Tools |
+| [sessions](./tools/sessions/) | Browse and search conversation history. Agents can only access their own sessions — listing, full message retrieval, and pattern-based search. | — |
+| [agent-to-agent](./tools/agent-to-agent/) | Invoke other Beige agents as sub-agents with multi-turn conversations. Depth-limited and opt-in — no targets allowed until explicitly configured. | — |
+
+## Installation
+
+```bash
+# Install from npm (recommended)
+beige install @matthias-hausberger/beige-toolkit
+
+# Install from GitHub
+beige install github:matthias-hausberger/beige-toolkit
+
+# Install from local checkout (for development)
+beige install ./path/to/beige-toolkit
+```
+
+## Usage
+
+After installing, add tools to your agents in `config.json5`:
+
+```json5
+{
+  tools: {
+    github: {
+      path: "~/.beige/toolkits/beige-toolkit/tools/github",
+      target: "gateway",
+    },
+    "apple-calendar": {
+      path: "~/.beige/toolkits/beige-toolkit/tools/apple-calendar",
+      target: "gateway",
+    },
+    slack: {
+      path: "~/.beige/toolkits/beige-toolkit/tools/slack",
+      target: "gateway",
+    },
+  },
+  agents: {
+    assistant: {
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+      tools: ["github", "apple-calendar", "slack"],
+    },
+  },
+}
+```
+
+Or install the toolkit and Beige will auto-discover the tools:
+
+```bash
+beige install @matthias-hausberger/beige-toolkit
+```
+
+Then reference them by name in your agent config.
+
+## Access Control
+
+Every tool supports fine-grained permission scoping via `config`:
+
+```json5
+tools: {
+  // Read-only GitHub — issues and PRs only
+  github: {
+    path: "~/.beige/toolkits/beige-toolkit/tools/github",
+    target: "gateway",
+    config: {
+      allowedCommands: ["issue", "pr"],
+    },
+  },
+
+  // Calendar — today's events only
+  "apple-calendar": {
+    path: "~/.beige/toolkits/beige-toolkit/tools/apple-calendar",
+    target: "gateway",
+    config: {
+      allowedCommands: ["events today", "calendars"],
+    },
+  },
+
+  // Slack — read-only, no sending
+  slack: {
+    path: "~/.beige/toolkits/beige-toolkit/tools/slack",
+    target: "gateway",
+    config: {
+      denyCommands: ["messages send", "messages draft"],
+    },
+  },
+},
+```
+
+See each tool's README for the full list of config options.
+
+## Documentation Structure
+
+Each tool has two documentation files:
+
+| File | Audience | Purpose |
+|---|---|---|
+| `README.md` | **Users / developers** | Overview, prerequisites, configuration reference, setup instructions |
+| `SKILL.md` | **AI agents** | Usage examples, calling conventions, practical workflows |
+
+For complex tools (like Chrome), a `skills/` subfolder contains specialized guides on different capabilities (navigation, interaction, network/performance).
+
+Agents are instructed to read `SKILL.md` first for usage guidance. They can also read `README.md` for configuration details if needed.
+
+## Development
+
+### Prerequisites
+
+- Node.js ≥ 22
+- pnpm
+
+### Setup
+
+```bash
+# Clone both repos side by side
+git clone https://github.com/matthias-hausberger/beige
+git clone https://github.com/matthias-hausberger/beige-toolkit
+
+cd beige-toolkit
+pnpm install
+```
+
+### Working Locally Against Beige
+
+```bash
+# In the beige repo — start the gateway from source
+cd ../beige
+pnpm run beige gateway start
+
+# In beige-toolkit — install the local toolkit into your running Beige
+cd ../beige-toolkit
+bash scripts/dev-install.sh
+```
+
+Beige symlinks the local directory, so edits to `tools/` take effect on the
+next gateway restart — no publish/reinstall loop needed.
+
+### Running Tests
+
+```bash
+# Run all tests
+pnpm test
+
+# Watch mode during development
+pnpm test:watch
+
+# Type-check without running tests
+pnpm typecheck
+
+# Full smoke sequence (manifest validation + tests)
+pnpm smoke
+```
+
+### Adding a New Tool
+
+1. Create `tools/<name>/` with `tool.json`, `index.ts`, `README.md`, `SKILL.md`
+2. Add `"./tools/<name>"` to `toolkit.json` `tools` array
+3. Write tests in `tools/<name>/__tests__/`
+4. Copy the test patterns from `tools/github/__tests__/`
+
+## Publishing
+
+```bash
+# Bump version in both package.json and toolkit.json, then:
+pnpm publish --access public
+```
+
+The `files` field in `package.json` ensures only the runtime-necessary files
+are included in the npm package: `toolkit.json` and each tool's `tool.json`,
+`index.ts`, `README.md`, `SKILL.md`, and `skills/` subdirectory. Test files, scripts, and dev config are excluded.
+
+## Repository Structure
+
+```
+beige-toolkit/
+├── toolkit.json              # Beige toolkit manifest
+├── package.json
+├── tsconfig.json
+├── vitest.config.ts
+├── tools/
+│   ├── github/               # GitHub CLI wrapper
+│   │   ├── tool.json         # Tool manifest
+│   │   ├── index.ts          # Handler (runs on the gateway host)
+│   │   ├── README.md         # User/developer documentation
+│   │   ├── SKILL.md          # Agent usage guide
+│   │   └── __tests__/
+│   ├── slack/                # Slack CLI wrapper
+│   ├── confluence/           # Confluence CLI wrapper
+│   ├── chrome/               # Chrome DevTools via MCP
+│   │   ├── tool.json
+│   │   ├── index.ts
+│   │   ├── README.md
+│   │   ├── SKILL.md
+│   │   ├── skills/           # Detailed agent guides
+│   │   │   ├── navigation.md
+│   │   │   ├── interaction.md
+│   │   │   └── network-performance.md
+│   │   └── __tests__/
+│   ├── apple-calendar/       # macOS Calendar via EventKit
+│   ├── sessions/             # Conversation history browser
+│   └── agent-to-agent/       # Cross-agent invocation
+├── test-utils/               # Shared test helpers
+├── tests/                    # Toolkit-level smoke tests
+└── scripts/
+    ├── dev-install.sh
+    └── smoke.sh
+```
+
+## License
+
+MIT

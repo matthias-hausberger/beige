@@ -1,0 +1,50 @@
+name: Sync Toolkit Docs
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+  # Triggered from beige-toolkit repo via repository_dispatch
+  repository_dispatch:
+    types: [toolkit-docs-updated]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout beige
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync toolkit docs
+        run: ./scripts/sync-toolkit-docs.sh
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git add docs/tools/beige-toolkit/ docs/docs.json
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes detected."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Changes detected:"
+            git diff --cached --stat
+          fi
+
+      - name: Commit and push
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs: sync beige-toolkit docs
+
+          Auto-generated from matthias-hausberger/beige-toolkit"
+          git push

@@ -1,0 +1,53 @@
+---
+title: "Sessions Tool"
+---
+
+{/* Auto-generated from beige-toolkit — do not edit manually. */}
+{/* Run: pnpm run docs:sync-toolkit */}
+
+
+Browse and search conversation history. An agent can list its past sessions, read full message histories, and search across sessions by pattern.
+
+Access is strictly scoped to the calling agent — an agent cannot read another agent's sessions.
+
+## Default Configuration
+
+No configuration needed. The tool works out of the box with no config block. All commands (`list`, `get`, `grep`) are always available.
+
+## Security Model
+
+| Concern | How it is handled |
+|---|---|
+| **Agent scoping** | Every operation is filtered to the calling agent's sessions. Agent name comes from `BEIGE_AGENT_NAME` (injected by beige ≥ 0.1.3). |
+| **Ownership check** | Before reading any session, the tool verifies the session belongs to the caller. |
+| **No cross-agent access** | There is no config option to allow reading another agent's sessions. |
+| **Read-only** | The tool never writes, modifies, or deletes sessions. |
+| **No raw file paths** | File paths are never exposed in output — only session keys and message content. |
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `list` | List sessions (newest first). Tool-initiated sessions excluded by default. |
+| `get <key>` | Full message history of a session. Truncated at 50 messages by default. |
+| `grep <pattern>` | Search message content across sessions. |
+
+## JSON Output
+
+All commands accept `--format json` for structured output suitable for scripting or further processing.
+
+## Error Reference
+
+| Error | Cause |
+|---|---|
+| `agent identity unknown` | `BEIGE_AGENT_NAME` not set — requires beige ≥ 0.1.3 |
+| `session store unavailable` | Tool not running in gateway context |
+| `session 'X' not found` | Key not in the session map |
+| `Permission denied: session 'X' belongs to agent 'Y'` | Session exists but owned by a different agent |
+| `Invalid regex 'X'` | `/pattern/` syntax used but the regex is malformed |
+
+## Implementation Details
+
+- **Target**: Gateway (runs on the host, not in the sandbox)
+- **Read-only**: Never writes, modifies, or deletes sessions
+- **No dependencies**: Uses beige's internal session store

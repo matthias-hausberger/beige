@@ -1,0 +1,89 @@
+---
+title: "GitHub Tool"
+---
+
+{/* Auto-generated from beige-toolkit — do not edit manually. */}
+{/* Run: pnpm run docs:sync-toolkit */}
+
+
+Interact with GitHub using the [`gh` CLI](https://cli.github.com/). The tool routes all commands to `gh` running on the gateway host — no token configuration is needed inside Beige; authentication is managed by `gh` itself.
+
+Supports the full `gh` command surface: repositories, issues, pull requests, releases, workflow runs, and raw API access.
+
+## Prerequisites
+
+| Requirement | Details |
+|---|---|
+| `gh` CLI | Must be installed on the **gateway host** ([install guide](https://cli.github.com/)) |
+| Authentication | Run `gh auth login` on the host before starting Beige |
+
+The tool inherits the gateway process's environment, so `gh` picks up `~/.config/gh/` automatically. No GitHub token is stored in Beige config.
+
+## Default Configuration
+
+Out of the box, all `gh` subcommands are permitted **except `api`**. The `api` subcommand is excluded by default because it allows arbitrary HTTP methods and GraphQL mutations against any GitHub endpoint. Repository deletion (`repo delete`) is permanently blocked regardless of configuration.
+
+## Access Control
+
+Restrict which top-level `gh` subcommands an agent may use via `config`:
+
+| Config field | Type | Default | Description |
+|---|---|---|---|
+| `allowedCommands` | `string \| string[]` | all commands except `api` | Only these subcommands are permitted. |
+| `deniedCommands` | `string \| string[]` | *(none)* | Always blocked. Deny beats allow. |
+
+### Examples
+
+**Read-only agent** (list and view, no mutations):
+```json5
+config: {
+  allowedCommands: ["repo", "issue", "pr", "release", "run", "api"],
+  deniedCommands: [],
+}
+```
+
+**Issue triage bot** (issues only):
+```json5
+config: {
+  allowedCommands: ["issue"],
+}
+```
+
+**Enable raw API access** alongside standard commands:
+```json5
+config: {
+  allowedCommands: ["repo", "issue", "pr", "api"],
+}
+```
+
+## Setup
+
+Add to your agent in `config.json5`:
+
+```json5
+tools: {
+  github: {
+    path: "~/.beige/toolkits/beige-toolkit/tools/github",
+    target: "gateway",
+  },
+},
+agents: {
+  assistant: {
+    tools: ["github"],
+  },
+}
+```
+
+## Error Reference
+
+| Error | Cause |
+|---|---|
+| `Permission denied: subcommand 'X' is not allowed` | Subcommand blocked by allow/deny config |
+| Command fails with `gh` error | `gh` is not installed or not authenticated on the gateway host |
+
+## Implementation Details
+
+- **Target**: Gateway (runs on the host, not in the sandbox)
+- **Dependency**: `gh` CLI
+- **Protocol**: Tool launcher calls back to gateway via Unix socket
+- **Stateless**: Each invocation spawns a fresh `gh` process

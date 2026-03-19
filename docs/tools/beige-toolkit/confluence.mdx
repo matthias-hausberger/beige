@@ -1,0 +1,183 @@
+---
+title: "Confluence Tool"
+---
+
+{/* Auto-generated from beige-toolkit — do not edit manually. */}
+{/* Run: pnpm run docs:sync-toolkit */}
+
+
+Interact with Atlassian Confluence via the [`confluence-cli`](https://github.com/pchuri/confluence-cli) binary installed on the gateway host. Agents pass `confluence` arguments directly; the tool enforces two independent, optional permission layers before executing anything.
+
+## Prerequisites
+
+| Requirement | Details |
+|---|---|
+| `confluence-cli` | Must be installed on the gateway host ([install guide](https://github.com/pchuri/confluence-cli)) |
+| Authentication | Run `confluence init` on the gateway host to set up credentials |
+
+## Default Configuration
+
+By default, **all commands are permitted** and **all spaces are accessible** — no denylist and no space restrictions are applied. Both permission layers are fully open until explicitly configured.
+
+## Permission Model
+
+There are two independent, optional permission layers. Either, both, or neither can be configured. They compose: a call must pass **both** layers to proceed.
+
+```
+Agent call
+    │
+    ▼
+┌─────────────────────────┐
+│  Layer 1: command-level │  denyCommands / allowCommands
+│  (subcommand name only) │  → fast, no API calls
+└────────────┬────────────┘
+             │ allowed
+             ▼
+┌─────────────────────────┐
+│  Layer 2: space-level   │  allowReadSpaces / allowWriteSpaces
+│  (which space/page)     │  → Tier 1 free, Tier 2 one info call
+└────────────┬────────────┘
+             │ allowed
+             ▼
+         Execute
+```
+
+### Layer 1 — Command-Level
+
+Controls which subcommands the agent may run. Command paths use the leading subcommand tokens (e.g. `read`, `search`, `create`, `profile list`).
+
+**Prefix matching:** `"create"` blocks both `create` and `create-child`. `"profile"` blocks all profile subcommands.
+
+**Precedence:** deny beats allow.
+
+### Layer 2 — Space-Level
+
+Controls which Confluence **spaces** the agent may read from and write to. Completely skipped when neither `allowReadSpaces` nor `allowWriteSpaces` is configured.
+
+| Kind | Commands |
+|---|---|
+| **READ** | `read`, `info`, `children`, `attachments`, `comments`, `property-list`, `property-get`, `export`, `edit`, `find`, `search` |
+| **WRITE** | `create`, `create-child`, `update`, `delete`, `move`, `copy-tree`, `attachment-upload`, `attachment-delete`, `comment`, `property-set`, `property-delete` |
+| **AGNOSTIC** (always pass) | `spaces`, `stats`, `profile`, `init`, `comment-delete` |
+
+#### Space Resolution
+
+- **Static (free):** `create` parses the space key from args, `search --space` uses the flag, URLs have the space key in the path
+- **Dynamic (one API call):** Commands with numeric page IDs trigger a `confluence info` lookup (results are cached)
+
+#### ⚠️ CQL Disclaimer
+
+The `search` command accepts free-text queries that may contain CQL expressions. **This tool only inspects the `--space` flag.** CQL in the query string is NOT parsed or enforced. Use `requireSpaceOnSearch: true` to force explicit `--space` usage.
+
+#### ⚠️ comment-delete Disclaimer
+
+`comment-delete <commentId>` takes a comment ID, not a page ID. Space enforcement cannot be applied. Use `denyCommands: ["comment-delete"]` to block it entirely if needed.
+
+## Configuration
+
+```json5
+tools: {
+  confluence: {
+    path: "~/.beige/toolkits/beige-toolkit/tools/confluence",
+    target: "gateway",
+    config: {
+      // Layer 1: command-level (omit to allow all commands)
+      allowCommands: ["read", "search", "info", "spaces", "find", "children"],
+      denyCommands: ["create", "update", "delete", "move"],
+
+      // Layer 2: space-level (omit either to allow all spaces for that operation)
+      allowReadSpaces: ["DOCS", "TEAM"],
+      allowWriteSpaces: ["DRAFTS"],
+
+      // Reject search without --space (default: false)
+      requireSpaceOnSearch: true,
+
+      // Timeout per confluence call in seconds (default: 30)
+      timeout: 30,
+
+      // Default profile — prepended as --profile when not specified by agent
+      profile: "production",
+    },
+  },
+},
+```
+
+### Config Examples
+
+**Read-only agent, all spaces:**
+```json5
+config: {
+  denyCommands: ["create", "create-child", "update", "delete", "move", "copy-tree",
+                 "attachment-upload", "attachment-delete", "comment", "comment-delete",
+                 "property-set", "property-delete"],
+}
+```
+
+**Read-only agent, scoped to DOCS and TEAM spaces:**
+```json5
+config: {
+  denyCommands: ["create", "create-child", "update", "delete", "move", "copy-tree",
+                 "attachment-upload", "attachment-delete", "comment", "comment-delete",
+                 "property-set", "property-delete"],
+  allowReadSpaces: ["DOCS", "TEAM"],
+  requireSpaceOnSearch: true,
+}
+```
+
+**Documentation bot (reads anywhere, writes only to DRAFTS):**
+```json5
+config: {
+  allowWriteSpaces: ["DRAFTS"],
+}
+```
+
+**Write-safe agent (all reads allowed; only non-destructive writes):**
+```json5
+config: {
+  denyCommands: ["delete", "move", "attachment-delete", "comment-delete", "property-delete"],
+}
+```
+
+**Full access, always use the production profile:**
+```json5
+config: {
+  profile: "production",
+}
+```
+
+## Available Commands
+
+### Read / Search
+`read`, `info`, `search`, `spaces`, `find`, `children`
+
+### Create / Update / Delete
+`create`, `create-child`, `copy-tree`, `update`, `move`, `delete`, `edit`
+
+### Attachments
+`attachments`, `attachment-upload`, `attachment-delete`
+
+### Comments
+`comments`, `comment`, `comment-delete`
+
+### Content Properties
+`property-list`, `property-get`, `property-set`, `property-delete`
+
+### Export / Profiles
+`export`, `edit`, `profile list`, `profile use`, `profile add`, `profile remove`, `stats`
+
+## Error Reference
+
+| Error | Cause |
+|---|---|
+| `confluence not found on PATH` | Binary not installed or not on gateway's PATH |
+| `Permission denied: command 'X' is blocked by denyCommands` | Command matched a deny entry |
+| `Permission denied: command 'X' is not in allowCommands` | allowCommands is set and command not listed |
+| `Permission denied: space 'X' is not in allowReadSpaces` | Page/space not in the read allowlist |
+| `Permission denied: space 'X' is not in allowWriteSpaces` | Page/space not in the write allowlist |
+| `Permission denied: search without --space is not permitted` | requireSpaceOnSearch enabled and --space missing |
+
+## Implementation Details
+
+- **Target**: Gateway (runs on the host, not in the sandbox)
+- **Dependency**: `confluence-cli` binary
+- **Stateless**: Each invocation spawns a fresh process (except cached space lookups)

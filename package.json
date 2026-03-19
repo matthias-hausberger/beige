@@ -1,6 +1,6 @@
 {
   "name": "@matthias-hausberger/beige",
-  "version": "0.1.3",
+  "version": "0.1.4-rc1",
   "description": "Secure sandboxed agent system",
   "publishConfig": {
     "access": "public"

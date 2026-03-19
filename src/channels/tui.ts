@@ -16,7 +16,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 import { resolve, basename } from "path";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import { beigeDir } from "../paths.js";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
@@ -181,11 +181,13 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
     toolStartHandlerRef.fn = makeTUIToolStartHandler();
   }
 
-  // ── Build extension with all commands ─────────────────────
-  const extensionsResult = await buildBeigeExtension(state, agentNames);
-
-  // ── Create initial session ────────────────────────────────
-  await createSession(state, extensionsResult);
+  // ── Build extension and create session ───────────────────
+  // systemPromptRef is shared between the extension (handleAgent writes to it)
+  // and createSession (populates it + the resource loader reads from it).
+  // We create it up front so both can reference the same object.
+  const systemPromptRef: { value: string } = { value: "" };
+  const extensionsResult = await buildBeigeExtension(state, agentNames, systemPromptRef);
+  await createSession(state, extensionsResult, systemPromptRef);
 
   if (!state.session) {
     console.error("[TUI] Failed to create initial session");
@@ -217,8 +219,18 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
 
 /**
  * Create a new pi session for the current agent in state.
+ *
+ * `systemPromptRef` is a mutable ref whose `.value` is read by the resource
+ * loader on every call to `getSystemPrompt()`. This function populates it with
+ * the initial system prompt. Update it (and sync to session._baseSystemPrompt)
+ * when switching agents so the new context takes effect without recreating the
+ * AgentSession.
  */
-async function createSession(state: TUIState, extensionsResult: LoadExtensionsResult): Promise<void> {
+async function createSession(
+  state: TUIState,
+  extensionsResult: LoadExtensionsResult,
+  systemPromptRef: { value: string }
+): Promise<void> {
   const { agentName, agentConfig, gatewayUrl, authStorage, modelRegistry, underlyingModelRegistry, toolStartHandlerRef, loadedSkills } = state;
 
   // Fetch agent info from gateway
@@ -233,10 +245,14 @@ async function createSession(state: TUIState, extensionsResult: LoadExtensionsRe
 
   // Use underlying registry for model lookup (restricted registry delegates find())
   const model = resolveModel(agentConfig, underlyingModelRegistry);
-  const coreTools = createProxyTools(agentName, gatewayUrl, toolStartHandlerRef);
+  // Pass a getter so tool calls always route to the currently-active agent,
+  // even after /beige-agent switches state.agentName.
+  const coreTools = createProxyTools(() => state.agentName, gatewayUrl, toolStartHandlerRef);
   const toolContext = buildToolContext(toolNames);
   const skillContext = buildSkillContext(skillNames, loadedSkills);
-  const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
+
+  // Populate the shared mutable ref with the initial system prompt.
+  systemPromptRef.value = buildSystemPrompt(agentName, toolContext, skillContext);
 
   const sessionsDir = resolve(beigeDir(), "sessions", agentName);
   // Always start a fresh session. Users can resume via /beige-resume.
@@ -248,7 +264,8 @@ async function createSession(state: TUIState, extensionsResult: LoadExtensionsRe
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () => systemPrompt,
+    // Read from mutable ref so updates from /beige-agent are reflected.
+    getSystemPrompt: () => systemPromptRef.value,
     getAppendSystemPrompt: () => [],
     getPathMetadata: () => new Map(),
     extendResources: () => {},
@@ -285,7 +302,8 @@ async function createSession(state: TUIState, extensionsResult: LoadExtensionsRe
  */
 async function buildBeigeExtension(
   state: TUIState,
-  availableAgents: string[]
+  availableAgents: string[],
+  systemPromptRef: { value: string }
 ): Promise<LoadExtensionsResult> {
   const runtime = createExtensionRuntime();
 
@@ -404,24 +422,34 @@ async function buildBeigeExtension(
       return;
     }
 
-    // Dispose old session
-    if (state.session) {
-      state.session.dispose();
-    }
-
-    // Update state
+    // Update state fields — proxy tools and resource loader read these dynamically.
     state.agentName = arg;
     state.agentConfig = newAgentConfig;
 
-    // Update restricted model registry for new agent's allowed models
+    // Update restricted model registry for new agent's allowed models.
     const allowedModels = buildAllowedModels(newAgentConfig.model, newAgentConfig.fallbackModels);
     state.modelRegistry = new RestrictedModelRegistry(state.underlyingModelRegistry, allowedModels);
+    if (state.session) {
+      (state.session as any)._modelRegistry = state.modelRegistry;
+    }
 
-    // Create new session for the new agent
-    const extensionsResult = await buildBeigeExtension(state, availableAgents);
-    await createSession(state, extensionsResult);
+    // Rebuild the system prompt for the new agent and push it into both the
+    // shared ref (read by resourceLoader.getSystemPrompt() on future rebuilds)
+    // and the session's cached _baseSystemPrompt (used before every LLM call).
+    const agentsRes = await fetch(`${state.gatewayUrl}/api/agents`);
+    const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[]; skills: string[] }> };
+    const agentInfo = agents.find((a) => a.name === arg);
+    const toolNames = agentInfo?.tools ?? [];
+    const skillNames = agentInfo?.skills ?? [];
+    const toolContext = buildToolContext(toolNames);
+    const skillContext = buildSkillContext(skillNames, state.loadedSkills);
+    const newSystemPrompt = buildSystemPrompt(arg, toolContext, skillContext);
+    systemPromptRef.value = newSystemPrompt;
+    if (state.session) {
+      (state.session as any)._baseSystemPrompt = newSystemPrompt;
+    }
 
-    // Update verbose handler for new session key
+    // Update verbose handler for new session key.
     const sessionKey = BeigeSessionStore.tuiKey(arg);
     const verbose = resolveSessionSetting(
       "verbose",
@@ -431,6 +459,28 @@ async function buildBeigeExtension(
     );
     state.toolStartHandlerRef.fn = verbose ? makeTUIToolStartHandler() : undefined;
 
+    // Point the SessionManager at the new agent's session directory so that
+    // ctx.newSession() creates the .jsonl file under ~/.beige/sessions/<new-agent>/
+    // instead of the original agent's directory.
+    if (state.session) {
+      const newSessionsDir = resolve(beigeDir(), "sessions", arg);
+      mkdirSync(newSessionsDir, { recursive: true });
+      (state.session.sessionManager as any).sessionDir = newSessionsDir;
+    }
+
+    // Switch to the new agent's configured model so the fresh session doesn't
+    // inherit the previous agent's model.  setModel() validates the API key
+    // via the (already-updated) restricted model registry, records a model
+    // change event in the session journal, and re-clamps the thinking level.
+    if (state.session) {
+      const newModel = resolveModel(newAgentConfig, state.modelRegistry);
+      await state.session.setModel(newModel);
+    }
+
+    // Start a fresh session in the new agent's session directory.
+    // ctx.newSession() resets the existing AgentSession in-place (no new
+    // instance), so InteractiveMode's internal reference stays valid.
+    await ctx.newSession();
     ctx.ui.notify(`🔄 Switched to agent '${arg}'.`, "info");
   };
 
@@ -453,42 +503,6 @@ async function buildBeigeExtension(
   };
 
   return { extensions: [extension], errors: [], runtime };
-}
-
-// ── Resource loader helper ────────────────────────────────────────────────────
-
-async function buildResourceLoader(state: TUIState): Promise<ResourceLoader> {
-  // Fetch agent info from gateway
-  const agentsRes = await fetch(`${state.gatewayUrl}/api/agents`);
-  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[]; skills: string[] }> };
-  const agentInfo = agents.find((a) => a.name === state.agentName);
-  const toolNames = agentInfo?.tools ?? [];
-  const skillNames = agentInfo?.skills ?? [];
-
-  const toolContext = buildToolContext(toolNames);
-  const skillContext = buildSkillContext(skillNames, state.loadedSkills);
-  const systemPrompt = buildSystemPrompt(state.agentName, toolContext, skillContext);
-
-  // Build minimal extension result for resource loader
-  const runtime = createExtensionRuntime();
-  const extensionsResult: LoadExtensionsResult = {
-    extensions: [],
-    errors: [],
-    runtime,
-  };
-
-  return {
-    getExtensions: () => extensionsResult,
-    getSkills: () => ({ skills: [], diagnostics: [] }),
-    getPrompts: () => ({ prompts: [], diagnostics: [] }),
-    getThemes: () => ({ themes: [], diagnostics: [] }),
-    getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () => systemPrompt,
-    getAppendSystemPrompt: () => [],
-    getPathMetadata: () => new Map(),
-    extendResources: () => {},
-    reload: async () => {},
-  };
 }
 
 // ── Session listing helper ────────────────────────────────────────────────────
@@ -548,7 +562,7 @@ function formatToolCall(toolName: string, params: Record<string, unknown>): stri
 // ── Proxy core tools ──────────────────────────────────────────────────────────
 
 function createProxyTools(
-  agentName: string,
+  getAgentName: () => string,
   gatewayUrl: string,
   handlerRef: { fn: OnToolStart | undefined }
 ): ToolDefinition[] {
@@ -556,7 +570,7 @@ function createProxyTools(
     tool: string,
     params: Record<string, any>
   ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
-    const res = await fetch(`${gatewayUrl}/api/agents/${encodeURIComponent(agentName)}/exec`, {
+    const res = await fetch(`${gatewayUrl}/api/agents/${encodeURIComponent(getAgentName())}/exec`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tool, params }),

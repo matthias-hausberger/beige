@@ -23,36 +23,19 @@ import { buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skill
 
 /**
  * Load the system prompt template from the file alongside this module.
- * Falls back to a hardcoded default if the file cannot be read (e.g. in tests).
+ * The template file is always shipped as part of the package (copied by build:assets).
+ * Throws if the file is missing — this is a packaging/build error that must be fixed.
  */
 function loadSystemPromptTemplate(): string {
+  const templatePath = fileURLToPath(new URL("./system-prompt.template.md", import.meta.url));
   try {
-    const templatePath = fileURLToPath(new URL("./system-prompt.template.md", import.meta.url));
     return readFileSync(templatePath, "utf-8");
-  } catch {
-    // Fallback — keeps the system working even if the template file is missing
-    return [
-      'You are an AI agent named "{{agentName}}" running inside a secure sandbox managed by the Beige agent system.',
-      "",
-      "## Environment",
-      "",
-      "- You run inside a Docker container with a writable workspace at `/workspace`.",
-      "- You have 4 core tools: `read`, `write`, `patch`, and `exec`.",
-      "- Additional tools are available as executables in `/tools/bin/`. Run them with `exec`.",
-      "- Tool usage guides are at `/tools/packages/<name>/SKILL.md` — read this first when using a tool.",
-      "- Tool reference documentation (config, prerequisites) is at `/tools/packages/<name>/README.md`.",
-      "- Your working directory is `/workspace`. Files you create persist here.",
-      "- You can write and execute scripts (TypeScript via Deno, shell scripts, Python, etc.).",
-      "- Your AGENTS.md file is at `/workspace/AGENTS.md`. Read it at the start of a session.",
-      "",
-      "{{toolContext}}",
-      "{{skillContext}}",
-      "## Guidelines",
-      "",
-      "- Be helpful and proactive.",
-      "- When tasks require multiple steps, write scripts to chain tool calls.",
-      "- Always handle errors gracefully.",
-    ].join("\n");
+  } catch (err) {
+    throw new Error(
+      `Failed to load system prompt template at ${templatePath}. ` +
+      `This file must be present — run 'pnpm run build' to ensure it's copied to dist/. ` +
+      `Original error: ${err instanceof Error ? err.message : err}`
+    );
   }
 }
 

@@ -118,6 +118,8 @@ export class Gateway {
       sessionStore: this.sessionStore,
       sandbox: this.sandboxManager,
       audit: this.audit,
+      loadedTools: this.loadedTools,
+      loadedSkills: this.loadedSkills,
       host,
       port,
     });

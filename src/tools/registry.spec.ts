@@ -528,9 +528,9 @@ describe("buildToolContext", () => {
   it("handles empty tools list", () => {
     const context = buildToolContext([], new Map());
 
-    expect(context).toContain("## Available Tools");
-    // Should still have the basic description
-    expect(context).toContain("/tools/bin/");
+    // Empty tools list should return empty string — the template already covers
+    // generic tool usage instructions, so no need to repeat them here.
+    expect(context).toBe("");
   });
 
   it("skips tools not in loaded map", () => {

@@ -20,10 +20,20 @@ import { existsSync, mkdirSync } from "fs";
 import { beigeDir } from "../paths.js";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
+import { buildSystemPrompt } from "../gateway/agent-manager.js";
 import { SessionSettingsStore, resolveSessionSetting } from "../gateway/session-settings.js";
 import { BeigeSessionStore } from "../gateway/sessions.js";
-import { loadSkills, buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
+import { loadSkills, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
 import { RestrictedModelRegistry, buildAllowedModels } from "../config/restricted-model-registry.js";
+
+/** Shape of an agent entry returned by the gateway's GET /api/agents endpoint. */
+interface GatewayAgentInfo {
+  name: string;
+  tools: string[];
+  skills: string[];
+  toolContext: string;
+  skillContext: string;
+}
 
 /**
  * TUI channel — runs in a separate process and connects to the gateway HTTP API.
@@ -99,7 +109,7 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
 
   // Fetch available agents from gateway
   const agentsRes = await fetch(`${gatewayUrl}/api/agents`);
-  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[]; skills: string[] }> };
+  const { agents } = (await agentsRes.json()) as { agents: GatewayAgentInfo[] };
   const agentNames = agents.map((a) => a.name);
 
   let agentName = opts.agentName;
@@ -235,7 +245,7 @@ async function createSession(
 
   // Fetch agent info from gateway
   const agentsRes = await fetch(`${gatewayUrl}/api/agents`);
-  const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[]; skills: string[] }> };
+  const { agents } = (await agentsRes.json()) as { agents: GatewayAgentInfo[] };
   const agentInfo = agents.find((a) => a.name === agentName);
   const toolNames = agentInfo?.tools ?? [];
   const skillNames = agentInfo?.skills ?? [];
@@ -248,8 +258,10 @@ async function createSession(
   // Pass a getter so tool calls always route to the currently-active agent,
   // even after /beige-agent switches state.agentName.
   const coreTools = createProxyTools(() => state.agentName, gatewayUrl, toolStartHandlerRef);
-  const toolContext = buildToolContext(toolNames);
-  const skillContext = buildSkillContext(skillNames, loadedSkills);
+
+  // Use pre-built tool/skill context from the gateway (which has full tool manifests).
+  const toolContext = agentInfo?.toolContext ?? "";
+  const skillContext = agentInfo?.skillContext ?? "";
 
   // Populate the shared mutable ref with the initial system prompt.
   systemPromptRef.value = buildSystemPrompt(agentName, toolContext, skillContext);
@@ -437,12 +449,11 @@ async function buildBeigeExtension(
     // shared ref (read by resourceLoader.getSystemPrompt() on future rebuilds)
     // and the session's cached _baseSystemPrompt (used before every LLM call).
     const agentsRes = await fetch(`${state.gatewayUrl}/api/agents`);
-    const { agents } = (await agentsRes.json()) as { agents: Array<{ name: string; tools: string[]; skills: string[] }> };
+    const { agents } = (await agentsRes.json()) as { agents: GatewayAgentInfo[] };
     const agentInfo = agents.find((a) => a.name === arg);
-    const toolNames = agentInfo?.tools ?? [];
-    const skillNames = agentInfo?.skills ?? [];
-    const toolContext = buildToolContext(toolNames);
-    const skillContext = buildSkillContext(skillNames, state.loadedSkills);
+    // Use pre-built tool/skill context from the gateway (which has full tool manifests).
+    const toolContext = agentInfo?.toolContext ?? "";
+    const skillContext = agentInfo?.skillContext ?? "";
     const newSystemPrompt = buildSystemPrompt(arg, toolContext, skillContext);
     systemPromptRef.value = newSystemPrompt;
     if (state.session) {
@@ -655,62 +666,6 @@ function createProxyTools(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function buildToolContext(toolNames: string[]): string {
-  if (toolNames.length === 0) return "";
-
-  const lines = [
-    "## Available Tools",
-    "",
-    "The following tools are available via `/tools/bin/` in the sandbox:",
-    "",
-  ];
-
-  for (const name of toolNames) {
-    lines.push(`- **${name}** — run with \`exec: /tools/bin/${name} <args>\``);
-  }
-
-  lines.push("");
-  lines.push("Read tool usage guide: `exec: cat /tools/packages/<name>/SKILL.md`");
-  return lines.join("\n");
-}
-
-function buildSystemPrompt(agentName: string, toolContext: string, skillContext: string = ""): string {
-  return `You are an AI agent named "${agentName}" running inside a secure sandbox managed by the Beige agent system.
-
-## Environment
-
-- You run inside a Docker container with a writable workspace at \`/workspace\`.
-- You have 4 core tools: \`read\`, \`write\`, \`patch\`, and \`exec\`.
-- Additional tools are available as executables in \`/tools/bin/\`. Run them with \`exec\`.
-- Tool usage guides are at \`/tools/packages/<name>/SKILL.md\` — read this first when using a tool.
-- Tool reference documentation (config, prerequisites) is at \`/tools/packages/<name>/README.md\`.
-- Your working directory is \`/workspace\`. Files you create persist here.
-- You can write and execute scripts (TypeScript via Deno, shell scripts, Python, etc.).
-
-## How to Use Tools
-
-To call a tool, use the \`exec\` core tool:
-\`\`\`
-exec: /tools/bin/<tool-name> <args...>
-\`\`\`
-
-To write and run a script:
-1. Use \`write\` to create a script file in \`/workspace\`
-2. Use \`exec\` to run it (e.g., \`exec deno run --allow-all /workspace/script.ts\`)
-
-Scripts can call tools by executing \`/tools/bin/<tool-name>\` as subprocesses.
-
-${toolContext}
-${skillContext}
-## Guidelines
-
-- Be helpful and proactive.
-- When tasks require multiple steps, write scripts to chain tool calls.
-- If you're unsure about a tool, read its usage guide at \`/tools/packages/<name>/SKILL.md\`.
-- Always handle errors gracefully.
-`;
-}
 
 function resolveModel(agentConfig: AgentConfig, modelRegistry: ModelRegistry | RestrictedModelRegistry) {
   const { provider, model: modelId } = agentConfig.model;

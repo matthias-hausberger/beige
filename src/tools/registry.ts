@@ -127,12 +127,10 @@ export function buildToolContext(
   agentTools: string[],
   loadedTools: Map<string, LoadedTool>
 ): string {
+  if (agentTools.length === 0) return "";
+
   const lines: string[] = [
     "## Available Tools",
-    "",
-    "Tools are available as executables in `/tools/bin/`. Use the `exec` core tool to run them.",
-    "Tool usage guides are at `/tools/packages/<name>/SKILL.md` — read this first when using a tool.",
-    "Tool reference documentation (config, prerequisites) is at `/tools/packages/<name>/README.md`.",
     "",
   ];
 

@@ -76,6 +76,8 @@ describe("GatewayAPI", () => {
       sessionStore: mockSessionStore as BeigeSessionStore,
       sandbox: mockSandbox as SandboxManager,
       audit: mockAudit as AuditLogger,
+      loadedTools: new Map(),
+      loadedSkills: new Map(),
       port: 0, // Use random available port
       host: "127.0.0.1",
     });

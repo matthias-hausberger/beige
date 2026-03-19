@@ -5,6 +5,8 @@ import type { BeigeSessionStore } from "./sessions.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { AuditLogger } from "./audit.js";
 import type { Gateway } from "./gateway.js";
+import { buildToolContext, type LoadedTool } from "../tools/registry.js";
+import { buildSkillContext, type LoadedSkill } from "../skills/registry.js";
 
 export interface GatewayAPIOptions {
   config: BeigeConfig;
@@ -13,6 +15,8 @@ export interface GatewayAPIOptions {
   sessionStore: BeigeSessionStore;
   sandbox: SandboxManager;
   audit: AuditLogger;
+  loadedTools: Map<string, LoadedTool>;
+  loadedSkills: Map<string, LoadedSkill>;
   port: number;
   host: string;
 }
@@ -86,6 +90,8 @@ export class GatewayAPI {
           fallbackModels: config.fallbackModels ?? [],
           tools: config.tools,
           skills: config.skills ?? [],
+          toolContext: buildToolContext(config.tools, this.opts.loadedTools),
+          skillContext: buildSkillContext(config.skills ?? [], this.opts.loadedSkills),
         }));
         return this.json(res, 200, { agents });
       }

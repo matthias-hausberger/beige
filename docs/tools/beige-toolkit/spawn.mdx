@@ -47,8 +47,7 @@ Each target can override the default `maxDepth` independently. For example, you 
 ```json5
 tools: {
   spawn: {
-    path: "~/.beige/toolkits/beige-toolkit/tools/spawn",
-    target: "gateway",
+    // installed via: beige tools install npm:@matthias-hausberger/beige-toolkit
     config: {
       targets: {
         reviewer: {},
@@ -82,8 +81,7 @@ Since beige supports per-agent `toolConfigs` overrides (deep-merged with the top
 ```json5
 tools: {
   spawn: {
-    path: "~/.beige/toolkits/beige-toolkit/tools/spawn",
-    target: "gateway",
+    // installed via: beige tools install npm:@matthias-hausberger/beige-toolkit
     config: {
       // Baseline: every agent can spawn itself as a sub-agent
       targets: {

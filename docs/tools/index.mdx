@@ -1,6 +1,6 @@
 ---
 title: "Tools"
-description: "Extend agent capabilities with tools, toolkits, and custom integrations"
+description: "Extend agent capabilities with installable tools"
 ---
 
 Tools are executables mounted into the agent's sandbox that give it the ability to act on the world — read files, store data, call APIs, send messages, and more.
@@ -21,7 +21,7 @@ graph LR
 |---|---|---|
 | **What** | `read`, `write`, `patch`, `exec` — built into the gateway | Executables at `/tools/bin/<name>` backed by tool packages |
 | **How LLM calls them** | Direct tool call | `exec /tools/bin/<name> <args>` |
-| **Defined by** | Beige itself | You, or installed from a toolkit |
+| **Defined by** | Beige itself | You, or installed via `beige tools install` |
 
 ## In This Section
 
@@ -29,11 +29,14 @@ graph LR
   <Card icon="wrench" href="/tools/core-capabilities" title="Core Capabilities">
     The 4 built-in tools every agent has: read, write, patch, exec
   </Card>
-  <Card icon="pen-to-square" href="/tools/ecosystem/build-tools" title="Build Your Own Tools">
+  <Card icon="download" href="/tools/installing" title="Installing Tools">
+    Install tools from npm, GitHub, or local directories
+  </Card>
+  <Card icon="pen-to-square" href="/tools/building/index" title="Build Your Own Tools">
     Create custom tools: handler format, manifest, documentation
   </Card>
-  <Card icon="box" href="/tools/ecosystem/toolkits" title="Toolkits">
-    Install, create, and share collections of tools
+  <Card icon="list" href="/tools/managing" title="Managing Tools">
+    List, update, remove, and configure installed tools
   </Card>
 </CardGroup>
 
@@ -42,8 +45,8 @@ graph LR
 For each tool in an agent's config, the gateway generates a launcher script and bind-mounts it read-only into the sandbox:
 
 ```
-~/.beige/agents/<agent>/launchers/kv   →   /tools/bin/kv      (read-only)
-tools/kv/                              →   /tools/packages/kv/ (read-only)
+~/.beige/tools/kv/                         →   /tools/packages/kv/ (read-only)
+~/.beige/agents/<agent>/launchers/kv       →   /tools/bin/kv       (read-only)
 ```
 
 The agent calls a tool by running the launcher. The launcher connects to the gateway over a Unix socket, the gateway policy-checks and executes the handler, and returns the result.
@@ -52,19 +55,30 @@ The tool's entire directory is mounted read-only at `/tools/packages/<name>/`, g
 
 ## Adding a Tool to an Agent
 
-Register the tool in `config.json5` and add it to the agent's `tools` list:
+Install a tool, then add it to the agent's `tools` list in `config.json5`:
+
+```json5
+{
+  agents: {
+    assistant: {
+      tools: ["kv", "github", "chrome"],
+    },
+  },
+}
+```
+
+Installed tools are auto-discovered — no need to specify `path` or `target`. If you need to pass config to a tool, add an entry to the `tools` section:
 
 ```json5
 {
   tools: {
-    kv: {
-      path: "~/.beige/tools/kv",
-      target: "gateway",
+    github: {
+      config: { allowedCommands: ["repo", "issue", "pr"] },
     },
   },
   agents: {
     assistant: {
-      tools: ["kv"],
+      tools: ["github"],
     },
   },
 }
@@ -74,36 +88,23 @@ For all tool config fields, see the [Config Reference](/agents/configuration).
 
 ### Per-Agent Config Overrides
 
-If different agents need different configs for the same tool, you have two options:
-
-**Option A: Register the tool multiple times** under different names, each with its own config:
+If different agents need different configs for the same tool, use `toolConfigs` to override config per agent. The override is deep-merged with the top-level `tools.<name>.config`:
 
 ```json5
-tools: {
-  kv:          { path: "./tools/kv", target: "gateway" },
-  "kv-readonly": { path: "./tools/kv", target: "gateway", config: { allowCommands: ["get", "list"] } },
-},
-agents: {
-  writer:  { tools: ["kv"] },
-  reader:  { tools: ["kv-readonly"] },
-},
+{
+  tools: {
+    slack: { config: { denyCommands: ["messages send"] } },
+  },
+  agents: {
+    reader:  { tools: ["slack"] },                          // uses base config
+    writer:  { tools: ["slack"], toolConfigs: {              // overrides merged in
+      slack: { denyCommands: [] },
+    }},
+  },
+}
 ```
 
-**Option B: Use `toolConfigs`** to override config per agent. The override is deep-merged with the top-level `tools.<name>.config`:
-
-```json5
-tools: {
-  kv: { path: "./tools/kv", target: "gateway" },
-},
-agents: {
-  writer:  { tools: ["kv"] },                          // uses base config
-  reader:  { tools: ["kv"], toolConfigs: {              // overrides merged in
-    kv: { allowCommands: ["get", "list"] },
-  }},
-},
-```
-
-Option B is cleaner when the only difference is config — it avoids duplicating tool entries. See the [Config Reference](/agents/configuration#agentstoolconfigs) for details on the merge behavior.
+See the [Config Reference](/agents/configuration#agentstoolconfigs) for details on the merge behavior.
 
 The agent can then read the tool's docs and invoke it:
 

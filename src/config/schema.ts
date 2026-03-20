@@ -134,21 +134,23 @@ const LLMConfig = Type.Object(
 
 const ToolConfig = Type.Object(
   {
-    path: Type.String({
-      description:
-        "Path to the tool package directory. Resolved relative to the config file unless absolute.",
-    }),
-    target: Type.Union([Type.Literal("gateway"), Type.Literal("sandbox")], {
-      description: '"gateway" runs the handler on the host process. "sandbox" is planned.',
-    }),
+    path: Type.Optional(
+      Type.String({
+        description:
+          "Path to the tool package directory. Resolved relative to the config file unless absolute. " +
+          "Auto-resolved for tools installed via 'beige tools install'.",
+      })
+    ),
+    target: Type.Optional(
+      Type.Union([Type.Literal("gateway"), Type.Literal("sandbox")], {
+        description:
+          '"gateway" runs the handler on the host process. "sandbox" is planned. ' +
+          "Auto-resolved for tools installed via 'beige tools install'.",
+      })
+    ),
     config: Type.Optional(
       Type.Record(Type.String(), Type.Unknown(), {
         description: "Arbitrary config object passed to createHandler(config) at startup",
-      })
-    ),
-    _toolkit: Type.Optional(
-      Type.String({
-        description: "Internal: set by the loader for tools auto-discovered from toolkits",
       })
     ),
   },
@@ -314,6 +316,19 @@ export function validateConfig(config: unknown): BeigeConfig {
       if (!c.tools[toolName]) {
         throw new Error(
           `Config: agent '${agentName}' references unknown tool '${toolName}'`
+        );
+      }
+      const tool = c.tools[toolName];
+      if (!tool.path) {
+        throw new Error(
+          `Config: tool '${toolName}' (used by agent '${agentName}') has no path. ` +
+          `Install it with 'beige tools install <source>' or specify a path in config.`
+        );
+      }
+      if (!tool.target) {
+        throw new Error(
+          `Config: tool '${toolName}' (used by agent '${agentName}') has no target. ` +
+          `Install it with 'beige tools install <source>' or specify target: "gateway" | "sandbox" in config.`
         );
       }
     }

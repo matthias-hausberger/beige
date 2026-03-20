@@ -28,8 +28,8 @@ if [ -z "$TOOLKIT_SRC" ]; then
 fi
 
 # Validate the source looks right
-if [ ! -f "$TOOLKIT_SRC/toolkit.json" ]; then
-  echo "Error: $TOOLKIT_SRC does not contain a toolkit.json" >&2
+if [ ! -d "$TOOLKIT_SRC/tools" ]; then
+  echo "Error: $TOOLKIT_SRC does not contain a tools/ directory" >&2
   exit 1
 fi
 
@@ -65,19 +65,17 @@ convert_md_to_mdx \
   "$DEST_DIR/index.mdx" \
   "@matthias-hausberger/beige-toolkit"
 
-# --- 2. Each tool's README → <tool-name>.mdx ---
-# Read tool list from toolkit.json
-TOOLS=$(python3 -c "
-import json
-with open('$TOOLKIT_SRC/toolkit.json') as f:
-    d = json.load(f)
-for t in d['tools']:
-    print(t.split('/')[-1])
-")
+# --- 2. Discover tools by scanning for tool.json files ---
+TOOLS=()
+for tool_json in "$TOOLKIT_SRC"/tools/*/tool.json; do
+  tool_dir="$(dirname "$tool_json")"
+  tool="$(basename "$tool_dir")"
+  TOOLS+=("$tool")
+done
 
 TOOL_PAGES=()
 
-for tool in $TOOLS; do
+for tool in "${TOOLS[@]}"; do
   TOOL_README="$TOOLKIT_SRC/tools/$tool/README.md"
   if [ ! -f "$TOOL_README" ]; then
     echo "Warning: $tool has no README.md, skipping."

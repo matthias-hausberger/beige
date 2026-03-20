@@ -72,9 +72,14 @@ Tool `path` values are resolved relative to the config file's directory, unless 
   },
 
   // ── Tool Registry ─────────────────────────────────────────────────────
-  // Register tool packages. Each key becomes the tool name used in agent
-  // configs, launcher scripts (/tools/bin/<name>), and audit logs.
+  // Tools installed via `beige tools install` are auto-discovered — no entry needed.
+  // Add entries here only for: custom config, or tools not installed via beige.
   tools: {
+    // Installed tool with custom config (path/target auto-resolved)
+    github: {
+      config: { allowedCommands: ["repo", "issue", "pr"] },
+    },
+    // Local tool (not installed via beige — path and target required)
     kv: {
       path: "~/.beige/tools/kv",  // path to tool package directory
       target: "gateway",           // where the handler runs: "gateway" | "sandbox"(future)
@@ -171,8 +176,8 @@ Tool `path` values are resolved relative to the config file's directory, unless 
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `path` | Yes | Path to the tool package directory |
-| `target` | Yes | `"gateway"` (runs on host) — `"sandbox"` is future |
+| `path` | No | Path to the tool package directory. Auto-resolved for installed tools. Required for tools not installed via `beige tools install`. |
+| `target` | No | `"gateway"` (runs on host) — `"sandbox"` is future. Auto-resolved from `tool.json` for installed tools. |
 | `config` | No | Arbitrary object passed to `createHandler(config)` |
 
 ### `skills.<name>`
@@ -343,12 +348,15 @@ The gateway creates and manages these directories under `~/.beige/`:
 │       └── <id>.jsonl             # pi conversation session files
 ├── sockets/
 │   └── <agent>.sock               # Unix socket per agent
+├── tools/                             # installed tools (gateway scans this)
+│   ├── github/                        # tool directory (real or symlink)
+│   ├── github.meta.json               # install metadata (source, timestamp)
+│   └── kv/
+├── packages/                          # intact multi-tool packages
+│   └── matthias-hausberger-beige-toolkit/
 ├── data/
 │   ├── kv.json                    # KV tool data
 │   └── provider-health.json       # rate limit cooldown state
-├── toolkits/                      # installed toolkits
-│   └── @scope/toolkit-name/
-├── toolkit-registry.json          # tracks installed toolkits + sources
 └── logs/
     ├── audit.jsonl                # append-only audit log (every tool call)
     └── gateway.log                # daemon stdout/stderr (configurable)

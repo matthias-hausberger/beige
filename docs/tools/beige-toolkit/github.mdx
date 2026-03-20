@@ -57,8 +57,7 @@ Use beige's `toolConfigs` to give different agents different GitHub permissions:
 ```json5
 tools: {
   github: {
-    path: "~/.beige/toolkits/beige-toolkit/tools/github",
-    target: "gateway",
+    // installed via: beige tools install npm:@matthias-hausberger/beige-toolkit
     config: {
       // Baseline: standard commands, no API access
       allowedCommands: ["repo", "issue", "pr", "release", "run"],

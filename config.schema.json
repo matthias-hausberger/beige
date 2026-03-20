@@ -66,17 +66,13 @@
         "^(.*)$": {
           "title": "ToolConfig",
           "type": "object",
-          "required": [
-            "path",
-            "target"
-          ],
           "properties": {
             "path": {
-              "description": "Path to the tool package directory. Resolved relative to the config file unless absolute.",
+              "description": "Path to the tool package directory. Resolved relative to the config file unless absolute. Auto-resolved for tools installed via 'beige tools install'.",
               "type": "string"
             },
             "target": {
-              "description": "\"gateway\" runs the handler on the host process. \"sandbox\" is planned.",
+              "description": "\"gateway\" runs the handler on the host process. \"sandbox\" is planned. Auto-resolved for tools installed via 'beige tools install'.",
               "anyOf": [
                 {
                   "const": "gateway",
@@ -94,10 +90,6 @@
               "patternProperties": {
                 "^(.*)$": {}
               }
-            },
-            "_toolkit": {
-              "description": "Internal: set by the loader for tools auto-discovered from toolkits",
-              "type": "string"
             }
           }
         }

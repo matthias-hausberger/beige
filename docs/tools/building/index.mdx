@@ -1,0 +1,17 @@
+---
+title: "Build Your Own Tools"
+description: "Create custom tools and share them as multi-tool repositories"
+---
+
+A tool is a directory containing a manifest (`tool.json`), a handler (`index.ts`), and documentation. The gateway loads the handler and mounts the tool into agent sandboxes as an executable at `/tools/bin/<name>`.
+
+## In This Section
+
+<CardGroup cols={2}>
+  <Card icon="hammer" href="/tools/building/tool-anatomy" title="Tool Anatomy">
+    Package structure, manifest format, handler API, and documentation conventions
+  </Card>
+  <Card icon="share-nodes" href="/tools/building/distributing" title="Distributing Tools">
+    Share tools via GitHub or npm — single tools or multi-tool repositories
+  </Card>
+</CardGroup>

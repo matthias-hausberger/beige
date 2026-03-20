@@ -50,6 +50,9 @@ export async function loadTools(
 
   // ── Phase 1: Load base (top-level) tool handlers ──────────────────────
   for (const [name, toolConfig] of Object.entries(config.tools)) {
+    // path and target are guaranteed to be present after loader enrichment + validation
+    if (!toolConfig.path || !toolConfig.target) continue;
+
     const manifest = loadToolManifest(toolConfig.path);
     const loaded: LoadedTool = {
       name,

@@ -13,8 +13,7 @@
  *   beige gateway logs                 Show gateway logs
  *   beige gateway logs -f              Follow gateway logs (tail -f)
  *   beige tui [agent]                  Connect to a running gateway via TUI
- *   beige install <source>             Install a toolkit (npm, github, local, url)
- *   beige toolkit <command>            Manage toolkits
+ *   beige tools <command>              Manage tools (install, list, update, remove)
  *   beige --config <path>              Use a specific config file
  *
  *   Shell 1:  beige                    ← starts gateway daemon
@@ -36,12 +35,13 @@ import { watch } from "fs";
 import { runSetup } from "./install.js";
 import { beigeDir } from "./paths.js";
 import {
-  installToolkit,
-  removeToolkit,
-  listInstalledToolkits,
-  getInstalledToolkit,
-  sourceToString,
-} from "./toolkit/index.js";
+  installTools,
+  removeTool,
+  updateTool,
+  updateAllTools,
+  listInstalledTools,
+  readMetaFile,
+} from "./tools/installer.js";
 
 // ── Timestamp helpers ────────────────────────────────────────────────
 
@@ -493,10 +493,9 @@ type Mode =
   | { kind: "tui"; agentName?: string }
   | { kind: "setup"; force: boolean }
   | { kind: "install"; source: string; force: boolean }
-  | { kind: "toolkit-list" }
-  | { kind: "toolkit-show"; name: string }
-  | { kind: "toolkit-remove"; name: string }
-  | { kind: "toolkit-update" };
+  | { kind: "tools-list" }
+  | { kind: "tools-remove"; name: string }
+  | { kind: "tools-update"; name?: string };
 
 function printHelp() {
   console.log(`
@@ -506,8 +505,7 @@ Usage:
   beige setup                            First-time setup (copies tools, writes default config)
   beige gateway <command>                Manage the gateway daemon
   beige tui [agent]                      Connect TUI to running gateway
-  beige install <source>                 Install a toolkit (npm, github, local, url)
-  beige toolkit <command>                Manage toolkits
+  beige tools <command>                  Manage tools (install, list, update, remove)
 
 Options:
   -c, --config <path>        Config file (default: ~/.beige/config.json5)
@@ -516,27 +514,27 @@ Options:
   -h, --help                 Show this help
 
 Run 'beige gateway' for gateway-specific commands.
-Run 'beige toolkit' for toolkit-specific commands.
+Run 'beige tools' for tool management commands.
 `);
 }
 
-function printToolkitHelp() {
+function printToolsHelp() {
   console.log(`
-Beige — Toolkit commands
+Beige — Tool commands
 
 Usage:
-  beige install <source>                 Install a toolkit
-  beige toolkit list                     List installed toolkits
-  beige toolkit show <name>              Show toolkit details
-  beige toolkit remove <name>            Remove a toolkit
-  beige toolkit update                   Update all installed toolkits
+  beige tools install <source>           Install tools from a source
+  beige tools list                       List installed tools
+  beige tools remove <name>              Remove an installed tool
+  beige tools update [name]              Update a tool (or all tools)
 
 Install sources:
-  npm:@scope/toolkit-name                NPM package
-  github:owner/repo                      GitHub repository
-  github:owner/repo#tag                  GitHub repository with tag/branch
-  ./path/to/toolkit                      Local directory
-  https://.../toolkit.tar.gz             URL to tarball
+  npm:@scope/package                     NPM package (latest)
+  npm:@scope/package@1.2.3              NPM package (specific version)
+  github:owner/repo                      GitHub repository (all tools)
+  github:owner/repo/path/to/tool        Single tool from a GitHub subfolder
+  github:owner/repo#tag                  GitHub repository at a tag/branch
+  ./path/to/tool                         Local directory
 
 Options:
   --force, -f                Force install even with conflicts
@@ -625,44 +623,37 @@ function parseArgs(): Mode {
     return { kind: "setup", force };
   }
 
-  if (cmd === "install") {
+  if (cmd === "tools") {
     if (!sub || sub === "--help" || sub === "-h") {
-      printToolkitHelp();
-      process.exit(sub === "--help" || sub === "-h" ? 0 : 1);
-    }
-    const force = rest.includes("--force") || rest.includes("-f");
-    return { kind: "install", source: sub, force };
-  }
-
-  if (cmd === "toolkit") {
-    if (!sub || sub === "--help" || sub === "-h") {
-      printToolkitHelp();
+      printToolsHelp();
       process.exit(0);
     }
-    if (sub === "list") {
-      return { kind: "toolkit-list" };
-    }
-    if (sub === "show") {
-      const name = rest[0];
-      if (!name) {
-        console.error("[BEIGE] Missing toolkit name. Usage: beige toolkit show <name>");
-        process.exit(1);
+    if (sub === "install") {
+      const source = rest[0];
+      if (!source || source === "--help" || source === "-h") {
+        printToolsHelp();
+        process.exit(source === "--help" || source === "-h" ? 0 : 1);
       }
-      return { kind: "toolkit-show", name };
+      const force = rest.includes("--force") || rest.includes("-f");
+      return { kind: "install", source, force };
+    }
+    if (sub === "list") {
+      return { kind: "tools-list" };
     }
     if (sub === "remove") {
       const name = rest[0];
       if (!name) {
-        console.error("[BEIGE] Missing toolkit name. Usage: beige toolkit remove <name>");
+        console.error("[BEIGE] Missing tool name. Usage: beige tools remove <name>");
         process.exit(1);
       }
-      return { kind: "toolkit-remove", name };
+      return { kind: "tools-remove", name };
     }
     if (sub === "update") {
-      return { kind: "toolkit-update" };
+      const name = rest[0]; // optional — if omitted, update all
+      return { kind: "tools-update", name };
     }
-    console.error(`[BEIGE] Unknown toolkit subcommand: ${sub}`);
-    printToolkitHelp();
+    console.error(`[BEIGE] Unknown tools subcommand: ${sub}`);
+    printToolsHelp();
     process.exit(1);
   }
 
@@ -739,20 +730,18 @@ if (mode.kind === "setup") {
   }
 } else if (mode.kind === "install") {
   await cmdInstall(mode.source, mode.force);
-} else if (mode.kind === "toolkit-list") {
-  cmdToolkitList();
-} else if (mode.kind === "toolkit-show") {
-  cmdToolkitShow(mode.name);
-} else if (mode.kind === "toolkit-remove") {
-  cmdToolkitRemove(mode.name);
-} else if (mode.kind === "toolkit-update") {
-  await cmdToolkitUpdate();
+} else if (mode.kind === "tools-list") {
+  cmdToolsList();
+} else if (mode.kind === "tools-remove") {
+  cmdToolsRemove(mode.name);
+} else if (mode.kind === "tools-update") {
+  await cmdToolsUpdate(mode.name);
 }
 
 async function cmdInstall(source: string, force: boolean): Promise<void> {
-  console.log(`[BEIGE] Installing toolkit from: ${source}`);
+  console.log(`[BEIGE] Installing from: ${source}`);
   
-  const result = await installToolkit(source, { force });
+  const result = await installTools(source, { force });
   
   if (!result.success) {
     if (result.conflicts && result.conflicts.length > 0) {
@@ -762,103 +751,80 @@ async function cmdInstall(source: string, force: boolean): Promise<void> {
       }
       console.error("\n[BEIGE] Use --force to override.");
     } else {
-      console.error(`[BEIGE] Failed to install toolkit: ${result.error}`);
+      console.error(`[BEIGE] Failed to install: ${result.error}`);
     }
     process.exit(1);
   }
   
-  if (result.toolkit) {
-    const action = result.updated ? "Updated" : "Installed";
-    console.log(`[BEIGE] ${action} toolkit: ${result.toolkit.manifest.name} v${result.toolkit.manifest.version}`);
-    console.log(`[BEIGE] Tools available:`);
-    for (const tool of result.toolkit.tools) {
+  if (result.tools && result.tools.length > 0) {
+    console.log(`[BEIGE] Installed ${result.tools.length} tool(s):`);
+    for (const tool of result.tools) {
       console.log(`  - ${tool.name}: ${tool.manifest.description}`);
     }
-    console.log(`\n[BEIGE] Add tools to your agent's config to enable them.`);
+    console.log(`\n[BEIGE] Add tools to your agent's 'tools' array to enable them.`);
   }
 }
 
-function cmdToolkitList(): void {
-  const toolkits = listInstalledToolkits();
+function cmdToolsList(): void {
+  const tools = listInstalledTools();
   
-  if (toolkits.length === 0) {
-    console.log("[BEIGE] No toolkits installed.");
-    console.log("\n[BEIGE] Install a toolkit with: beige install <source>");
+  if (tools.length === 0) {
+    console.log("[BEIGE] No tools installed.");
+    console.log("\n[BEIGE] Install tools with: beige tools install <source>");
     return;
   }
   
-  console.log("[BEIGE] Installed toolkits:\n");
+  console.log("[BEIGE] Installed tools:\n");
   
-  for (const toolkit of toolkits) {
-    const source = sourceToString(toolkit.source);
-    console.log(`  ${toolkit.name} v${toolkit.version}`);
+  for (const tool of tools) {
+    const meta = readMetaFile(tool.name);
+    const source = meta?.source ?? "unknown";
+    console.log(`  ${tool.name}`);
+    console.log(`    ${tool.manifest.description}`);
     console.log(`    Source: ${source}`);
-    console.log(`    Tools: ${toolkit.tools.join(", ")}`);
-    console.log(`    Installed: ${new Date(toolkit.installedAt).toLocaleDateString()}`);
+    if (meta?.package) {
+      console.log(`    Package: ${meta.package}`);
+    }
     console.log();
   }
 }
 
-function cmdToolkitShow(name: string): void {
-  const toolkit = getInstalledToolkit(name);
-  
-  if (!toolkit) {
-    console.error(`[BEIGE] Toolkit '${name}' not found.`);
-    console.error("[BEIGE] Run 'beige toolkit list' to see installed toolkits.");
-    process.exit(1);
-  }
-  
-  const source = sourceToString(toolkit.source);
-  
-  console.log(`Toolkit: ${toolkit.name}`);
-  console.log(`Version: ${toolkit.version}`);
-  console.log(`Source:  ${source}`);
-  console.log(`Path:    ${toolkit.path}`);
-  console.log(`Installed: ${new Date(toolkit.installedAt).toLocaleString()}`);
-  console.log(`\nTools:`);
-  for (const toolName of toolkit.tools) {
-    console.log(`  - ${toolName}`);
-  }
-}
-
-function cmdToolkitRemove(name: string): void {
-  const result = removeToolkit(name);
+function cmdToolsRemove(name: string): void {
+  const result = removeTool(name);
   
   if (!result.success) {
     console.error(`[BEIGE] ${result.error}`);
     process.exit(1);
   }
   
-  console.log(`[BEIGE] Removed toolkit: ${name}`);
+  console.log(`[BEIGE] Removed tool: ${name}`);
 }
 
-async function cmdToolkitUpdate(): Promise<void> {
-  const toolkits = listInstalledToolkits();
-  
-  if (toolkits.length === 0) {
-    console.log("[BEIGE] No toolkits installed.");
+async function cmdToolsUpdate(name?: string): Promise<void> {
+  if (name) {
+    console.log(`[BEIGE] Updating tool: ${name}`);
+    const result = await updateTool(name);
+    if (result.success) {
+      console.log(`[BEIGE] Updated ${result.tools?.length ?? 0} tool(s) from same source.`);
+    } else {
+      console.error(`[BEIGE] Failed to update: ${result.error}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Update all
+  const tools = listInstalledTools();
+  if (tools.length === 0) {
+    console.log("[BEIGE] No tools installed.");
     return;
   }
   
-  console.log(`[BEIGE] Updating ${toolkits.length} toolkit(s)...\n`);
+  console.log(`[BEIGE] Updating all installed tools...\n`);
+  const result = await updateAllTools();
   
-  let updated = 0;
-  let failed = 0;
-  
-  for (const toolkit of toolkits) {
-    const source = sourceToString(toolkit.source);
-    console.log(`[BEIGE] Updating ${toolkit.name} from ${source}...`);
-    
-    const result = await installToolkit(source, { force: true });
-    
-    if (result.success) {
-      console.log(`[BEIGE]   Updated to v${result.toolkit?.manifest.version}`);
-      updated++;
-    } else {
-      console.error(`[BEIGE]   Failed: ${result.error}`);
-      failed++;
-    }
+  console.log(`\n[BEIGE] Update complete: ${result.updated.length} updated, ${result.failed.length} failed.`);
+  for (const f of result.failed) {
+    console.error(`  Failed: ${f.source} — ${f.error}`);
   }
-  
-  console.log(`\n[BEIGE] Update complete: ${updated} updated, ${failed} failed.`);
 }

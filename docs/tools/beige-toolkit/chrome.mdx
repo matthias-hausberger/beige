@@ -8,6 +8,24 @@ title: "Chrome Tool"
 
 Control a Chrome browser from within Beige agents. Wraps [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) — giving agents full access to navigation, DOM inspection, JavaScript evaluation, screenshots, network monitoring, and performance analysis. Each agent gets its own persistent Chrome profile.
 
+## Installation
+
+Install this tool individually:
+
+```bash
+beige tools install github:matthias-hausberger/beige-toolkit/tools/chrome
+```
+
+Or install all tools from the toolkit:
+
+```bash
+# From npm
+beige tools install npm:@matthias-hausberger/beige-toolkit
+
+# From GitHub
+beige tools install github:matthias-hausberger/beige-toolkit
+```
+
 ## Configuration
 
 | Key | Default | Description |
@@ -74,7 +92,6 @@ Beige supports per-agent `toolConfigs` overrides that are deep-merged with the t
 ```json5
 tools: {
   chrome: {
-    // installed via: beige tools install npm:@matthias-hausberger/beige-toolkit
     config: {
       // Baseline: headless, standard timeout
       headless: true,

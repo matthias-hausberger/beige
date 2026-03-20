@@ -83,18 +83,17 @@
           {
             "group": "Toolkits",
             "pages": [
-              "tools/ecosystem/toolkits",
               {
                 "group": "@matthias-hausberger/beige-toolkit",
                 "root": "tools/beige-toolkit/index",
                 "pages": [
+                  "tools/beige-toolkit/apple-calendar",
+                  "tools/beige-toolkit/chrome",
+                  "tools/beige-toolkit/confluence",
                   "tools/beige-toolkit/github",
-                  "tools/beige-toolkit/spawn",
                   "tools/beige-toolkit/sessions",
                   "tools/beige-toolkit/slack",
-                  "tools/beige-toolkit/confluence",
-                  "tools/beige-toolkit/chrome",
-                  "tools/beige-toolkit/apple-calendar"
+                  "tools/beige-toolkit/spawn"
                 ]
               }
             ]

@@ -26,20 +26,36 @@ All tools run on the **gateway** (host machine), not inside agent sandboxes. Eac
 
 ## Installation
 
+### Install all tools
+
+From npm (recommended for stable releases):
+
 ```bash
-# Install from npm (recommended)
 beige tools install npm:@matthias-hausberger/beige-toolkit
 
 # Specific version
-beige tools install npm:@matthias-hausberger/beige-toolkit@0.1.2
+beige tools install npm:@matthias-hausberger/beige-toolkit@0.1.0
+```
 
-# Install from GitHub
+From GitHub (latest from main branch):
+
+```bash
 beige tools install github:matthias-hausberger/beige-toolkit
+```
 
-# Install a single tool from GitHub
+### Install individual tools
+
+Cherry-pick specific tools from the repository via GitHub:
+
+```bash
 beige tools install github:matthias-hausberger/beige-toolkit/tools/github
+beige tools install github:matthias-hausberger/beige-toolkit/tools/chrome
+beige tools install github:matthias-hausberger/beige-toolkit/tools/slack
+```
 
-# Install from local checkout (for development)
+### Install from local checkout (development)
+
+```bash
 beige tools install ./path/to/beige-toolkit
 ```
 
@@ -82,60 +98,49 @@ Every tool supports fine-grained permission scoping via `config`:
 
 ```json5
 tools: {
-  // Read-only GitHub — issues and PRs only
   github: {
     config: { allowedCommands: ["issue", "pr"] },
   },
-
-  // Slack — read-only, no sending
   slack: {
     config: { denyCommands: ["messages send", "messages draft"] },
   },
 },
 ```
 
-### Per-Agent Overrides (toolConfigs)
+### Per-Agent Overrides
 
-Use per-agent `toolConfigs` that are deep-merged with the top-level tool config:
+Use per-agent `toolConfigs` to deep-merge overrides with the base tool config:
 
 ```json5
 tools: {
   chrome: {
-    config: {
-      headless: true,
-      timeout: 60,
-    },
+    config: { headless: true, timeout: 60 },
   },
 },
-
 agents: {
-  // QA agent — visible browser, longer timeout
   qa: {
     tools: ["chrome"],
     toolConfigs: {
       chrome: { headless: false, timeout: 120 },
     },
   },
-
-  // Scraper — slim mode, restricted tools
-  scraper: {
-    tools: ["chrome"],
-    toolConfigs: {
-      chrome: {
-        slim: true,
-        allowTools: ["take_snapshot", "navigate_page", "take_screenshot"],
-      },
-    },
-  },
-
-  // Default — uses baseline config as-is
   assistant: {
     tools: ["chrome"],
+    // uses base config as-is
   },
 },
 ```
 
 See each tool's README for the full list of config options.
+
+## Managing Tools
+
+```bash
+beige tools list                    # List all installed tools
+beige tools update                  # Update all tools
+beige tools update github           # Update a specific tool
+beige tools remove github           # Remove a tool
+```
 
 ## Documentation Structure
 
@@ -143,8 +148,8 @@ Each tool has two documentation files:
 
 | File | Audience | Purpose |
 |---|---|---|
-| `README.md` | **Users / developers** | Overview, prerequisites, configuration reference, setup instructions |
-| `SKILL.md` | **AI agents** | Usage examples, calling conventions, practical workflows |
+| `README.md` | **Users / developers** | Overview, prerequisites, configuration reference |
+| `SKILL.md` | **AI agents** | Usage examples, calling conventions, workflows |
 
 ## Development
 
@@ -161,19 +166,89 @@ cd beige-toolkit
 pnpm install
 ```
 
+### Working Locally Against Beige
+
+```bash
+# Start the beige gateway
+cd ../beige
+pnpm run beige gateway start
+
+# Install the local toolkit
+cd ../beige-toolkit
+bash scripts/dev-install.sh
+```
+
+Beige symlinks the local directory, so edits to `tools/` take effect on the next gateway restart.
+
 ### Running Tests
 
 ```bash
-pnpm test                    # Run all tests
-pnpm test:watch              # Watch mode
-pnpm typecheck               # Type-check without running tests
+pnpm test              # Run all tests
+pnpm test:watch        # Watch mode
+pnpm typecheck         # Type-check
+pnpm smoke             # Full smoke sequence
 ```
 
 ### Adding a New Tool
 
 1. Create `tools/<name>/` with `tool.json`, `package.json`, `index.ts`, `README.md`, `SKILL.md`
 2. Write tests in `tools/<name>/__tests__/`
-3. The tool's `package.json` should list its own runtime `dependencies` (if any)
+3. If the tool has npm dependencies, add them to `tools/<name>/package.json` under `dependencies`
+
+Each tool has its own `package.json` so it can be installed individually via GitHub. For tools with no runtime dependencies, the `package.json` just needs `name` and `type`:
+
+```json
+{
+  "name": "@beige/tool-my-tool",
+  "private": true,
+  "type": "module"
+}
+```
+
+## Publishing
+
+```bash
+npm publish --access public
+```
+
+The `files` field in the root `package.json` controls what goes into the npm tarball. Only tool source files are included — tests, scripts, and dev config are excluded.
+
+## Repository Structure
+
+```
+beige-toolkit/
+├── package.json              # npm package config
+├── tsconfig.json
+├── vitest.config.ts
+├── tools/
+│   ├── github/
+│   │   ├── tool.json         # Tool manifest (name, description, target)
+│   │   ├── package.json      # Tool's own dependencies (if any)
+│   │   ├── index.ts          # Handler (runs on the gateway host)
+│   │   ├── README.md         # User/developer documentation
+│   │   ├── SKILL.md          # Agent usage guide
+│   │   └── __tests__/
+│   ├── chrome/
+│   │   ├── tool.json
+│   │   ├── package.json
+│   │   ├── index.ts
+│   │   ├── mcp-client.ts     # Additional module
+│   │   ├── process-manager.ts
+│   │   ├── README.md
+│   │   ├── SKILL.md
+│   │   ├── skills/           # Detailed agent guides
+│   │   └── __tests__/
+│   ├── slack/
+│   ├── confluence/
+│   ├── apple-calendar/
+│   ├── sessions/
+│   └── spawn/
+├── test-utils/
+├── tests/                    # Repo-level smoke tests
+└── scripts/
+    ├── dev-install.sh
+    └── smoke.sh
+```
 
 ## License
 

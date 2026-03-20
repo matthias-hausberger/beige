@@ -8,6 +8,24 @@ title: "GitHub Tool"
 
 Interact with GitHub using the [`gh` CLI](https://cli.github.com/). Routes all commands to `gh` running on the gateway host — authentication is managed by `gh` itself, no token configuration needed in Beige. Repository deletion (`repo delete`) is permanently blocked regardless of configuration.
 
+## Installation
+
+Install this tool individually:
+
+```bash
+beige tools install github:matthias-hausberger/beige-toolkit/tools/github
+```
+
+Or install all tools from the toolkit:
+
+```bash
+# From npm
+beige tools install npm:@matthias-hausberger/beige-toolkit
+
+# From GitHub
+beige tools install github:matthias-hausberger/beige-toolkit
+```
+
 ## Configuration
 
 | Key | Default | Description |
@@ -57,7 +75,6 @@ Use beige's `toolConfigs` to give different agents different GitHub permissions:
 ```json5
 tools: {
   github: {
-    // installed via: beige tools install npm:@matthias-hausberger/beige-toolkit
     config: {
       // Baseline: standard commands, no API access
       allowedCommands: ["repo", "issue", "pr", "release", "run"],

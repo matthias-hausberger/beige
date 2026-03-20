@@ -20,6 +20,7 @@
   "files": [
     "dist",
     "tools",
+    "sandbox",
     "config.schema.json"
   ],
   "scripts": {

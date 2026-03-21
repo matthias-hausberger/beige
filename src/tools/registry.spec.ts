@@ -432,6 +432,104 @@ describe("loadTools", () => {
     expect(runner.hasHandler("assistant:sandbox-cfg")).toBe(false);
   });
 
+  it("unwraps agent override with nested config key", async () => {
+    const toolDir = join(tempDir, "unwrap-cfg");
+    mkdirSync(toolDir, { recursive: true });
+    writeFileSync(
+      join(toolDir, "tool.json"),
+      JSON.stringify({ name: "unwrap-cfg", description: "Unwrap config test", target: "gateway" })
+    );
+    writeFileSync(
+      join(toolDir, "index.ts"),
+      `
+        export function createHandler(config) {
+          return async () => ({ output: JSON.stringify(config), exitCode: 0 });
+        }
+      `
+    );
+
+    const config = createMinimalConfig({
+      tools: {
+        "unwrap-cfg": {
+          path: toolDir,
+          target: "gateway",
+          // No base config
+        },
+      },
+      agents: {
+        work: {
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          tools: ["unwrap-cfg"],
+          toolConfigs: {
+            // User wraps overrides in `config:` to mirror the top-level tool
+            // config structure — the gateway should unwrap this automatically.
+            "unwrap-cfg": {
+              config: {
+                allowWriteSpaces: ["TEAM"],
+                timeout: 60,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await loadTools(config, runner);
+
+    const result = await runner.run("work:unwrap-cfg", []);
+    const parsed = JSON.parse(result.output);
+    // Settings should appear at the top level, not nested under `config`
+    expect(parsed.allowWriteSpaces).toEqual(["TEAM"]);
+    expect(parsed.timeout).toBe(60);
+    expect(parsed.config).toBeUndefined();
+  });
+
+  it("unwraps and merges agent override config key with base config", async () => {
+    const toolDir = join(tempDir, "unwrap-merge");
+    mkdirSync(toolDir, { recursive: true });
+    writeFileSync(
+      join(toolDir, "tool.json"),
+      JSON.stringify({ name: "unwrap-merge", description: "Unwrap merge test", target: "gateway" })
+    );
+    writeFileSync(
+      join(toolDir, "index.ts"),
+      `
+        export function createHandler(config) {
+          return async () => ({ output: JSON.stringify(config), exitCode: 0 });
+        }
+      `
+    );
+
+    const config = createMinimalConfig({
+      tools: {
+        "unwrap-merge": {
+          path: toolDir,
+          target: "gateway",
+          config: { timeout: 30, headless: true },
+        },
+      },
+      agents: {
+        work: {
+          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          tools: ["unwrap-merge"],
+          toolConfigs: {
+            "unwrap-merge": {
+              config: { timeout: 120 },
+            },
+          },
+        },
+      },
+    });
+
+    await loadTools(config, runner);
+
+    const result = await runner.run("work:unwrap-merge", []);
+    const parsed = JSON.parse(result.output);
+    expect(parsed.timeout).toBe(120);
+    expect(parsed.headless).toBe(true);
+    expect(parsed.config).toBeUndefined();
+  });
+
   it("deep-merges nested tool config with agent override", async () => {
     const toolDir = join(tempDir, "nested-cfg");
     mkdirSync(toolDir, { recursive: true });

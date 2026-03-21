@@ -93,7 +93,8 @@ export async function loadTools(
       if (!mod || typeof mod.createHandler !== "function") continue;
 
       const baseConfig = toolConfig.config ?? {};
-      const mergedConfig = deepMerge(baseConfig, agentOverride);
+      const overrideConfig = (agentOverride as Record<string, unknown>).config ?? agentOverride;
+      const mergedConfig = deepMerge(baseConfig, overrideConfig as Record<string, unknown>);
       const handlerContext: ToolHandlerContext = { ...context };
       const agentKey = `${agentName}:${toolName}`;
 

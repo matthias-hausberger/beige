@@ -178,6 +178,8 @@ agents: {
     tools: ["confluence"],
     toolConfigs: {
       confluence: {
+        // Arrays replace the base value entirely — to unblock all
+        // commands, override denyCommands with an empty array.
         denyCommands: [],              // override: remove all command denials
         allowWriteSpaces: ["DRAFTS"],  // added: restrict writes to DRAFTS
       },

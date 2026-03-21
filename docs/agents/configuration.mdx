@@ -264,6 +264,38 @@ agents: {
 }
 ```
 
+<Warning>
+**Arrays are replaced, not merged.** The deep-merge recursively merges nested objects, but arrays (and primitives) from the agent override **replace** the base value entirely. This is important for security-sensitive lists like `denyCommands`, `allowCommands`, `allowReadSpaces`, and `allowWriteSpaces`.
+
+For example, if you deny `"messages send"` in the global tool config and want to **also** deny `"messages draft"` for a specific agent, you must repeat both entries in the agent override — the override array does not append to the base array:
+
+```json5
+{
+  tools: {
+    slack: {
+      config: {
+        denyCommands: ["messages send"],          // global deny
+      },
+    },
+  },
+  agents: {
+    writer: {
+      tools: ["slack"],
+      toolConfigs: {
+        slack: {
+          // ✅ Correct: repeat the global entry + add the new one
+          denyCommands: ["messages send", "messages draft"],
+
+          // ❌ Wrong: this would REPLACE the base list, removing "messages send"
+          // denyCommands: ["messages draft"],
+        },
+      },
+    },
+  },
+}
+```
+</Warning>
+
 ### `gateway`
 
 | Field | Default | Description |

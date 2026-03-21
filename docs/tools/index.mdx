@@ -106,6 +106,10 @@ If different agents need different configs for the same tool, use `toolConfigs` 
 
 See the [Config Reference](/agents/configuration#agentstoolconfigs) for details on the merge behavior.
 
+<Note>
+**Arrays replace, they don't merge.** The deep-merge recursively merges nested objects, but arrays and primitives in the agent override **replace** the base value entirely. If you need both the base entries and new ones, repeat them all in the override. See the [Config Reference](/agents/configuration#agentstoolconfigs) for details and examples.
+</Note>
+
 The agent can then read the tool's docs and invoke it:
 
 ```

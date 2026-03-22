@@ -159,9 +159,10 @@ async function waitForGatewayReady(
   logFile: string,
   port: number,
   host: string = "127.0.0.1",
-  timeoutMs: number = 30000
+  timeoutMs: number = 60000
 ): Promise<boolean> {
   const startTime = Date.now();
+  const indefinite = timeoutMs === 0;
   const healthUrl = `http://${host}:${port}/api/health`;
   const pollIntervalMs = 500;
 
@@ -210,7 +211,7 @@ async function waitForGatewayReady(
   process.on("SIGINT", onSigint);
 
   try {
-    while (Date.now() - startTime < timeoutMs) {
+    while (indefinite || Date.now() - startTime < timeoutMs) {
       // Check if child process exited
       if (!isRunning(childPid)) {
         childExited = true;
@@ -283,7 +284,7 @@ async function maybeAutoSetup(): Promise<void> {
   }
 }
 
-async function cmdGatewayStart(configPath: string, foreground: boolean): Promise<void> {
+async function cmdGatewayStart(configPath: string, foreground: boolean, timeoutMs: number): Promise<void> {
   if (!foreground) {
     const existingPid = readPid();
     if (existingPid !== null && isRunning(existingPid)) {
@@ -329,7 +330,7 @@ async function cmdGatewayStart(configPath: string, foreground: boolean): Promise
     writeFileSync(getPidFile(), String(child.pid), "utf-8");
 
     console.log("[BEIGE] Starting gateway...\n");
-    const success = await waitForGatewayReady(child.pid, logFile, port, host);
+    const success = await waitForGatewayReady(child.pid, logFile, port, host, timeoutMs);
 
     if (success) {
       console.log(`\n[BEIGE] Gateway daemon started (PID ${child.pid})`);
@@ -485,7 +486,7 @@ let configPath = defaultConfigPath;
 let gatewayUrl: string | undefined;
 
 type Mode =
-  | { kind: "gateway-start"; foreground: boolean }
+  | { kind: "gateway-start"; foreground: boolean; timeoutMs: number }
   | { kind: "gateway-stop" }
   | { kind: "gateway-restart" }
   | { kind: "gateway-status" }
@@ -557,6 +558,7 @@ Usage:
 
 Options:
   -c, --config <path>        Config file (default: ~/.beige/config.json5)
+  --timeout <seconds>        Startup wait timeout in seconds (default: 60, 0 = indefinite)
   -h, --help                 Show this help
 `);
 }
@@ -600,7 +602,19 @@ function parseArgs(): Mode {
     }
     if (sub === "start") {
       const foreground = rest.includes("--foreground") || rest.includes("-F");
-      return { kind: "gateway-start", foreground };
+      let timeoutMs = 60000;
+      const timeoutIdx = rest.findIndex((a) => a.startsWith("--timeout"));
+      if (timeoutIdx !== -1) {
+        const arg = rest[timeoutIdx];
+        const raw = arg.includes("=") ? arg.split("=")[1] : rest[timeoutIdx + 1];
+        const parsed = Number(raw);
+        if (isNaN(parsed) || parsed < 0) {
+          console.error(`[BEIGE] Invalid --timeout value: ${raw}. Must be a non-negative number (0 = indefinite).`);
+          process.exit(1);
+        }
+        timeoutMs = parsed * 1000;
+      }
+      return { kind: "gateway-start", foreground, timeoutMs };
     }
     if (sub === "stop") return { kind: "gateway-stop" };
     if (sub === "restart") return { kind: "gateway-restart" };
@@ -677,7 +691,7 @@ if (mode.kind !== "setup") {
 if (mode.kind === "setup") {
   await cmdSetup(mode.force);
 } else if (mode.kind === "gateway-start") {
-  await cmdGatewayStart(configPath, mode.foreground);
+  await cmdGatewayStart(configPath, mode.foreground, mode.timeoutMs);
 } else if (mode.kind === "gateway-stop") {
   cmdGatewayStop();
 } else if (mode.kind === "gateway-restart") {

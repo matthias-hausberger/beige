@@ -6,7 +6,7 @@ title: "GitHub Tool"
 {/* Run: pnpm run docs:sync-toolkit */}
 
 
-Interact with GitHub using the [`gh` CLI](https://cli.github.com/). Routes all commands to `gh` running on the gateway host — authentication is managed by `gh` itself, no token configuration needed in Beige. Repository deletion (`repo delete`) is permanently blocked regardless of configuration.
+Interact with GitHub using the [`gh` CLI](https://cli.github.com/). Routes all commands to `gh` running on the gateway host. Repository deletion (`repo delete`) is permanently blocked regardless of configuration.
 
 ## Installation
 
@@ -30,47 +30,101 @@ beige tools install github:matthias-hausberger/beige-toolkit
 
 | Key | Default | Description |
 |-----|---------|-------------|
+| `token` | *(none)* | GitHub token for authentication. Passed to `gh` via `GH_TOKEN`. Accepts classic PATs (`ghp_…`) and fine-grained PATs (`github_pat_…`). When absent, `gh` uses its locally stored auth. |
 | `allowedCommands` | all commands except `api` | Whitelist of top-level `gh` subcommands (e.g. `"repo"`, `"issue"`, `"pr"`). Set explicitly to include `"api"` for raw API access. |
 | `deniedCommands` | *(none)* | Blacklist of top-level `gh` subcommands. Always blocked, even if in `allowedCommands`. Deny beats allow. |
 
 All `gh` subcommands are permitted by default **except `api`**, which is excluded because it allows arbitrary HTTP methods and GraphQL mutations. When `allowedCommands` is set explicitly, it fully replaces the default list.
+
+## Authentication
+
+The tool supports two authentication modes:
+
+**Token in config (recommended for multi-agent setups)**
+
+Set `token` in the agent's `toolConfigs`. The token is forwarded to `gh` via `GH_TOKEN` and takes precedence over any credential stored on the host, so different agents can authenticate as different GitHub identities.
+
+Both token formats work without any special configuration:
+- Classic personal access tokens: `ghp_…`
+- Fine-grained personal access tokens: `github_pat_…`
+
+```json5
+toolConfigs: {
+  github: {
+    token: "ghp_yourPersonalAccessToken",
+  },
+},
+```
+
+**Host-level auth (zero config)**
+
+When no `token` is configured, the tool inherits the gateway process's environment and `gh` picks up whatever auth is already present on the host (`~/.config/gh/`, `GITHUB_TOKEN` env var, etc.). Run `gh auth login` on the host once, and all agents without an explicit token will share that credential.
 
 ## Prerequisites
 
 | Requirement | Details |
 |---|---|
 | `gh` CLI | Must be installed on the **gateway host** ([install guide](https://cli.github.com/)) |
-| Authentication | Run `gh auth login` on the host before starting Beige |
-
-The tool inherits the gateway process's environment, so `gh` picks up `~/.config/gh/` automatically.
+| Authentication | Either set `token` in config, or run `gh auth login` on the host |
 
 ## Config Examples
 
+**Agent with its own token:**
+```json5
+{
+  tools: {
+    github: {
+      config: {
+        token: "ghp_yourPersonalAccessToken",
+        allowedCommands: ["repo", "issue", "pr"],
+      },
+    },
+  },
+}
+```
+
 **Read-only agent** (list and view, no mutations):
 ```json5
-config: {
-  allowedCommands: ["repo", "issue", "pr", "release", "run", "api"],
-  deniedCommands: [],
+{
+  tools: {
+    github: {
+      config: {
+        allowedCommands: ["repo", "issue", "pr", "release", "run"],
+      },
+    },
+  },
 }
 ```
 
 **Issue triage bot** (issues only):
 ```json5
-config: {
-  allowedCommands: ["issue"],
+{
+  tools: {
+    github: {
+      config: {
+        allowedCommands: ["issue"],
+      },
+    },
+  },
 }
 ```
 
 **Enable raw API access** alongside standard commands:
 ```json5
-config: {
-  allowedCommands: ["repo", "issue", "pr", "api"],
+{
+  tools: {
+    github: {
+      config: {
+        allowedCommands: ["repo", "issue", "pr", "api"],
+      },
+    },
+  },
 }
 ```
 
 ### Per-Agent Configuration (toolConfigs)
 
-Use beige's `toolConfigs` to give different agents different GitHub permissions:
+Use beige's `toolConfigs` to give different agents different GitHub tokens and permissions:
 
 ```json5
 tools: {
@@ -83,32 +137,62 @@ tools: {
 },
 
 agents: {
-  // Triage bot — issues only
+  // Triage bot — issues only, dedicated read-only PAT
   triage: {
     tools: ["github"],
     toolConfigs: {
       github: {
+        token: "ghp_readOnlyTriageToken",
         allowedCommands: ["issue"],
       },
     },
   },
 
-  // DevOps agent — full access including API
+  // DevOps agent — full access including API, own fine-grained PAT
   devops: {
     tools: ["github"],
     toolConfigs: {
       github: {
+        token: "github_pat_11AABBCC_devopsToken",
         allowedCommands: ["repo", "issue", "pr", "release", "run", "api"],
       },
     },
   },
 
-  // Default agent — uses baseline config as-is
+  // Default agent — uses baseline config and host-level gh auth
   assistant: {
     tools: ["github"],
   },
 },
 ```
+
+## Troubleshooting
+
+### "No commits between main and feature-branch"
+
+**Cause:** The branch doesn't exist on the remote yet. PR creation requires the branch to be pushed first.
+
+**Fix:** Push the branch before creating the PR:
+```sh
+git push origin feature-branch
+gh pr create --repo owner/repo --title "..." --body "..."
+```
+
+### Permission Denied on Push
+
+**Cause:** Your SSH deploy key doesn't have write access to the repository.
+
+**Fix:** Use the fork workflow:
+1. Fork the repository to your account
+2. Add the fork as a git remote: `git remote add fork git@github.com:your-username/repo.git`
+3. Push to your fork: `git push fork feature-branch`
+4. Create PR from fork: `gh pr create --repo upstream/repo --head your-username:feature-branch`
+
+### GraphQL Requires 'read:org' Scope
+
+**Cause:** Some `gh` commands (like `pr view` with certain fields) require the `read:org` scope.
+
+**Fix:** Update the GitHub token to include `read:org` scope, or use alternative commands that don't require it.
 
 ## Error Reference
 
@@ -116,6 +200,8 @@ agents: {
 |---|---|
 | `Permission denied: subcommand 'X' is not allowed` | Subcommand blocked by allow/deny config |
 | `Permission denied: 'repo delete' is permanently blocked` | Repository deletion is always blocked |
+| `No commits between X and Y` | Branch not pushed to remote |
+| `Head sha can't be blank` | Branch not pushed to remote |
 | Command fails with `gh` error | `gh` is not installed or not authenticated on the gateway host |
 
 ## Implementation Details
@@ -123,3 +209,4 @@ agents: {
 - **Target**: Gateway (runs on the host, not in the sandbox)
 - **Dependency**: `gh` CLI
 - **Stateless**: Each invocation spawns a fresh `gh` process
+- **Token precedence**: `config.token` → `GH_TOKEN` → host `~/.config/gh/`

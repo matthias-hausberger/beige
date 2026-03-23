@@ -118,10 +118,8 @@ agents: {
     tools: ["slack"],
     toolConfigs: {
       slack: {
-        // Arrays replace the base value entirely — repeat entries you
-        // want to keep and omit entries you want to unblock.
-        // Here "messages send" is removed from the deny list:
         denyCommands: ["messages draft", "auth login", "auth logout", "update"],
+        // messages send is no longer denied
       },
     },
   },

@@ -38,6 +38,21 @@ function buildSessionContext(): Record<string, string> | undefined {
 
 const sessionContext = buildSessionContext();
 
+// Compute relative CWD from /workspace
+// The sandbox uses /workspace as the mount point, but the gateway
+// uses ~/.beige/agents/<name>/workspace. We send the relative path
+// so the gateway can join it with its workspace directory.
+let relativeCwd: string | undefined;
+const absCwd = Deno.cwd();
+if (absCwd === "/workspace") {
+  // At workspace root - no need to specify cwd
+  relativeCwd = undefined;
+} else if (absCwd.startsWith("/workspace/")) {
+  // Inside workspace - send relative path
+  relativeCwd = absCwd.slice("/workspace/".length);
+}
+// If outside workspace, don't send cwd (shouldn't happen in normal use)
+
 const request: Record<string, unknown> = {
   type: "tool_request",
   tool: toolName,
@@ -46,6 +61,10 @@ const request: Record<string, unknown> = {
 
 if (sessionContext) {
   request.sessionContext = sessionContext;
+}
+
+if (relativeCwd !== undefined) {
+  request.cwd = relativeCwd;
 }
 
 const requestJson = JSON.stringify(request) + "\n";

@@ -16,6 +16,7 @@ import { loadTools, type LoadedTool } from "../tools/registry.js";
 import { loadSkills, type LoadedSkill } from "../skills/registry.js";
 import { TelegramChannel } from "../channels/telegram.js";
 import { ChannelRegistry } from "../channels/registry.js";
+import { logUnhandledRejection } from "./error-logger.js";
 
 export class Gateway {
   private config: BeigeConfig;
@@ -56,6 +57,13 @@ export class Gateway {
 
   async start(): Promise<void> {
     console.log("[GATEWAY] Starting Beige gateway...");
+
+    // 0. Set up unhandled rejection handler for better error logging
+    // This catches any promise rejections that weren't handled elsewhere
+    const rejectionHandler = (reason: unknown, promise: Promise<unknown>) => {
+      logUnhandledRejection(reason, promise);
+    };
+    process.on("unhandledRejection", rejectionHandler);
 
     // 1. Create channel registry
     this.channelRegistry = new ChannelRegistry();

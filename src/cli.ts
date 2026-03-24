@@ -407,26 +407,97 @@ function cmdGatewayStop(): void {
   }
 }
 
-function cmdGatewayRestart(): void {
+async function cmdGatewayRestart(configPath: string, timeoutMs: number): Promise<void> {
   const pid = readPid();
-  if (pid === null) {
-    console.log("[BEIGE] No PID file found — gateway is not running");
-    console.log("[BEIGE] Run 'beige gateway start' to start it");
-    process.exit(1);
+
+  // If not running, just start it
+  if (pid === null || !isRunning(pid)) {
+    console.log("[BEIGE] Gateway is not running — starting it...");
+    await cmdGatewayStart(configPath, false, timeoutMs);
+    return;
   }
-  if (!isRunning(pid)) {
-    console.log(`[BEIGE] Gateway (PID ${pid}) is not running`);
-    console.log("[BEIGE] Run 'beige gateway start' to start it");
-    process.exit(1);
-  }
+
+  // Gateway is running — perform graceful restart
+  console.log(`[BEIGE] Restarting gateway (PID ${pid})...`);
+
+  const { loadConfig } = await import("./config/loader.js");
+  const config = loadConfig(configPath);
+  const port = config.gateway?.port ?? 7433;
+  const host = config.gateway?.host ?? "127.0.0.1";
+  const healthUrl = `http://${host}:${port}/api/health`;
+
+  // Send SIGHUP to trigger restart
   try {
     process.kill(pid, "SIGHUP");
-    console.log(`[BEIGE] Sent SIGHUP to gateway (PID ${pid}) — graceful restart initiated`);
-    console.log(`[BEIGE] Follow progress with: beige gateway logs -f`);
   } catch (err) {
     console.error(`[BEIGE] Failed to signal gateway (PID ${pid}):`, err);
     process.exit(1);
   }
+
+  // Wait for restart to complete
+  const success = await waitForGatewayRestart(pid, healthUrl, timeoutMs);
+
+  if (success) {
+    console.log(`[BEIGE] Gateway restarted successfully`);
+  } else {
+    console.error(`[BEIGE] Gateway restart timed out after ${timeoutMs / 1000}s`);
+    console.error(`[BEIGE] Check logs: ${getLogFile()}`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Wait for gateway restart to complete.
+ *
+ * The restart cycle is: healthy → unhealthy (teardown) → healthy (startup)
+ * We need to see it go from healthy to unhealthy and back to healthy.
+ */
+async function waitForGatewayRestart(
+  childPid: number,
+  healthUrl: string,
+  timeoutMs: number
+): Promise<boolean> {
+  const startTime = Date.now();
+  const pollIntervalMs = 500;
+  let seenHealthy = false;
+  let seenUnhealthy = false;
+
+  const checkHealth = async (): Promise<boolean> => {
+    try {
+      const res = await fetch(healthUrl, { method: "GET", signal: AbortSignal.timeout(2000) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  while (Date.now() - startTime < timeoutMs) {
+    // Check if child process exited unexpectedly
+    if (!isRunning(childPid)) {
+      console.log("[BEIGE] Gateway process exited during restart");
+      return false;
+    }
+
+    const healthy = await checkHealth();
+
+    if (healthy) {
+      if (seenUnhealthy) {
+        // We saw it go down and come back up - restart complete!
+        return true;
+      }
+      seenHealthy = true;
+    } else {
+      if (seenHealthy) {
+        // We saw it go down after being up - restart in progress
+        seenUnhealthy = true;
+        console.log("[BEIGE] Gateway tearing down...");
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+
+  return false;
 }
 
 function cmdGatewayStatus(): void {
@@ -488,7 +559,7 @@ let gatewayUrl: string | undefined;
 type Mode =
   | { kind: "gateway-start"; foreground: boolean; timeoutMs: number }
   | { kind: "gateway-stop" }
-  | { kind: "gateway-restart" }
+  | { kind: "gateway-restart"; timeoutMs: number }
   | { kind: "gateway-status" }
   | { kind: "gateway-logs"; follow: boolean }
   | { kind: "tui"; agentName?: string }
@@ -551,14 +622,14 @@ Usage:
   beige gateway start                    Start the gateway daemon
   beige gateway start --foreground       Start the gateway in the foreground
   beige gateway stop                     Stop the gateway daemon
-  beige gateway restart                  Gracefully restart the gateway (drain, reload config, recreate sandboxes)
+  beige gateway restart                  Gracefully restart the gateway (or start if not running)
   beige gateway status                   Show gateway daemon status
   beige gateway logs                     Show gateway logs
   beige gateway logs -f                  Follow gateway logs
 
 Options:
   -c, --config <path>        Config file (default: ~/.beige/config.json5)
-  --timeout <seconds>        Startup wait timeout in seconds (default: 60, 0 = indefinite)
+  --timeout <seconds>        Startup/restart wait timeout in seconds (default: 60, 0 = indefinite)
   -h, --help                 Show this help
 `);
 }
@@ -617,7 +688,21 @@ function parseArgs(): Mode {
       return { kind: "gateway-start", foreground, timeoutMs };
     }
     if (sub === "stop") return { kind: "gateway-stop" };
-    if (sub === "restart") return { kind: "gateway-restart" };
+    if (sub === "restart") {
+      let timeoutMs = 60000;
+      const timeoutIdx = rest.findIndex((a) => a.startsWith("--timeout"));
+      if (timeoutIdx !== -1) {
+        const arg = rest[timeoutIdx];
+        const raw = arg.includes("=") ? arg.split("=")[1] : rest[timeoutIdx + 1];
+        const parsed = Number(raw);
+        if (isNaN(parsed) || parsed < 0) {
+          console.error(`[BEIGE] Invalid --timeout value: ${raw}. Must be a non-negative number (0 = indefinite).`);
+          process.exit(1);
+        }
+        timeoutMs = parsed * 1000;
+      }
+      return { kind: "gateway-restart", timeoutMs };
+    }
     if (sub === "status") return { kind: "gateway-status" };
     if (sub === "logs") {
       const follow = rest.includes("-f") || rest.includes("--follow");
@@ -695,7 +780,7 @@ if (mode.kind === "setup") {
 } else if (mode.kind === "gateway-stop") {
   cmdGatewayStop();
 } else if (mode.kind === "gateway-restart") {
-  cmdGatewayRestart();
+  await cmdGatewayRestart(configPath, mode.timeoutMs);
 } else if (mode.kind === "gateway-status") {
   cmdGatewayStatus();
 } else if (mode.kind === "gateway-logs") {

@@ -5,6 +5,13 @@ import { BeigeSessionStore } from "../gateway/sessions.js";
 import type { SessionSettingsStore } from "../gateway/session-settings.js";
 import { resolveSessionSetting } from "../gateway/session-settings.js";
 import type { ChannelRegistry, ChannelAdapter, SendMessageOptions } from "./registry.js";
+import {
+  formatTelegramError,
+  isAllModelsExhausted,
+  formatAllModelsExhaustedError,
+  getErrorTag,
+} from "../gateway/llm-errors.js";
+import { logErrorAuto } from "../gateway/error-logger.js";
 
 /**
  * Telegram channel adapter using GrammY.
@@ -240,8 +247,24 @@ export class TelegramChannel implements ChannelAdapter {
           await sendLongMessage(ctx, response, threadId);
         }
       } catch (err) {
-        console.error(`[TELEGRAM] Error:`, err);
-        await ctx.reply(`❌ Error: ${err instanceof Error ? err.message : String(err)}`);
+        // Log error with full context
+        const errorTag = getErrorTag(err);
+        console.error(`[TELEGRAM] [${errorTag}] Error:`, err);
+        logErrorAuto(err, {
+          agent: agentName,
+          session: sessionKey,
+          operation: "telegram_message",
+        });
+
+        // Format user-friendly error message
+        let errorMessage: string;
+        if (isAllModelsExhausted(err)) {
+          errorMessage = formatAllModelsExhaustedError(err);
+        } else {
+          errorMessage = formatTelegramError(err, false);
+        }
+
+        await ctx.reply(errorMessage);
       }
     });
   }

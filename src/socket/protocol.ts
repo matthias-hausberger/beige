@@ -10,6 +10,8 @@ export interface ToolRequest {
   tool: string;
   args: string[];
   sessionContext?: SessionContext;
+  /** Relative working directory from workspace root (optional) */
+  cwd?: string;
 }
 
 export interface ToolResponse {

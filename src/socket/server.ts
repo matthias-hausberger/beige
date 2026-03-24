@@ -134,6 +134,7 @@ export class AgentSocketServer {
       agentName: this.agentName,
       agentDir: this.agentDir,
       workspaceDir: this.workspaceDir,
+      cwd: req.cwd,  // Pass through relative cwd from sandbox
     };
 
     // Execute tool

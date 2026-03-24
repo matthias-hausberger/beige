@@ -23,6 +23,13 @@ export interface SessionContext {
    * Set by AgentManager when building session context.
    */
   workspaceDir?: string;
+  /**
+   * Relative working directory from workspace root.
+   * When an agent runs a tool from a subdirectory of /workspace, this field
+   * contains the relative path (e.g., "repos/beige-toolkit").
+   * Tools can use this to run commands in the correct directory.
+   */
+  cwd?: string;
   chatId?: string;
   threadId?: string;
 }

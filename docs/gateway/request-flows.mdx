@@ -10,7 +10,7 @@ The end-to-end flow from a Telegram message to a response.
 ```mermaid
 sequenceDiagram
     actor User
-    participant TG as Telegram Bot
+    participant TG as Channel Plugin (e.g. Telegram)
     participant AM as Agent Manager
     participant PI as pi SDK
     participant LLM as LLM API<br/>(Anthropic/OpenAI)
@@ -83,9 +83,9 @@ sequenceDiagram
 
 ## 4. Tool Launcher Call — Double Routing
 
-The most important flow. When `exec` runs a tool from `/tools/bin/`, the request bounces back to the gateway through the Unix socket.
+The most important flow. When `exec` runs a plugin tool (found on `$PATH` via `/tools/bin/`), the request bounces back to the gateway through the Unix socket.
 
-**Example:** `exec /tools/bin/kv set trip:paris "March 15"`
+**Example:** `exec kv set trip:paris "March 15"`
 
 ```mermaid
 sequenceDiagram
@@ -102,14 +102,14 @@ sequenceDiagram
 
     Note over LLM,KV: Phase 1: Core tool exec → sandbox
 
-    LLM->>CT: exec("/tools/bin/kv set trip:paris March 15")
+    LLM->>CT: exec("kv set trip:paris March 15")
     CT->>AL: log(agent, "core_tool", "exec", [...], "allowed")
-    CT->>SM: exec(agent, ["sh", "-c", "/tools/bin/kv ..."])
+    CT->>SM: exec(agent, ["sh", "-c", "kv ..."])
     SM->>SB: docker exec
 
     Note over SB,KV: Phase 2: Launcher → gateway socket → tool execution
 
-    SB->>SB: /tools/bin/kv runs (generated launcher script)
+    SB->>SB: Shell finds kv on PATH → launcher script runs
     SB->>TC: exec /beige/tool-client "kv" "set" "trip:paris" "March 15"
     TC->>SS: connect to /beige/gateway.sock
     TC->>SS: {"type":"tool_request","tool":"kv","args":["set","trip:paris","March 15"]}
@@ -152,7 +152,7 @@ sequenceDiagram
     participant PE as Policy Engine
     participant AL as Audit Logger
 
-    SB->>TC: /tools/bin/slack send "hello"
+    SB->>TC: slack send "hello" (found on PATH)
     TC->>SS: {"type":"tool_request","tool":"slack","args":["send","hello"]}
 
     SS->>PE: isToolAllowed("travel", "slack")?
@@ -189,18 +189,18 @@ sequenceDiagram
 
     Note over SB,GW: Step 3: Script calls tools internally
 
-    SB->>SB: script runs /tools/bin/kv list
+    SB->>SB: script runs kv list (on PATH)
     SB->>GW: socket: tool_request(kv, ["list"])
     GW-->>SB: tool_response(keys)
     SB->>SB: script processes keys
-    SB->>SB: script runs /tools/bin/kv set backup:timestamp ...
+    SB->>SB: script runs kv set backup:timestamp ...
     SB->>GW: socket: tool_request(kv, ["set", ...])
     GW-->>SB: tool_response(OK)
     SB-->>CT: script output
     CT-->>LLM: combined output
 ```
 
-> **`Each /tools/bin/ call inside the script`** still routes through the gateway socket, gets policy-checked, and is audit-logged. There's no way to bypass this from within the sandbox.
+> **`Each plugin tool call inside the script`** still routes through the gateway socket, gets policy-checked, and is audit-logged. There's no way to bypass this from within the sandbox.
 
 ## 7. Telegram Streaming Flow
 
@@ -209,7 +209,7 @@ How responses are streamed back to the user in Telegram.
 ```mermaid
 sequenceDiagram
     actor User
-    participant TG as Telegram Bot
+    participant TG as Channel Plugin (e.g. Telegram)
     participant AM as Agent Manager
     participant PI as pi SDK
     participant LLM as LLM
@@ -227,7 +227,7 @@ sequenceDiagram
     PI-->>TG: onDelta(" check...")
     Note over TG: rate limit: skip edit (< 1s)
 
-    LLM->>LLM: tool_call: exec /tools/bin/kv list
+    LLM->>LLM: tool_call: exec kv list
     Note over TG: typing indicator
 
     LLM-->>PI: text_delta "Here are your keys:\n..."
@@ -331,10 +331,11 @@ flowchart LR
 flowchart TD
     A[Load config.json5] --> B[Resolve env vars]
     B --> C[Validate config]
-    C --> D[Load tool packages]
-    D --> E[Register gateway tool handlers]
+    C --> D[Load plugins]
+    D --> E[Register tools, channels, hooks, skills]
+    E --> EV[Validate agent tool references]
 
-    E --> F{For each agent}
+    EV --> F{For each agent}
     F --> G[Create workspace dir]
     G --> H[Generate launcher scripts]
     H --> I[Create Docker container]
@@ -342,10 +343,9 @@ flowchart TD
     J --> K[Start Unix socket server]
     K --> F
 
-    F -->|all done| L{Telegram enabled?}
-    L -->|yes| M[Start Telegram bot]
-    L -->|no| N[Gateway ready ✓]
-    M --> N
+    F -->|all done| L[Start HTTP API]
+    L --> M[Start plugins — background processes]
+    M --> N[Gateway ready ✓]
 
     style N fill:#90EE90
 ```

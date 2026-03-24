@@ -25,7 +25,7 @@ npm install -g @matthias-hausberger/beige
 beige setup
 ```
 
-This creates `~/.beige/config.json5` (and installs an example-KV tool).
+This creates `~/.beige/config.json5` with a minimal default configuration.
 
 ### Step 3 — Add your API key
 
@@ -76,8 +76,7 @@ That's it. The gateway builds the sandbox Docker image automatically on first st
 ```text
 ~/.beige/
 ├── config.json5          # your config (edit this)
-└── tools/
-    └── kv/               # bundled KV store tool
+└── plugins/              # installed plugins go here
 ```
 
 Setup is **idempotent** — it only creates files that do not already exist. Re-running it after partial failures is always safe.
@@ -100,13 +99,6 @@ The generated `~/.beige/config.json5`:
     },
   },
 
-  tools: {
-    kv: {
-      path: "/Users/you/.beige/tools/kv",   // absolute path, written at setup time
-      target: "gateway",
-    },
-  },
-
   agents: {
     beige: {
       model: {
@@ -114,7 +106,7 @@ The generated `~/.beige/config.json5`:
         model: "claude-sonnet-4-6",
         thinkingLevel: "off",
       },
-      tools: ["kv"],
+      tools: [],
       sandbox: {
         image: "beige-sandbox:latest",
       },
@@ -123,7 +115,13 @@ The generated `~/.beige/config.json5`:
 }
 ```
 
-The `kv` tool path is written as an absolute path at setup time so the config works regardless of where you run `beige` from. For the full config reference, see [Configuration](/agents/configuration).
+This agent has no plugins but can use the 4 core tools (read, write, patch, exec). Install plugins to add more capabilities:
+
+```bash
+beige plugins install npm:@matthias-hausberger/beige-toolkit
+```
+
+For the full config reference, see [Configuration](/agents/configuration).
 
 ---
 
@@ -133,7 +131,7 @@ The `kv` tool path is written as an absolute path at setup time so the config wo
 npm install -g @matthias-hausberger/beige
 ```
 
-Setup is not re-run automatically on update. If a new version ships new bundled tools, run `beige setup` manually to copy them — existing files are never overwritten.
+Setup is not re-run automatically on update. Existing files are never overwritten.
 
 ---
 
@@ -143,7 +141,7 @@ Setup is not re-run automatically on update. If a new version ships new bundled 
 npm uninstall -g @matthias-hausberger/beige
 ```
 
-`~/.beige/` is **not** removed — it holds your config, sessions, audit logs, and KV data. Remove it manually if you want a clean slate:
+`~/.beige/` is **not** removed — it holds your config, sessions, audit logs, and plugin data. Remove it manually if you want a clean slate:
 
 ```bash
 rm -rf ~/.beige

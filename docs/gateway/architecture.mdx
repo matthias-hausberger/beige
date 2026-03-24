@@ -64,12 +64,14 @@ Gateway (Node.js)
 4. Gateway runs `docker exec <container> curl https://example.com`
 5. Gateway captures stdout/stderr, returns to LLM
 
-## Tool Launcher Call Flow (e.g. `exec /tools/bin/kv set mykey myvalue`)
+## Tool Launcher Call Flow (e.g. `exec kv set mykey myvalue`)
 
-1. LLM calls `exec` with args `["/tools/bin/kv", "set", "mykey", "myvalue"]`
+Since `/tools/bin` is on `$PATH`, the agent calls tools naturally. When the LLM runs `exec kv set mykey myvalue`:
+
+1. LLM calls `exec` with args `["kv", "set", "mykey", "myvalue"]`
 2. Gateway receives the tool call, logs it as a core `exec` call
-3. Gateway runs `docker exec <container> /tools/bin/kv set mykey myvalue`
-4. Inside the container, `/tools/bin/kv` is a generated launcher script that:
+3. Gateway runs `docker exec <container> sh -c "kv set mykey myvalue"`
+4. The shell finds `/tools/bin/kv` on `$PATH` — a generated launcher script that:
    - Connects to `/beige/gateway.sock` (Unix socket mounted into container)
    - Sends: `{"tool": "kv", "args": ["set", "mykey", "myvalue"]}`
    - Waits for response
@@ -102,14 +104,12 @@ Single config file (JSON5 — JSON with comments) drives the entire system. No d
     },
   },
 
-  tools: {
+  plugins: {
     kv: {
-      path: "./tools/kv",
-      target: "gateway",
+      path: "./plugins/kv",
     },
     // browser: {
-    //   path: "./tools/browser",
-    //   target: "gateway",
+    //   path: "./plugins/browser",
     //   config: { browserUrl: "ws://localhost:9222" },
     // },
   },
@@ -125,23 +125,11 @@ Single config file (JSON5 — JSON with comments) drives the entire system. No d
         { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
       ],
       tools: ["kv"],
-      // Per-agent tool config overrides — deep-merged with tools.kv.config
-      // toolConfigs: {
+      // Per-agent plugin config overrides — deep-merged with plugins.kv.config
+      // pluginConfigs: {
       //   kv: { denyCommands: ["del"] },
       // },
       sandbox: { image: "beige-sandbox:latest" },
-    },
-  },
-
-  channels: {
-    telegram: {
-      enabled: true,
-      token: "${TELEGRAM_BOT_TOKEN}",
-      allowedUsers: [123456789],
-      agentMapping: {
-        default: "travel",
-        // future: per-chat or per-command agent routing
-      },
     },
   },
 }
@@ -184,38 +172,39 @@ Implemented as pi SDK `ToolDefinition` objects:
 
 All four: log first, check policy, then execute.
 
-### 4. Tool Packages (`tools/`)
+### 4. Plugins (`src/plugins/`)
 
-Each tool is a directory:
+Each plugin is a directory:
 
 ```text
-tools/kv/
-├── tool.json          # metadata: name, description, target
-├── index.ts           # tool handler (runs on target)
-└── README.md          # documentation (mounted for agent context)
+plugins/kv/
+├── plugin.json        # manifest: name, description, what it provides
+├── index.ts           # entry point (exports createPlugin)
+├── README.md          # documentation (mounted for agent context)
+└── SKILL.md           # agent usage guide
 ```
 
-`tool.json`:
+`plugin.json`:
 
 ```json
 {
   "name": "kv",
   "description": "Key-value store. Set and get values.",
   "commands": ["set <key> <value>", "get <key>"],
-  "target": "gateway"
+  "provides": { "tools": ["kv"] }
 }
 ```
 
 The gateway:
 
-1. Reads tool packages from config
-2. Calls `createHandler(config)` for each tool to create base handlers
-3. For agents with `toolConfigs`, deep-merges the agent override with the base `tools.<name>.config` and calls `createHandler(mergedConfig)` to create a dedicated handler for that agent
+1. Loads all plugins from config (calls `createPlugin()` and `register()`)
+2. Plugins register tools, channels, hooks, and skills via `PluginRegistrar`
+3. Validates that all agent tool references resolve to registered tools
 4. Generates a launcher script per tool per agent
-5. Mounts launchers read-only into `/tools/bin/`
-6. Mounts tool packages read-only into `/tools/packages/`
+5. Mounts launchers read-only into `/tools/bin/` (which is prepended to `$PATH`)
+6. Mounts plugin packages read-only into `/tools/packages/`
 
-At runtime, `ToolRunner` looks up the agent-specific handler first (if one exists), falling back to the base handler. Tools are unaware of this — they just receive the final merged config in `createHandler()`.
+At runtime, `ToolRunner` routes tool calls to the handler registered by the plugin that provides that tool.
 
 ### 5. Tool Launcher (generated, mounted into sandbox)
 
@@ -270,19 +259,19 @@ Error response:
 }
 ```
 
-### 7. Channel Adapters (`src/channels/`)
+### 7. Channels
 
-Channels are interfaces that connect to the gateway. Some run in-process, others as separate processes.
+The TUI is the only built-in channel. Other channels (Telegram, Discord, etc.) are provided by plugins.
 
-- **Telegram** (in-process): GrammY bot. Maps Telegram user/chat → agent. Persistent sessions per chat/thread. Supports channel-level settings (e.g. `verbose`) and per-session overrides via commands.
-- **TUI** (separate process): Connects to gateway HTTP API. Runs pi's `InteractiveMode` locally for the full pi experience. Tool execution is proxied through the gateway API. Supports `/verbose` command for tool-call visibility.
+- **TUI** (built-in, separate process): Connects to gateway HTTP API. Runs pi's `InteractiveMode` locally for the full pi experience. Tool execution is proxied through the gateway API.
+- **Plugin channels** (in-process): Plugins can register channel adapters and run background processes (e.g. Telegram polling). They create sessions via `PluginContext.prompt()` and receive responses through the channel adapter.
 
-#### Channel Settings System
+#### Session Settings System
 
-Channels support layered settings with three levels of precedence (highest wins):
+Sessions support layered settings with three levels of precedence (highest wins):
 
 1. **System default** — hardcoded in the gateway
-2. **Channel config default** — set in `config.json5` under `channels.<name>.defaults`
+2. **Plugin/channel config default** — set in plugin config
 3. **Session override** — set by user via commands, persisted in `~/.beige/sessions/session-settings.json`
 
 ```text
@@ -291,7 +280,7 @@ Channels support layered settings with three levels of precedence (highest wins)
 ├─────────────────────────────────────────────────────────────┤
 │  System Default (false)                                     │
 │       ↓ overridden by                                       │
-│  Channel Config Default (config.json5: defaults.verbose)    │
+│  Plugin/Channel Config Default (plugin config: defaults.verbose) │
 │       ↓ overridden by                                       │
 │  Session Override (user: /verbose on)                       │
 └─────────────────────────────────────────────────────────────┘

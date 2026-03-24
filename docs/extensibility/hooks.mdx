@@ -1,0 +1,145 @@
+---
+title: "Hooks"
+description: "Intercept messages, tool calls, and lifecycle events"
+icon: "bolt"
+---
+
+Plugins can register hooks to intercept and modify messages, tool calls, and lifecycle events.
+
+## Available Hooks
+
+| Hook | When | Can modify/block? | Use cases |
+|---|---|---|---|
+| `prePrompt` | Before user message → LLM | Transform message, block it | Content filtering, prompt injection detection |
+| `postResponse` | After LLM response, before delivery | Transform response, block it | Content filtering, post-processing |
+| `preToolExec` | Before a tool executes | Allow/deny | Policy enforcement, audit |
+| `postToolExec` | After a tool executes | Transform result | Audit, caching |
+| `sessionCreated` | New session created | Observe only | Analytics, welcome messages |
+| `sessionDisposed` | Session cleaned up | Observe only | Cleanup |
+| `gatewayStarted` | All plugins loaded + started | Observe only | Health checks |
+| `gatewayShutdown` | Before gateway shuts down | Observe only | Cleanup |
+
+## Execution Order
+
+Hooks execute **sequentially in plugin config order**. If you have:
+
+```json5
+plugins: {
+  logger: { ... },      // registered first
+  filter: { ... },      // registered second
+}
+```
+
+Then `logger`'s hooks run before `filter`'s hooks.
+
+## Hook Flow
+
+```
+User message arrives
+  │
+  ▼
+prePrompt hooks (can transform/block)
+  │
+  ▼
+LLM call with tool loop
+  │ (for each tool call)
+  ├── preToolExec hooks (can deny)
+  ├── tool execution
+  └── postToolExec hooks (can transform result)
+  │
+  ▼
+postResponse hooks (can transform/block)
+  │
+  ▼
+Response delivered to channel
+```
+
+## Registering Hooks
+
+```typescript
+export function createPlugin(config, ctx) {
+  return {
+    register(reg) {
+      // Content filter: block messages containing forbidden patterns
+      reg.hook("prePrompt", async (event) => {
+        for (const pattern of config.blockedPatterns) {
+          if (event.message.includes(pattern)) {
+            return { message: "", block: true, reason: `Blocked: contains "${pattern}"` };
+          }
+        }
+        return { message: event.message };
+      });
+
+      // Audit: log every tool call
+      reg.hook("preToolExec", async (event) => {
+        console.log(`[AUDIT] ${event.agentName} calling ${event.toolName}`);
+        return { allow: true };
+      });
+
+      // Post-processing: strip sensitive data from responses
+      reg.hook("postResponse", async (event) => {
+        const cleaned = event.response.replace(/\b\d{3}-\d{2}-\d{4}\b/g, "***-**-****");
+        return { response: cleaned };
+      });
+    },
+  };
+}
+```
+
+## Hook Event Types
+
+### prePrompt
+
+```typescript
+interface PrePromptEvent {
+  message: string;       // The user's message
+  sessionKey: string;    // Session identifier
+  agentName: string;     // Target agent
+  channel: string;       // Which channel sent this
+}
+
+// Return: { message, block?, reason? }
+```
+
+### postResponse
+
+```typescript
+interface PostResponseEvent {
+  response: string;      // The LLM's response
+  sessionKey: string;
+  agentName: string;
+  channel: string;
+}
+
+// Return: { response, block? }
+```
+
+### preToolExec / postToolExec
+
+```typescript
+interface PreToolExecEvent {
+  toolName: string;
+  args: string[];
+  sessionKey: string;
+  agentName: string;
+}
+
+// preToolExec return: { allow, reason? }
+// postToolExec return: { result? }
+```
+
+### Lifecycle hooks
+
+```typescript
+interface SessionLifecycleEvent {
+  sessionKey: string;
+  agentName: string;
+  channel: string;
+}
+
+// sessionCreated / sessionDisposed: return void
+
+interface GatewayLifecycleEvent {}
+
+// gatewayStarted / gatewayShutdown: return void
+```

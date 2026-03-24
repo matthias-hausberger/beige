@@ -1,0 +1,84 @@
+---
+title: "Skills"
+description: "Read-only knowledge packages for agents"
+icon: "book"
+---
+
+Skills are read-only knowledge packages mounted into agent sandboxes at `/skills/<name>/`. They provide context the agent can reference — coding guidelines, API documentation, workflow guides, etc.
+
+## Two Sources of Skills
+
+### 1. Standalone Skills (via `skills` config)
+
+```json5
+{
+  skills: {
+    "code-review": { path: "./skills/code-review" },
+  },
+  agents: {
+    assistant: {
+      skills: ["code-review"],
+    },
+  },
+}
+```
+
+### 2. Plugin-Provided Skills
+
+Plugins can register skills during their `register()` call:
+
+```typescript
+register(reg) {
+  reg.skill({
+    name: "telegram-guide",
+    path: resolve(__dirname, "skill"),
+    description: "Guide for using Telegram tools",
+  });
+}
+```
+
+Plugin-provided skills are referenced the same way in agent config:
+
+```json5
+agents: {
+  assistant: {
+    skills: ["code-review", "telegram-guide"],
+  },
+}
+```
+
+## Skill Package Structure
+
+```
+skills/code-review/
+├── skill.json     # Manifest: name, description, dependencies
+├── README.md      # Context file included in agent's system prompt
+└── SKILL.md       # Alternative context file name
+```
+
+### skill.json
+
+```json
+{
+  "name": "code-review",
+  "description": "Code review guidelines and best practices",
+  "contextFile": "README.md",
+  "requires": {
+    "tools": ["git"],
+    "skills": []
+  }
+}
+```
+
+The `requires` field declares dependencies:
+- `tools`: The agent must have these tools to use this skill
+- `skills`: Other skills that should also be loaded
+
+## How Skills Are Mounted
+
+```
+Host:     ./skills/code-review/
+Sandbox:  /skills/code-review/ (read-only)
+```
+
+The skill's context file (README.md by default) is included in the agent's system prompt, giving the agent knowledge without consuming tool calls.

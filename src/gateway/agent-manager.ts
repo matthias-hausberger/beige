@@ -18,7 +18,7 @@ import type { SandboxManager } from "../sandbox/manager.js";
 import type { AuditLogger } from "./audit.js";
 import type { BeigeSessionStore } from "./sessions.js";
 import { createCoreTools, type ToolStartHandlerRef } from "../tools/core.js";
-import { buildToolContext, type LoadedTool } from "../tools/registry.js";
+import type { PluginRegistry } from "../plugins/registry.js";
 import { buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
 
 /**
@@ -93,7 +93,7 @@ export class AgentManager {
     private config: BeigeConfig,
     private sandbox: SandboxManager,
     private audit: AuditLogger,
-    private loadedTools: Map<string, LoadedTool>,
+    private pluginRegistry: PluginRegistry,
     private loadedSkills: Map<string, LoadedSkill>,
     private authStorage: AuthStorage,
     private modelRegistry: ModelRegistry,
@@ -154,7 +154,7 @@ export class AgentManager {
       ?? resolve(agentDir, "workspace");
     const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir };
     const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
-    const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
+    const toolContext = buildPluginToolContext(agentConfig.tools, this.pluginRegistry);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
     const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
     const agentsFiles = readWorkspaceAgentsMd(workspaceDir);
@@ -553,7 +553,7 @@ export class AgentManager {
       ?? resolve(agentDir, "workspace");
     const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir };
     const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
-    const toolContext = buildToolContext(agentConfig.tools, this.loadedTools);
+    const toolContext = buildPluginToolContext(agentConfig.tools, this.pluginRegistry);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
     const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
     const agentsFiles = readWorkspaceAgentsMd(workspaceDir);
@@ -762,6 +762,35 @@ export function readWorkspaceAgentsMd(workspaceDir: string): Array<{ path: strin
     // Non-fatal — agent will just not have AGENTS.md in context
   }
   return [];
+}
+
+/**
+ * Build tool context string for the system prompt from the plugin registry.
+ */
+function buildPluginToolContext(
+  agentTools: string[],
+  registry: PluginRegistry
+): string {
+  if (agentTools.length === 0) return "";
+
+  const lines: string[] = ["## Available Tools", ""];
+
+  for (const toolName of agentTools) {
+    const tool = registry.getTool(toolName);
+    if (!tool) continue;
+
+    lines.push(`### ${toolName}`);
+    lines.push(`${tool.description}`);
+    if (tool.commands?.length) {
+      lines.push("Commands:");
+      for (const cmd of tool.commands) {
+        lines.push(`  ${toolName} ${cmd}`);
+      }
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
 }
 
 export function buildSystemPrompt(agentName: string, toolContext: string, skillContext: string = ""): string {

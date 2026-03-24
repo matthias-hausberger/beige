@@ -4,7 +4,7 @@ description: "All beige commands, flags, and usage patterns"
 icon: "terminal"
 ---
 
-The `beige` CLI controls the gateway daemon, launches the TUI, and manages tools.
+The `beige` CLI controls the gateway daemon, launches the TUI, and manages plugins.
 
 ```bash
 beige <command> [subcommand] [flags]
@@ -29,16 +29,15 @@ beige gateway start --foreground    # Run in foreground (stdout/stderr visible)
 
 On first run, if `~/.beige/config.json5` does not exist, the gateway automatically runs setup before starting.
 
-The daemon writes its PID to `~/.beige/gateway.pid` and logs to `~/.beige/logs/gateway.log`.
-
 On startup, the gateway:
 1. Loads and validates `config.json5`
-2. Discovers installed tools from `~/.beige/tools/`
-3. Builds the sandbox Docker image if it doesn't exist
-4. Creates a Docker container for each configured agent
-5. Starts a Unix socket server for each agent
-6. Starts the HTTP API on port 7433
-7. Starts the Telegram bot (if configured)
+2. Discovers installed plugins from `~/.beige/plugins/`
+3. Loads plugins — calls `createPlugin()` and `register()` for each
+4. Validates agent tool references against registered tools
+5. Builds the sandbox Docker image if needed
+6. Creates a Docker container for each configured agent
+7. Starts socket servers and the HTTP API
+8. Calls `plugin.start()` for each plugin (background processes)
 
 ### `beige gateway stop`
 
@@ -48,8 +47,6 @@ Stop the running gateway daemon.
 beige gateway stop
 ```
 
-Sends `SIGTERM` to the daemon process.
-
 ### `beige gateway restart`
 
 Gracefully restart the gateway without losing state.
@@ -58,13 +55,7 @@ Gracefully restart the gateway without losing state.
 beige gateway restart
 ```
 
-Sends `SIGHUP` to the daemon. The gateway:
-1. Drains all in-flight LLM and tool calls
-2. Tears down sandboxes, sockets, API, and channels
-3. Reloads `config.json5` from disk
-4. Restarts everything fresh
-
-Use this after editing `config.json5` to apply changes without killing active sessions.
+The gateway drains in-flight calls, stops all plugins, tears down infrastructure, reloads config, and starts fresh. Use this after editing `config.json5`.
 
 ### `beige gateway status`
 
@@ -72,12 +63,6 @@ Check whether the gateway daemon is running.
 
 ```bash
 beige gateway status
-```
-
-Output examples:
-```
-[BEIGE] Gateway: running (PID 12345)
-[BEIGE] Gateway: stopped
 ```
 
 ### `beige gateway logs`
@@ -88,8 +73,6 @@ View the gateway log file.
 beige gateway logs           # Print full log and exit
 beige gateway logs -f        # Follow (live tail)
 ```
-
-Logs are stored at `~/.beige/logs/gateway.log`.
 
 ---
 
@@ -104,7 +87,7 @@ beige tui                    # Connect using the first agent in config
 beige tui assistant          # Connect as a specific agent
 ```
 
-The TUI reads `config.json5` locally for LLM API keys and connects to the gateway HTTP API for tool execution. The gateway **must be running** before starting the TUI.
+The gateway **must be running** before starting the TUI.
 
 **Flags:**
 
@@ -112,7 +95,7 @@ The TUI reads `config.json5` locally for LLM API keys and connects to the gatewa
 |------|-------------|
 | `[agent]` | Agent name (defaults to first agent in config) |
 | `--gateway`, `-g` | Gateway URL (default: `http://127.0.0.1:7433`) |
-| `--config`, `-c` | Config file path (default: `~/.beige/config.json5`) |
+| `--config`, `-c` | Config file path |
 
 ---
 
@@ -120,79 +103,64 @@ The TUI reads `config.json5` locally for LLM API keys and connects to the gatewa
 
 ### `beige setup`
 
-Initialize `~/.beige/` with the default config and bundled tools.
+Initialize `~/.beige/` with the default config.
 
 ```bash
 beige setup
 ```
 
-Creates:
-```
-~/.beige/
-├── config.json5          # Default config with Anthropic provider + kv tool
-└── tools/
-    └── kv/               # Bundled KV store tool
-```
-
-Setup is **idempotent** — existing files are never overwritten.
+Setup is idempotent — existing files are never overwritten.
 
 ---
 
-## Tool Commands
+## Plugin Commands
 
-### `beige tools install <source>`
+### `beige plugins install <source>`
 
-Install tools from a source.
+Install plugins from a source.
 
 ```bash
 # From npm
-beige tools install npm:@scope/package                 # Latest version
-beige tools install npm:@scope/package@1.2.3          # Specific version
-beige tools install npm:@scope/package@2.0.0-beta.1   # Pre-release
+beige plugins install npm:@scope/package
+beige plugins install npm:@scope/package@1.2.3
 
 # From GitHub
-beige tools install github:owner/repo                  # All tools from repo
-beige tools install github:owner/repo/tools/github    # Single tool from subfolder
-beige tools install github:owner/repo#v1.2.0          # Specific tag/branch
+beige plugins install github:owner/repo
+beige plugins install github:owner/repo/plugins/git
+beige plugins install github:owner/repo#v1.2.0
 
 # From local path
-beige tools install ./path/to/tool                     # Local directory
+beige plugins install ./path/to/plugin
 
 # Override conflicts
-beige tools install npm:@scope/package --force
+beige plugins install npm:@scope/package --force
 ```
 
-The installer discovers tools by scanning for `tool.json` files. Single tools are copied directly to `~/.beige/tools/`. Multi-tool packages are stored in `~/.beige/packages/` with symlinks in `~/.beige/tools/`.
+The installer discovers plugins by scanning for `plugin.json` or `tool.json` files. After installing, add the plugin's tools to your agent's `tools` array and restart the gateway.
 
-After installing, add tools to your agent's `tools` array in `config.json5` and restart the gateway.
+### `beige plugins list`
 
-### `beige tools list`
-
-List all installed tools.
+List all installed plugins.
 
 ```bash
-beige tools list
+beige plugins list
 ```
 
-Shows each tool's name, description, and install source.
+### `beige plugins remove <name>`
 
-### `beige tools remove <name>`
-
-Remove an installed tool.
+Remove an installed plugin.
 
 ```bash
-beige tools remove github
+beige plugins remove github
 ```
 
-Removes the tool from `~/.beige/tools/` and cleans up the meta file. If the tool came from a multi-tool package, the package directory is removed when the last tool from it is deleted.
+### `beige plugins update [name]`
 
-### `beige tools update [name]`
-
-Update a tool or all tools by re-fetching from the original install source.
+Update a plugin or all plugins by re-fetching from the original install source.
 
 ```bash
-beige tools update github    # Update one tool (and all tools from same source)
-beige tools update           # Update all installed tools
+beige plugins update github    # Update one plugin
+beige plugins update           # Update all installed plugins
 ```
 
 ---
@@ -202,7 +170,7 @@ beige tools update           # Update all installed tools
 | Flag | Description |
 |------|-------------|
 | `--config`, `-c` | Config file path (default: `~/.beige/config.json5`) |
-| `--gateway`, `-g` | Gateway URL for TUI commands (default: `http://127.0.0.1:7433`) |
+| `--gateway`, `-g` | Gateway URL for TUI commands |
 | `--help`, `-h` | Show help for the current command |
 
 ---
@@ -214,8 +182,8 @@ beige tools update           # Update all installed tools
 beige setup
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Install tools
-beige tools install npm:@matthias-hausberger/beige-toolkit
+# Install plugins
+beige plugins install npm:@matthias-hausberger/beige-toolkit
 
 # Every time
 beige gateway start                  # Shell 1: start gateway daemon

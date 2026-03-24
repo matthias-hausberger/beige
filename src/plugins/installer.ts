@@ -1,20 +1,20 @@
 /**
- * Tool installer.
+ * Plugin installer.
  *
- * Installs tools from various sources into ~/.beige/tools/.
- * Each tool is a directory with a tool.json manifest and an index.ts handler.
+ * Installs plugins from various sources into ~/.beige/plugins/.
+ * Each plugin is a directory with a plugin.json (or tool.json) manifest and an index.ts entry point.
  *
  * Sources:
- *   npm:@scope/package@version      — npm package (single tool or multi-tool)
- *   github:owner/repo               — GitHub repo (all tools)
- *   github:owner/repo/path/to/tool  — single tool from a GitHub repo subfolder
+ *   npm:@scope/package@version      — npm package (single plugin or multi-plugin)
+ *   github:owner/repo               — GitHub repo (all plugins)
+ *   github:owner/repo/path/to/plugin — single plugin from a GitHub repo subfolder
  *   github:owner/repo#ref           — GitHub repo at a specific tag/branch
  *   ./local/path                    — local directory
  *
  * On disk:
- *   ~/.beige/tools/<name>/           — individual tool dirs (real or symlink)
- *   ~/.beige/tools/<name>.meta.json  — install metadata (source, timestamp)
- *   ~/.beige/packages/<pkg>/         — intact npm/multi-tool packages
+ *   ~/.beige/plugins/<name>/           — individual plugin dirs (real or symlink)
+ *   ~/.beige/plugins/<name>.meta.json  — install metadata (source, timestamp)
+ *   ~/.beige/packages/<pkg>/           — intact npm/multi-plugin packages
  */
 
 import {
@@ -25,7 +25,6 @@ import {
   writeFileSync,
   readFileSync,
   readdirSync,
-  lstatSync,
   symlinkSync,
   statSync,
 } from "fs";
@@ -33,28 +32,25 @@ import { resolve, join, relative, basename } from "path";
 import { execSync } from "child_process";
 import { extract } from "tar";
 import { beigeDir } from "../paths.js";
-import type { ToolManifest } from "../config/schema.js";
+import type { PluginManifest } from "./types.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export interface ToolInstallMeta {
-  /** Original source string used to install this tool. */
+export interface PluginInstallMeta {
   source: string;
-  /** For tools from a multi-tool package, the package directory name. */
   package?: string;
-  /** ISO timestamp of when the tool was installed. */
   installedAt: string;
 }
 
-export interface DiscoveredTool {
+export interface DiscoveredPlugin {
   name: string;
   path: string;
-  manifest: ToolManifest;
+  manifest: PluginManifest;
 }
 
 export interface InstallResult {
   success: boolean;
-  tools?: DiscoveredTool[];
+  plugins?: DiscoveredPlugin[];
   error?: string;
   conflicts?: string[];
 }
@@ -66,8 +62,8 @@ export type ParsedSource =
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 
-function getToolsDir(): string {
-  return resolve(beigeDir(), "tools");
+function getPluginsDir(): string {
+  return resolve(beigeDir(), "plugins");
 }
 
 function getPackagesDir(): string {
@@ -94,15 +90,12 @@ function cleanTempDir(): void {
 // ── Source parsing ───────────────────────────────────────────────────────────
 
 export function parseSource(source: string): ParsedSource {
-  // npm:@scope/package@version or npm:package@version
   if (source.startsWith("npm:")) {
     const rest = source.slice(4);
-    // Handle scoped packages: @scope/name@version
     let packageName: string;
     let version: string | undefined;
 
     if (rest.startsWith("@")) {
-      // Scoped: @scope/name or @scope/name@version
       const slashIdx = rest.indexOf("/");
       if (slashIdx === -1) {
         throw new Error(`Invalid npm source: ${source}. Scoped packages need @scope/name format.`);
@@ -116,7 +109,6 @@ export function parseSource(source: string): ParsedSource {
         version = afterSlash.slice(atIdx + 1);
       }
     } else {
-      // Unscoped: name or name@version
       const atIdx = rest.indexOf("@");
       if (atIdx === -1) {
         packageName = rest;
@@ -133,11 +125,8 @@ export function parseSource(source: string): ParsedSource {
     return { type: "npm", package: packageName, version };
   }
 
-  // github:owner/repo/path/to/tool or github:owner/repo#ref
   if (source.startsWith("github:")) {
     const rest = source.slice(7);
-
-    // Split ref first (if present): owner/repo/path#ref
     const hashIdx = rest.indexOf("#");
     let ref: string | undefined;
     let pathPart: string;
@@ -162,45 +151,65 @@ export function parseSource(source: string): ParsedSource {
     return { type: "github", owner, repo, path: subPath, ref };
   }
 
-  // Local path: starts with . or /
   if (source.startsWith("./") || source.startsWith("../") || source.startsWith("/")) {
     return { type: "local", path: resolve(source) };
   }
 
-  // Default: assume npm package
   return parseSource(`npm:${source}`);
 }
 
-// ── Tool discovery ───────────────────────────────────────────────────────────
+// ── Plugin discovery ─────────────────────────────────────────────────────────
 
 /**
- * Recursively scan a directory for tool.json files.
- * Returns discovered tools with their paths and parsed manifests.
- * Skips node_modules, .git, __tests__, and test directories.
+ * Recursively scan a directory for plugin.json or tool.json files.
+ * Returns discovered plugins with their paths and parsed manifests.
  */
-export function discoverTools(rootPath: string): DiscoveredTool[] {
-  const tools: DiscoveredTool[] = [];
+export function discoverPlugins(rootPath: string): DiscoveredPlugin[] {
+  const plugins: DiscoveredPlugin[] = [];
   const seen = new Set<string>();
 
   function scan(dir: string): void {
+    const pluginJsonPath = join(dir, "plugin.json");
     const toolJsonPath = join(dir, "tool.json");
-    if (existsSync(toolJsonPath)) {
+
+    let manifest: PluginManifest | null = null;
+
+    if (existsSync(pluginJsonPath)) {
+      try {
+        const raw = readFileSync(pluginJsonPath, "utf-8");
+        manifest = JSON.parse(raw) as PluginManifest;
+      } catch {
+        console.warn(`[PLUGINS] Failed to parse plugin.json at ${dir}, skipping`);
+      }
+    } else if (existsSync(toolJsonPath)) {
+      // Legacy tool.json support
       try {
         const raw = readFileSync(toolJsonPath, "utf-8");
-        const manifest = JSON.parse(raw) as ToolManifest;
-        if (manifest.name && manifest.target) {
-          if (seen.has(manifest.name)) {
-            console.warn(`[TOOLS] Duplicate tool name '${manifest.name}' found, skipping ${dir}`);
-          } else {
-            seen.add(manifest.name);
-            tools.push({ name: manifest.name, path: dir, manifest });
-          }
-        }
+        const toolManifest = JSON.parse(raw) as {
+          name: string;
+          description: string;
+          commands?: string[];
+          target: string;
+        };
+        manifest = {
+          name: toolManifest.name,
+          description: toolManifest.description,
+          commands: toolManifest.commands,
+          provides: { tools: [toolManifest.name] },
+        };
       } catch {
-        console.warn(`[TOOLS] Failed to parse tool.json at ${dir}, skipping`);
+        console.warn(`[PLUGINS] Failed to parse tool.json at ${dir}, skipping`);
       }
-      // Don't recurse into tool directories — a tool.json marks a leaf
-      return;
+    }
+
+    if (manifest && manifest.name) {
+      if (seen.has(manifest.name)) {
+        console.warn(`[PLUGINS] Duplicate plugin name '${manifest.name}' found, skipping ${dir}`);
+      } else {
+        seen.add(manifest.name);
+        plugins.push({ name: manifest.name, path: dir, manifest });
+      }
+      return; // Don't recurse into plugin directories
     }
 
     // Recurse into subdirectories
@@ -211,14 +220,8 @@ export function discoverTools(rootPath: string): DiscoveredTool[] {
       return;
     }
     const skipDirs = new Set([
-      "node_modules",
-      ".git",
-      "__tests__",
-      "test",
-      "tests",
-      ".github",
-      "scripts",
-      "dist",
+      "node_modules", ".git", "__tests__", "test", "tests",
+      ".github", "scripts", "dist",
     ]);
     for (const entry of entries) {
       if (skipDirs.has(entry) || entry.startsWith(".")) continue;
@@ -234,15 +237,12 @@ export function discoverTools(rootPath: string): DiscoveredTool[] {
   }
 
   scan(rootPath);
-  return tools;
+  return plugins;
 }
 
 // ── Fetchers ─────────────────────────────────────────────────────────────────
 
-async function fetchFromNpm(
-  packageName: string,
-  version?: string
-): Promise<string> {
+async function fetchFromNpm(packageName: string, version?: string): Promise<string> {
   ensureDir(getTempDir());
   const tempPackDir = join(getTempDir(), `npm-${Date.now()}`);
   mkdirSync(tempPackDir, { recursive: true });
@@ -270,13 +270,11 @@ async function fetchFromNpm(
   mkdirSync(extractDir, { recursive: true });
   await extract({ file: join(tempPackDir, tgzFile), cwd: extractDir });
 
-  // npm pack always extracts into a "package/" subdirectory
   const packageDir = join(extractDir, "package");
   if (existsSync(packageDir) && statSync(packageDir).isDirectory()) {
     return packageDir;
   }
 
-  // Fallback: if the tarball contained a single directory, use that
   const contents = readdirSync(extractDir);
   if (contents.length === 1) {
     const single = join(extractDir, contents[0]);
@@ -288,11 +286,7 @@ async function fetchFromNpm(
   return extractDir;
 }
 
-async function fetchFromGitHub(
-  owner: string,
-  repo: string,
-  ref?: string
-): Promise<string> {
+async function fetchFromGitHub(owner: string, repo: string, ref?: string): Promise<string> {
   ensureDir(getTempDir());
 
   const extractDir = join(getTempDir(), `github-${owner}-${repo}-${Date.now()}`);
@@ -305,12 +299,10 @@ async function fetchFromGitHub(
   try {
     await downloadAndExtractTarball(tarballUrl, extractDir);
   } catch {
-    // Fallback to master branch
     const fallbackUrl = `https://github.com/${owner}/${repo}/tarball/master`;
     await downloadAndExtractTarball(fallbackUrl, extractDir);
   }
 
-  // GitHub tarballs extract into a single directory like "owner-repo-sha/"
   const contents = readdirSync(extractDir);
   if (contents.length === 1) {
     const single = join(extractDir, contents[0]);
@@ -322,10 +314,7 @@ async function fetchFromGitHub(
   return extractDir;
 }
 
-async function downloadAndExtractTarball(
-  url: string,
-  destDir: string
-): Promise<void> {
+async function downloadAndExtractTarball(url: string, destDir: string): Promise<void> {
   mkdirSync(destDir, { recursive: true });
 
   const response = await fetch(url);
@@ -343,12 +332,8 @@ async function downloadAndExtractTarball(
 
 // ── Dependency installation ──────────────────────────────────────────────────
 
-/**
- * Run `npm install --production` in a tool directory if it has a package.json
- * with non-empty dependencies.
- */
-function installToolDependencies(toolPath: string): void {
-  const pkgJsonPath = join(toolPath, "package.json");
+function installPluginDependencies(pluginPath: string): void {
+  const pkgJsonPath = join(pluginPath, "package.json");
   if (!existsSync(pkgJsonPath)) return;
 
   try {
@@ -359,28 +344,28 @@ function installToolDependencies(toolPath: string): void {
     return;
   }
 
-  console.log(`[TOOLS] Installing dependencies in ${basename(toolPath)}...`);
+  console.log(`[PLUGINS] Installing dependencies in ${basename(pluginPath)}...`);
   try {
     execSync("npm install --production --no-package-lock", {
-      cwd: toolPath,
+      cwd: pluginPath,
       stdio: "pipe",
     });
   } catch (err) {
     throw new Error(
-      `Failed to install dependencies for tool at ${toolPath}: ${err}`
+      `Failed to install dependencies for plugin at ${pluginPath}: ${err}`
     );
   }
 }
 
 // ── Meta file management ─────────────────────────────────────────────────────
 
-function writeMetaFile(toolName: string, meta: ToolInstallMeta): void {
-  const metaPath = join(getToolsDir(), `${toolName}.meta.json`);
+function writeMetaFile(pluginName: string, meta: PluginInstallMeta): void {
+  const metaPath = join(getPluginsDir(), `${pluginName}.meta.json`);
   writeFileSync(metaPath, JSON.stringify(meta, null, 2), "utf-8");
 }
 
-export function readMetaFile(toolName: string): ToolInstallMeta | null {
-  const metaPath = join(getToolsDir(), `${toolName}.meta.json`);
+export function readMetaFile(pluginName: string): PluginInstallMeta | null {
+  const metaPath = join(getPluginsDir(), `${pluginName}.meta.json`);
   if (!existsSync(metaPath)) return null;
   try {
     return JSON.parse(readFileSync(metaPath, "utf-8"));
@@ -389,8 +374,8 @@ export function readMetaFile(toolName: string): ToolInstallMeta | null {
   }
 }
 
-function removeMetaFile(toolName: string): void {
-  const metaPath = join(getToolsDir(), `${toolName}.meta.json`);
+function removeMetaFile(pluginName: string): void {
+  const metaPath = join(getPluginsDir(), `${pluginName}.meta.json`);
   if (existsSync(metaPath)) {
     rmSync(metaPath, { force: true });
   }
@@ -398,144 +383,130 @@ function removeMetaFile(toolName: string): void {
 
 // ── Conflict checking ────────────────────────────────────────────────────────
 
-function checkConflicts(tools: DiscoveredTool[], force: boolean): string[] {
-  const toolsDir = getToolsDir();
+function checkConflicts(plugins: DiscoveredPlugin[], force: boolean): string[] {
+  const pluginsDir = getPluginsDir();
   const conflicts: string[] = [];
 
-  for (const tool of tools) {
-    const targetPath = join(toolsDir, tool.name);
+  for (const plugin of plugins) {
+    const targetPath = join(pluginsDir, plugin.name);
     if (existsSync(targetPath)) {
-      const meta = readMetaFile(tool.name);
+      const meta = readMetaFile(plugin.name);
       const from = meta?.source ?? "unknown source";
-      conflicts.push(`Tool '${tool.name}' already installed (from ${from})`);
+      conflicts.push(`Plugin '${plugin.name}' already installed (from ${from})`);
     }
   }
 
   return force ? [] : conflicts;
 }
 
-// ── Install: single tool (copy directly) ─────────────────────────────────────
+// ── Install: single plugin ───────────────────────────────────────────────────
 
-function installSingleTool(
-  tool: DiscoveredTool,
+function installSinglePlugin(
+  plugin: DiscoveredPlugin,
   source: string,
   force: boolean
 ): InstallResult {
-  const toolsDir = getToolsDir();
-  ensureDir(toolsDir);
+  const pluginsDir = getPluginsDir();
+  ensureDir(pluginsDir);
 
-  const conflicts = checkConflicts([tool], force);
+  const conflicts = checkConflicts([plugin], force);
   if (conflicts.length > 0) {
-    return { success: false, conflicts, error: "Tool name conflicts detected. Use --force to override." };
+    return { success: false, conflicts, error: "Plugin name conflicts detected. Use --force to override." };
   }
 
-  const targetPath = join(toolsDir, tool.name);
+  const targetPath = join(pluginsDir, plugin.name);
 
-  // Remove existing if force
   if (existsSync(targetPath)) {
     rmSync(targetPath, { recursive: true, force: true });
-    removeMetaFile(tool.name);
+    removeMetaFile(plugin.name);
   }
 
-  // Copy tool directory
-  cpSync(tool.path, targetPath, { recursive: true });
+  cpSync(plugin.path, targetPath, { recursive: true });
+  installPluginDependencies(targetPath);
 
-  // Install dependencies
-  installToolDependencies(targetPath);
-
-  // Write meta
-  writeMetaFile(tool.name, {
+  writeMetaFile(plugin.name, {
     source,
     installedAt: new Date().toISOString(),
   });
 
   return {
     success: true,
-    tools: [{ ...tool, path: targetPath }],
+    plugins: [{ ...plugin, path: targetPath }],
   };
 }
 
-// ── Install: multi-tool package (symlinks) ───────────────────────────────────
+// ── Install: multi-plugin package ────────────────────────────────────────────
 
-function installMultiToolPackage(
-  tools: DiscoveredTool[],
+function installMultiPluginPackage(
+  plugins: DiscoveredPlugin[],
   packagePath: string,
   source: string,
   packageDirName: string,
   force: boolean
 ): InstallResult {
-  const toolsDir = getToolsDir();
+  const pluginsDir = getPluginsDir();
   const packagesDir = getPackagesDir();
-  ensureDir(toolsDir);
+  ensureDir(pluginsDir);
   ensureDir(packagesDir);
 
-  const conflicts = checkConflicts(tools, force);
+  const conflicts = checkConflicts(plugins, force);
   if (conflicts.length > 0) {
-    return { success: false, conflicts, error: "Tool name conflicts detected. Use --force to override." };
+    return { success: false, conflicts, error: "Plugin name conflicts detected. Use --force to override." };
   }
 
   const targetPackageDir = join(packagesDir, packageDirName);
 
-  // Remove existing package if present (re-install / update)
   if (existsSync(targetPackageDir)) {
-    // Remove old symlinks for tools from this package
-    for (const tool of tools) {
-      const symlinkPath = join(toolsDir, tool.name);
+    for (const plugin of plugins) {
+      const symlinkPath = join(pluginsDir, plugin.name);
       if (existsSync(symlinkPath)) {
         rmSync(symlinkPath, { recursive: true, force: true });
       }
-      removeMetaFile(tool.name);
+      removeMetaFile(plugin.name);
     }
     rmSync(targetPackageDir, { recursive: true, force: true });
   }
 
-  // Also remove any existing tools with same names (force case)
   if (force) {
-    for (const tool of tools) {
-      const existing = join(toolsDir, tool.name);
+    for (const plugin of plugins) {
+      const existing = join(pluginsDir, plugin.name);
       if (existsSync(existing)) {
         rmSync(existing, { recursive: true, force: true });
-        removeMetaFile(tool.name);
+        removeMetaFile(plugin.name);
       }
     }
   }
 
-  // Move package to permanent location
   cpSync(packagePath, targetPackageDir, { recursive: true });
 
-  // Install dependencies per tool
-  const installedTools: DiscoveredTool[] = [];
-  for (const tool of tools) {
-    // Compute the relative path of this tool within the original package
-    const relPath = relative(packagePath, tool.path);
-    const toolInPackage = join(targetPackageDir, relPath);
+  const installedPlugins: DiscoveredPlugin[] = [];
+  for (const plugin of plugins) {
+    const relPath = relative(packagePath, plugin.path);
+    const pluginInPackage = join(targetPackageDir, relPath);
 
-    installToolDependencies(toolInPackage);
+    installPluginDependencies(pluginInPackage);
 
-    // Create symlink
-    const symlinkPath = join(toolsDir, tool.name);
+    const symlinkPath = join(pluginsDir, plugin.name);
     try {
-      symlinkSync(toolInPackage, symlinkPath);
+      symlinkSync(pluginInPackage, symlinkPath);
     } catch {
-      // Symlink failed (e.g. Windows without privileges), fall back to copy
-      cpSync(toolInPackage, symlinkPath, { recursive: true });
+      cpSync(pluginInPackage, symlinkPath, { recursive: true });
     }
 
-    // Write meta
-    writeMetaFile(tool.name, {
+    writeMetaFile(plugin.name, {
       source,
       package: packageDirName,
       installedAt: new Date().toISOString(),
     });
 
-    installedTools.push({
-      name: tool.name,
+    installedPlugins.push({
+      name: plugin.name,
       path: symlinkPath,
-      manifest: tool.manifest,
+      manifest: plugin.manifest,
     });
   }
 
-  return { success: true, tools: installedTools };
+  return { success: true, plugins: installedPlugins };
 }
 
 // ── Package directory name normalization ─────────────────────────────────────
@@ -553,10 +524,7 @@ function normalizePackageName(source: ParsedSource): string {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/**
- * Install tools from a source string.
- */
-export async function installTools(
+export async function installPlugins(
   sourceStr: string,
   options: { force?: boolean } = {}
 ): Promise<InstallResult> {
@@ -579,7 +547,6 @@ export async function installTools(
         break;
       case "github":
         fetchedPath = await fetchFromGitHub(source.owner, source.repo, source.ref);
-        // If a subfolder path is specified, navigate into it
         if (source.path) {
           fetchedPath = join(fetchedPath, source.path);
           if (!existsSync(fetchedPath)) {
@@ -603,61 +570,51 @@ export async function installTools(
     return { success: false, error: `Failed to fetch: ${err}` };
   }
 
-  // Discover tools
-  const tools = discoverTools(fetchedPath);
-  if (tools.length === 0) {
+  const plugins = discoverPlugins(fetchedPath);
+  if (plugins.length === 0) {
     cleanTempDir();
-    return { success: false, error: `No tools found (no tool.json) at ${sourceStr}` };
+    return { success: false, error: `No plugins found (no plugin.json or tool.json) at ${sourceStr}` };
   }
 
   let result: InstallResult;
 
-  if (tools.length === 1 && existsSync(join(fetchedPath, "tool.json"))) {
-    // Single tool at root of fetched path — direct copy
-    result = installSingleTool(tools[0], sourceStr, force);
+  if (plugins.length === 1 && (existsSync(join(fetchedPath, "plugin.json")) || existsSync(join(fetchedPath, "tool.json")))) {
+    result = installSinglePlugin(plugins[0], sourceStr, force);
   } else {
-    // Multi-tool package — use packages/ + symlinks
     const packageDirName = normalizePackageName(source);
-    result = installMultiToolPackage(tools, fetchedPath, sourceStr, packageDirName, force);
+    result = installMultiPluginPackage(plugins, fetchedPath, sourceStr, packageDirName, force);
   }
 
   cleanTempDir();
   return result;
 }
 
-/**
- * Remove an installed tool.
- */
-export function removeTool(toolName: string): { success: boolean; error?: string } {
-  const toolsDir = getToolsDir();
-  const toolPath = join(toolsDir, toolName);
+export function removePlugin(pluginName: string): { success: boolean; error?: string } {
+  const pluginsDir = getPluginsDir();
+  const pluginPath = join(pluginsDir, pluginName);
 
-  if (!existsSync(toolPath)) {
-    return { success: false, error: `Tool '${toolName}' is not installed` };
+  if (!existsSync(pluginPath)) {
+    return { success: false, error: `Plugin '${pluginName}' is not installed` };
   }
 
-  const meta = readMetaFile(toolName);
+  const meta = readMetaFile(pluginName);
 
-  // Remove the tool (symlink or directory)
-  rmSync(toolPath, { recursive: true, force: true });
-  removeMetaFile(toolName);
+  rmSync(pluginPath, { recursive: true, force: true });
+  removeMetaFile(pluginName);
 
-  // If it came from a package, check if any other tools still reference it
   if (meta?.package) {
     const packagesDir = getPackagesDir();
     const packageDir = join(packagesDir, meta.package);
 
     if (existsSync(packageDir)) {
-      // Check if any other installed tools reference this package
-      const otherToolsUsingPackage = listInstalledTools().filter(
-        (t) => {
-          const m = readMetaFile(t.name);
+      const otherPluginsUsingPackage = listInstalledPlugins().filter(
+        (p) => {
+          const m = readMetaFile(p.name);
           return m?.package === meta.package;
         }
       );
 
-      if (otherToolsUsingPackage.length === 0) {
-        // No other tools reference this package — clean it up
+      if (otherPluginsUsingPackage.length === 0) {
         rmSync(packageDir, { recursive: true, force: true });
       }
     }
@@ -666,47 +623,36 @@ export function removeTool(toolName: string): { success: boolean; error?: string
   return { success: true };
 }
 
-/**
- * Update a tool (or all tools from the same package) by re-installing from
- * the original source.
- */
-export async function updateTool(
-  toolName: string
-): Promise<InstallResult> {
-  const meta = readMetaFile(toolName);
+export async function updatePlugin(pluginName: string): Promise<InstallResult> {
+  const meta = readMetaFile(pluginName);
   if (!meta) {
-    return { success: false, error: `Tool '${toolName}' has no install metadata — cannot update` };
+    return { success: false, error: `Plugin '${pluginName}' has no install metadata — cannot update` };
   }
-
-  return installTools(meta.source, { force: true });
+  return installPlugins(meta.source, { force: true });
 }
 
-/**
- * Update all installed tools.
- */
-export async function updateAllTools(): Promise<{
+export async function updateAllPlugins(): Promise<{
   updated: string[];
   failed: Array<{ source: string; error: string }>;
 }> {
-  const tools = listInstalledTools();
+  const plugins = listInstalledPlugins();
   const updated: string[] = [];
   const failed: Array<{ source: string; error: string }> = [];
 
-  // Group by source to avoid re-installing the same package multiple times
   const sourceGroups = new Map<string, string[]>();
-  for (const tool of tools) {
-    const meta = readMetaFile(tool.name);
+  for (const plugin of plugins) {
+    const meta = readMetaFile(plugin.name);
     if (!meta) continue;
     const group = sourceGroups.get(meta.source) ?? [];
-    group.push(tool.name);
+    group.push(plugin.name);
     sourceGroups.set(meta.source, group);
   }
 
-  for (const [source, toolNames] of sourceGroups) {
-    console.log(`[TOOLS] Updating from ${source}...`);
-    const result = await installTools(source, { force: true });
+  for (const [source, pluginNames] of sourceGroups) {
+    console.log(`[PLUGINS] Updating from ${source}...`);
+    const result = await installPlugins(source, { force: true });
     if (result.success) {
-      updated.push(...toolNames);
+      updated.push(...pluginNames);
     } else {
       failed.push({ source, error: result.error ?? "Unknown error" });
     }
@@ -716,38 +662,63 @@ export async function updateAllTools(): Promise<{
 }
 
 /**
- * List all installed tools by scanning ~/.beige/tools/.
+ * List all installed plugins by scanning ~/.beige/plugins/.
  */
-export function listInstalledTools(): DiscoveredTool[] {
-  const toolsDir = getToolsDir();
-  if (!existsSync(toolsDir)) return [];
+export function listInstalledPlugins(): DiscoveredPlugin[] {
+  const pluginsDir = getPluginsDir();
+  if (!existsSync(pluginsDir)) return [];
 
-  const tools: DiscoveredTool[] = [];
-  const entries = readdirSync(toolsDir);
+  const plugins: DiscoveredPlugin[] = [];
+  const entries = readdirSync(pluginsDir);
 
   for (const entry of entries) {
-    // Skip meta files
     if (entry.endsWith(".meta.json")) continue;
 
-    const toolPath = join(toolsDir, entry);
-    const toolJsonPath = join(toolPath, "tool.json");
+    const pluginPath = join(pluginsDir, entry);
+    const pluginJsonPath = join(pluginPath, "plugin.json");
+    const toolJsonPath = join(pluginPath, "tool.json");
 
-    // Must be a directory (or symlink to one) with a tool.json
     try {
-      if (!statSync(toolPath).isDirectory()) continue;
-      if (!existsSync(toolJsonPath)) continue;
+      if (!statSync(pluginPath).isDirectory()) continue;
     } catch {
       continue;
     }
 
-    try {
-      const raw = readFileSync(toolJsonPath, "utf-8");
-      const manifest = JSON.parse(raw) as ToolManifest;
-      tools.push({ name: manifest.name, path: toolPath, manifest });
-    } catch {
-      console.warn(`[TOOLS] Failed to read tool.json for '${entry}', skipping`);
+    let manifest: PluginManifest | null = null;
+
+    if (existsSync(pluginJsonPath)) {
+      try {
+        const raw = readFileSync(pluginJsonPath, "utf-8");
+        manifest = JSON.parse(raw) as PluginManifest;
+      } catch {
+        console.warn(`[PLUGINS] Failed to read plugin.json for '${entry}', skipping`);
+        continue;
+      }
+    } else if (existsSync(toolJsonPath)) {
+      try {
+        const raw = readFileSync(toolJsonPath, "utf-8");
+        const toolManifest = JSON.parse(raw) as {
+          name: string;
+          description: string;
+          commands?: string[];
+          target: string;
+        };
+        manifest = {
+          name: toolManifest.name,
+          description: toolManifest.description,
+          commands: toolManifest.commands,
+          provides: { tools: [toolManifest.name] },
+        };
+      } catch {
+        console.warn(`[PLUGINS] Failed to read tool.json for '${entry}', skipping`);
+        continue;
+      }
+    }
+
+    if (manifest) {
+      plugins.push({ name: manifest.name, path: pluginPath, manifest });
     }
   }
 
-  return tools;
+  return plugins;
 }

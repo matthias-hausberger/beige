@@ -13,7 +13,7 @@
  *   beige gateway logs                 Show gateway logs
  *   beige gateway logs -f              Follow gateway logs (tail -f)
  *   beige tui [agent]                  Connect to a running gateway via TUI
- *   beige tools <command>              Manage tools (install, list, update, remove)
+ *   beige plugins <command>             Manage plugins (install, list, update, remove)
  *   beige --config <path>              Use a specific config file
  *
  *   Shell 1:  beige                    ← starts gateway daemon
@@ -35,13 +35,13 @@ import { watch } from "fs";
 import { runSetup } from "./install.js";
 import { beigeDir } from "./paths.js";
 import {
-  installTools,
-  removeTool,
-  updateTool,
-  updateAllTools,
-  listInstalledTools,
+  installPlugins,
+  removePlugin,
+  updatePlugin,
+  updateAllPlugins,
+  listInstalledPlugins,
   readMetaFile,
-} from "./tools/installer.js";
+} from "./plugins/installer.js";
 
 // ── Timestamp helpers ────────────────────────────────────────────────
 
@@ -565,9 +565,9 @@ type Mode =
   | { kind: "tui"; agentName?: string }
   | { kind: "setup"; force: boolean }
   | { kind: "install"; source: string; force: boolean }
-  | { kind: "tools-list" }
-  | { kind: "tools-remove"; name: string }
-  | { kind: "tools-update"; name?: string };
+  | { kind: "plugins-list" }
+  | { kind: "plugins-remove"; name: string }
+  | { kind: "plugins-update"; name?: string };
 
 function printHelp() {
   console.log(`
@@ -577,7 +577,7 @@ Usage:
   beige setup                            First-time setup (copies tools, writes default config)
   beige gateway <command>                Manage the gateway daemon
   beige tui [agent]                      Connect TUI to running gateway
-  beige tools <command>                  Manage tools (install, list, update, remove)
+  beige plugins <command>                Manage plugins (install, list, update, remove)
 
 Options:
   -c, --config <path>        Config file (default: ~/.beige/config.json5)
@@ -586,27 +586,27 @@ Options:
   -h, --help                 Show this help
 
 Run 'beige gateway' for gateway-specific commands.
-Run 'beige tools' for tool management commands.
+Run 'beige plugins' for plugin management commands.
 `);
 }
 
-function printToolsHelp() {
+function printPluginsHelp() {
   console.log(`
-Beige — Tool commands
+Beige — Plugin commands
 
 Usage:
-  beige tools install <source>           Install tools from a source
-  beige tools list                       List installed tools
-  beige tools remove <name>              Remove an installed tool
-  beige tools update [name]              Update a tool (or all tools)
+  beige plugins install <source>         Install plugins from a source
+  beige plugins list                     List installed plugins
+  beige plugins remove <name>            Remove an installed plugin
+  beige plugins update [name]            Update a plugin (or all plugins)
 
 Install sources:
   npm:@scope/package                     NPM package (latest)
   npm:@scope/package@1.2.3              NPM package (specific version)
-  github:owner/repo                      GitHub repository (all tools)
-  github:owner/repo/path/to/tool        Single tool from a GitHub subfolder
+  github:owner/repo                      GitHub repository (all plugins)
+  github:owner/repo/path/to/plugin      Single plugin from a GitHub subfolder
   github:owner/repo#tag                  GitHub repository at a tag/branch
-  ./path/to/tool                         Local directory
+  ./path/to/plugin                       Local directory
 
 Options:
   --force, -f                Force install even with conflicts
@@ -722,37 +722,37 @@ function parseArgs(): Mode {
     return { kind: "setup", force };
   }
 
-  if (cmd === "tools") {
+  if (cmd === "plugins") {
     if (!sub || sub === "--help" || sub === "-h") {
-      printToolsHelp();
+      printPluginsHelp();
       process.exit(0);
     }
     if (sub === "install") {
       const source = rest[0];
       if (!source || source === "--help" || source === "-h") {
-        printToolsHelp();
+        printPluginsHelp();
         process.exit(source === "--help" || source === "-h" ? 0 : 1);
       }
       const force = rest.includes("--force") || rest.includes("-f");
       return { kind: "install", source, force };
     }
     if (sub === "list") {
-      return { kind: "tools-list" };
+      return { kind: "plugins-list" };
     }
     if (sub === "remove") {
       const name = rest[0];
       if (!name) {
-        console.error("[BEIGE] Missing tool name. Usage: beige tools remove <name>");
+        console.error("[BEIGE] Missing plugin name. Usage: beige plugins remove <name>");
         process.exit(1);
       }
-      return { kind: "tools-remove", name };
+      return { kind: "plugins-remove", name };
     }
     if (sub === "update") {
-      const name = rest[0]; // optional — if omitted, update all
-      return { kind: "tools-update", name };
+      const name = rest[0];
+      return { kind: "plugins-update", name };
     }
-    console.error(`[BEIGE] Unknown tools subcommand: ${sub}`);
-    printToolsHelp();
+    console.error(`[BEIGE] Unknown plugins subcommand: ${sub}`);
+    printPluginsHelp();
     process.exit(1);
   }
 
@@ -829,22 +829,22 @@ if (mode.kind === "setup") {
   }
 } else if (mode.kind === "install") {
   await cmdInstall(mode.source, mode.force);
-} else if (mode.kind === "tools-list") {
-  cmdToolsList();
-} else if (mode.kind === "tools-remove") {
-  cmdToolsRemove(mode.name);
-} else if (mode.kind === "tools-update") {
-  await cmdToolsUpdate(mode.name);
+} else if (mode.kind === "plugins-list") {
+  cmdPluginsList();
+} else if (mode.kind === "plugins-remove") {
+  cmdPluginsRemove(mode.name);
+} else if (mode.kind === "plugins-update") {
+  await cmdPluginsUpdate(mode.name);
 }
 
 async function cmdInstall(source: string, force: boolean): Promise<void> {
   console.log(`[BEIGE] Installing from: ${source}`);
   
-  const result = await installTools(source, { force });
+  const result = await installPlugins(source, { force });
   
   if (!result.success) {
     if (result.conflicts && result.conflicts.length > 0) {
-      console.error("[BEIGE] Tool name conflicts detected:");
+      console.error("[BEIGE] Plugin name conflicts detected:");
       for (const conflict of result.conflicts) {
         console.error(`  - ${conflict}`);
       }
@@ -855,31 +855,31 @@ async function cmdInstall(source: string, force: boolean): Promise<void> {
     process.exit(1);
   }
   
-  if (result.tools && result.tools.length > 0) {
-    console.log(`[BEIGE] Installed ${result.tools.length} tool(s):`);
-    for (const tool of result.tools) {
-      console.log(`  - ${tool.name}: ${tool.manifest.description}`);
+  if (result.plugins && result.plugins.length > 0) {
+    console.log(`[BEIGE] Installed ${result.plugins.length} plugin(s):`);
+    for (const plugin of result.plugins) {
+      console.log(`  - ${plugin.name}: ${plugin.manifest.description}`);
     }
-    console.log(`\n[BEIGE] Add tools to your agent's 'tools' array to enable them.`);
+    console.log(`\n[BEIGE] Add plugin tools to your agent's 'tools' array to enable them.`);
   }
 }
 
-function cmdToolsList(): void {
-  const tools = listInstalledTools();
+function cmdPluginsList(): void {
+  const plugins = listInstalledPlugins();
   
-  if (tools.length === 0) {
-    console.log("[BEIGE] No tools installed.");
-    console.log("\n[BEIGE] Install tools with: beige tools install <source>");
+  if (plugins.length === 0) {
+    console.log("[BEIGE] No plugins installed.");
+    console.log("\n[BEIGE] Install plugins with: beige plugins install <source>");
     return;
   }
   
-  console.log("[BEIGE] Installed tools:\n");
+  console.log("[BEIGE] Installed plugins:\n");
   
-  for (const tool of tools) {
-    const meta = readMetaFile(tool.name);
+  for (const plugin of plugins) {
+    const meta = readMetaFile(plugin.name);
     const source = meta?.source ?? "unknown";
-    console.log(`  ${tool.name}`);
-    console.log(`    ${tool.manifest.description}`);
+    console.log(`  ${plugin.name}`);
+    console.log(`    ${plugin.manifest.description}`);
     console.log(`    Source: ${source}`);
     if (meta?.package) {
       console.log(`    Package: ${meta.package}`);
@@ -888,23 +888,23 @@ function cmdToolsList(): void {
   }
 }
 
-function cmdToolsRemove(name: string): void {
-  const result = removeTool(name);
+function cmdPluginsRemove(name: string): void {
+  const result = removePlugin(name);
   
   if (!result.success) {
     console.error(`[BEIGE] ${result.error}`);
     process.exit(1);
   }
   
-  console.log(`[BEIGE] Removed tool: ${name}`);
+  console.log(`[BEIGE] Removed plugin: ${name}`);
 }
 
-async function cmdToolsUpdate(name?: string): Promise<void> {
+async function cmdPluginsUpdate(name?: string): Promise<void> {
   if (name) {
-    console.log(`[BEIGE] Updating tool: ${name}`);
-    const result = await updateTool(name);
+    console.log(`[BEIGE] Updating plugin: ${name}`);
+    const result = await updatePlugin(name);
     if (result.success) {
-      console.log(`[BEIGE] Updated ${result.tools?.length ?? 0} tool(s) from same source.`);
+      console.log(`[BEIGE] Updated ${result.plugins?.length ?? 0} plugin(s) from same source.`);
     } else {
       console.error(`[BEIGE] Failed to update: ${result.error}`);
       process.exit(1);
@@ -912,15 +912,14 @@ async function cmdToolsUpdate(name?: string): Promise<void> {
     return;
   }
 
-  // Update all
-  const tools = listInstalledTools();
-  if (tools.length === 0) {
-    console.log("[BEIGE] No tools installed.");
+  const plugins = listInstalledPlugins();
+  if (plugins.length === 0) {
+    console.log("[BEIGE] No plugins installed.");
     return;
   }
   
-  console.log(`[BEIGE] Updating all installed tools...\n`);
-  const result = await updateAllTools();
+  console.log(`[BEIGE] Updating all installed plugins...\n`);
+  const result = await updateAllPlugins();
   
   console.log(`\n[BEIGE] Update complete: ${result.updated.length} updated, ${result.failed.length} failed.`);
   for (const f of result.failed) {

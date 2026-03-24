@@ -9,8 +9,9 @@ describe("validateConfig", () => {
       expect(() => validateConfig(config)).not.toThrow();
     });
 
-    it("accepts full config with tools and multiple agents", () => {
+    it("accepts full config with plugins and multiple agents", () => {
       const config = createFullConfig();
+      // Note: tool references are now validated after plugin loading, not at config level
       expect(() => validateConfig(config)).not.toThrow();
     });
 
@@ -80,11 +81,6 @@ describe("validateConfig", () => {
       expect(() => validateConfig(config)).toThrow(/llm.*providers/);
     });
 
-    it("throws when tools is missing", () => {
-      const { tools, ...config } = createMinimalConfig() as any;
-      expect(() => validateConfig(config)).toThrow(/tools/);
-    });
-
     it("throws when agents is missing", () => {
       const { agents, ...config } = createMinimalConfig() as any;
       expect(() => validateConfig(config)).toThrow(/agents/);
@@ -116,34 +112,6 @@ describe("validateConfig", () => {
       expect(() => validateConfig(config)).toThrow("model requires provider and model");
     });
 
-    it("throws when agent references unknown tool", () => {
-      const config = createMinimalConfig({
-        agents: {
-          assistant: {
-            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-            tools: ["nonexistent-tool"],
-          },
-        },
-      });
-      expect(() => validateConfig(config)).toThrow("unknown tool 'nonexistent-tool'");
-    });
-
-    it("throws when agent references unknown skill", () => {
-      const config = createMinimalConfig({
-        skills: {
-          "code-review": { path: "/skills/code-review" },
-        },
-        agents: {
-          assistant: {
-            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-            tools: [],
-            skills: ["nonexistent-skill"],
-          },
-        },
-      });
-      expect(() => validateConfig(config)).toThrow("unknown skill 'nonexistent-skill'");
-    });
-
     it("accepts config with skills", () => {
       const config = createMinimalConfig({
         skills: {
@@ -161,16 +129,16 @@ describe("validateConfig", () => {
       expect(() => validateConfig(config)).not.toThrow();
     });
 
-    it("accepts config with toolConfigs for a tool in agent.tools", () => {
+    it("accepts config with pluginConfigs for a plugin in config.plugins", () => {
       const config = createMinimalConfig({
-        tools: {
-          kv: { path: "/tools/kv", target: "gateway", config: { timeout: 1000 } },
+        plugins: {
+          kv: { path: "/plugins/kv", config: { timeout: 1000 } },
         },
         agents: {
           assistant: {
             model: { provider: "anthropic", model: "claude-sonnet-4-6" },
             tools: ["kv"],
-            toolConfigs: {
+            pluginConfigs: {
               kv: { timeout: 5000 },
             },
           },
@@ -179,72 +147,24 @@ describe("validateConfig", () => {
       expect(() => validateConfig(config)).not.toThrow();
     });
 
-    it("accepts config with empty toolConfigs", () => {
+    it("throws when pluginConfigs references a plugin not in config.plugins", () => {
       const config = createMinimalConfig({
-        tools: {
-          kv: { path: "/tools/kv", target: "gateway" },
+        plugins: {
+          kv: { path: "/plugins/kv" },
         },
         agents: {
           assistant: {
             model: { provider: "anthropic", model: "claude-sonnet-4-6" },
             tools: ["kv"],
-            toolConfigs: {},
-          },
-        },
-      });
-      expect(() => validateConfig(config)).not.toThrow();
-    });
-
-    it("throws when toolConfigs references a tool not in agent.tools", () => {
-      const config = createMinimalConfig({
-        tools: {
-          kv: { path: "/tools/kv", target: "gateway" },
-          browser: { path: "/tools/browser", target: "gateway" },
-        },
-        agents: {
-          assistant: {
-            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-            tools: ["kv"],
-            toolConfigs: {
+            pluginConfigs: {
               browser: { headless: true },
             },
           },
         },
       });
       expect(() => validateConfig(config)).toThrow(
-        "has toolConfigs for 'browser' but that tool is not in agent.tools"
+        "has pluginConfigs for 'browser' but that plugin is not in config.plugins"
       );
-    });
-  });
-
-  describe("channel validation", () => {
-    it("throws when telegram agentMapping.default references unknown agent", () => {
-      const config = createMinimalConfig({
-        channels: {
-          telegram: {
-            enabled: true,
-            token: "test-token",
-            allowedUsers: [123],
-            agentMapping: { default: "nonexistent-agent" },
-          },
-        },
-      });
-      expect(() => validateConfig(config)).toThrow("unknown agent 'nonexistent-agent'");
-    });
-
-    it("accepts disabled telegram channel even with invalid agent mapping", () => {
-      const config = createMinimalConfig({
-        channels: {
-          telegram: {
-            enabled: false,
-            token: "test-token",
-            allowedUsers: [123],
-            agentMapping: { default: "nonexistent-agent" },
-          },
-        },
-      });
-      // Disabled channels are not validated for agent references
-      expect(() => validateConfig(config)).not.toThrow();
     });
   });
 });

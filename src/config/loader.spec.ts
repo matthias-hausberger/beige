@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, existsSync } from "fs";
+import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { loadConfig } from "./loader.js";
@@ -27,16 +27,14 @@ describe("loadConfig", () => {
               anthropic: { apiKey: "test-key" },
             },
           },
-          tools: {},
+          plugins: {},
           agents: {
-            /* Multi-line
-               comment */
+            /* Multi-line comment */
             assistant: {
               model: { provider: "anthropic", model: "claude-sonnet-4-6" },
               tools: [],
             },
           },
-          channels: {},
         }
       `);
 
@@ -50,9 +48,8 @@ describe("loadConfig", () => {
       writeFileSync(configPath, `
         {
           llm: { providers: { anthropic: { apiKey: "test" } } },
-          tools: {},
+          plugins: {},
           agents: { assistant: { model: { provider: "anthropic", model: "claude" }, tools: [] } },
-          channels: {},
         }
       `);
 
@@ -65,11 +62,10 @@ describe("loadConfig", () => {
       writeFileSync(configPath, `
         {
           llm: { providers: { anthropic: { apiKey: "test", }, }, },
-          tools: {},
+          plugins: {},
           agents: {
             assistant: { model: { provider: "anthropic", model: "claude", }, tools: [], },
           },
-          channels: {},
         }
       `);
 
@@ -86,9 +82,8 @@ describe("loadConfig", () => {
       writeFileSync(configPath, `
         {
           llm: { providers: { anthropic: { apiKey: "\${TEST_API_KEY}" } } },
-          tools: {},
+          plugins: {},
           agents: { assistant: { model: { provider: "anthropic", model: "claude" }, tools: [] } },
-          channels: {},
         }
       `);
 
@@ -98,32 +93,6 @@ describe("loadConfig", () => {
       delete process.env.TEST_API_KEY;
     });
 
-    it("resolves env vars in nested objects", () => {
-      process.env.TEST_TOKEN = "bot-token-123";
-
-      const configPath = join(tempDir, "config.json5");
-      writeFileSync(configPath, `
-        {
-          llm: { providers: { anthropic: { apiKey: "test" } } },
-          tools: {},
-          agents: { assistant: { model: { provider: "anthropic", model: "claude" }, tools: [] } },
-          channels: {
-            telegram: {
-              enabled: true,
-              token: "\${TEST_TOKEN}",
-              allowedUsers: [123],
-              agentMapping: { default: "assistant" },
-            },
-          },
-        }
-      `);
-
-      const config = loadConfig(configPath);
-      expect(config.channels?.telegram?.token).toBe("bot-token-123");
-
-      delete process.env.TEST_TOKEN;
-    });
-
     it("throws when env var is not set", () => {
       delete process.env.NONEXISTENT_VAR;
 
@@ -131,9 +100,8 @@ describe("loadConfig", () => {
       writeFileSync(configPath, `
         {
           llm: { providers: { anthropic: { apiKey: "\${NONEXISTENT_VAR}" } } },
-          tools: {},
+          plugins: {},
           agents: { assistant: { model: { provider: "anthropic", model: "claude" }, tools: [] } },
-          channels: {},
         }
       `);
 
@@ -147,61 +115,55 @@ describe("loadConfig", () => {
       writeFileSync(configPath, `
         {
           llm: { providers: { anthropic: { apiKey: "test" } } },
-          tools: {},
+          plugins: {},
           agents: {
             assistant: {
               model: { provider: "anthropic", model: "claude" },
               tools: ["\${EXTRA_TOOL}"],
             },
           },
-          channels: {},
         }
       `);
 
-      // env var substitution works in arrays — but note the tool reference
-      // will fail validation since "my-env-tool" is not in the tools registry.
-      // We test substitution only; skip validation via the raw resolve step.
-      // The loader resolves env vars before validating, so we check the
-      // resolved value by catching the cross-reference error (not a parse error).
-      expect(() => loadConfig(configPath)).toThrow("unknown tool 'my-env-tool'");
+      // env var resolves in arrays — the value is substituted
+      const config = loadConfig(configPath);
+      expect(config.agents.assistant.tools).toContain("my-env-tool");
 
       delete process.env.EXTRA_TOOL;
     });
   });
 
   describe("path resolution", () => {
-    it("resolves relative tool paths against config directory", () => {
+    it("resolves relative plugin paths against config directory", () => {
       const configPath = join(tempDir, "config.json5");
       writeFileSync(configPath, `
         {
           llm: { providers: { anthropic: { apiKey: "test" } } },
-          tools: {
-            mytool: { path: "./tools/mytool", target: "gateway" },
+          plugins: {
+            myplugin: { path: "./plugins/myplugin" },
           },
-          agents: { assistant: { model: { provider: "anthropic", model: "claude" }, tools: ["mytool"] } },
-          channels: {},
+          agents: { assistant: { model: { provider: "anthropic", model: "claude" }, tools: ["myplugin"] } },
         }
       `);
 
       const config = loadConfig(configPath);
-      expect(config.tools.mytool.path).toBe(join(tempDir, "tools/mytool"));
+      expect(config.plugins!.myplugin.path).toBe(join(tempDir, "plugins/myplugin"));
     });
 
-    it("keeps absolute tool paths unchanged", () => {
+    it("keeps absolute plugin paths unchanged", () => {
       const configPath = join(tempDir, "config.json5");
       writeFileSync(configPath, `
         {
           llm: { providers: { anthropic: { apiKey: "test" } } },
-          tools: {
-            mytool: { path: "/absolute/path/to/tool", target: "gateway" },
+          plugins: {
+            myplugin: { path: "/absolute/path/to/plugin" },
           },
-          agents: { assistant: { model: { provider: "anthropic", model: "claude" }, tools: ["mytool"] } },
-          channels: {},
+          agents: { assistant: { model: { provider: "anthropic", model: "claude" }, tools: ["myplugin"] } },
         }
       `);
 
       const config = loadConfig(configPath);
-      expect(config.tools.mytool.path).toBe("/absolute/path/to/tool");
+      expect(config.plugins!.myplugin.path).toBe("/absolute/path/to/plugin");
     });
   });
 
@@ -211,13 +173,11 @@ describe("loadConfig", () => {
       writeFileSync(configPath, `
         {
           llm: { providers: {} },
-          tools: {},
+          plugins: {},
           agents: {},
-          channels: {},
         }
       `);
 
-      // Should not throw - empty providers/agents is valid
       expect(() => loadConfig(configPath)).not.toThrow();
     });
   });

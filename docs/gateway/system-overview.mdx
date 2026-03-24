@@ -8,12 +8,12 @@ description: "High-level architecture diagrams and component relationships"
 ```mermaid
 graph TB
     subgraph Channels
-        TUI[TUI — pi InteractiveMode]
-        TG[Telegram Bot]
+        TUI["TUI (built-in) — pi InteractiveMode"]
+        PCH["Plugin Channels<br/>(Telegram, Discord, ...)"]
     end
 
     subgraph Gateway["Gateway (Node.js)"]
-        CM[Channel Manager]
+        PL[Plugin System]
         AM[Agent Manager]
         PI[pi SDK — LLM Layer]
         PE[Policy Engine]
@@ -22,7 +22,7 @@ graph TB
         SS[Socket Servers]
         SM[Sandbox Manager]
 
-        CM --> AM
+        PL --> AM
         AM --> PI
         PI -->|core tool calls| PE
         PE -->|allowed| SM
@@ -39,7 +39,7 @@ graph TB
     end
 
     TUI --> AM
-    TG --> CM
+    PCH --> PL
     SB1 -->|Unix Socket| SS
     SB2 -->|Unix Socket| SS
 
@@ -56,7 +56,7 @@ The gateway is the single host process. It never runs untrusted code — all age
 
 | Component | Responsibility |
 |-----------|---------------|
-| **Channel Manager** | Receives user messages from Telegram (or future CLI), routes to the correct agent |
+| **Plugin System** | Loads plugins that provide tools, channels, hooks, and skills |
 | **Agent Manager** | Manages pi SDK `AgentSession` instances. One session per agent, lazily initialized |
 | **pi SDK (LLM Layer)** | Makes LLM API calls (Anthropic, OpenAI/ZAI, etc). Owns the 4 core tool definitions |
 | **Policy Engine** | Deny-by-default permission checks. Validates agent→tool access before every execution |
@@ -67,7 +67,7 @@ The gateway is the single host process. It never runs untrusted code — all age
 
 ### Channels
 
-The gateway always runs in its own process. Channels connect to it — some in-process (Telegram), some as separate processes (TUI).
+The gateway always runs in its own process. The TUI (the only built-in channel) runs as a separate process. Other channels (Telegram, Discord, etc.) are provided by plugins and run in-process with the gateway.
 
 ```mermaid
 graph TB
@@ -76,7 +76,7 @@ graph TB
         AM[Agent Manager]
         SM[Sandbox Manager]
         SS[Socket Servers]
-        TG["Telegram Channel<br/>(in-process)"]
+        PL["Plugin Channels<br/>(Telegram, etc.)"]
     end
 
     subgraph Separate["Separate processes"]
@@ -84,7 +84,7 @@ graph TB
         FUTURE["Future channels<br/>(CLI, Web, API, ...)"]
     end
 
-    TG --> AM
+    PL --> AM
     TUI -->|"HTTP /api/agents/:name/exec"| API
     FUTURE -.->|HTTP| API
     API --> AM
@@ -97,8 +97,8 @@ graph TB
 
 | Channel | How it connects | Session model | Commands |
 |---------|----------------|--------------|----------|
-| **TUI** | Separate process → gateway HTTP API | Persistent per agent (local pi sessions) | Full pi commands + `/verbose` `/v` |
-| **Telegram** | In-process (GrammY) | Persistent per chat/thread | `/start` `/new` `/status` `/verbose` `/v` |
+| **TUI** (built-in) | Separate process → gateway HTTP API | Persistent per agent (local pi sessions) | Full pi commands + `/beige-verbose` `/v` |
+| **Telegram** (plugin) | In-process (GrammY) | Persistent per chat/thread | `/start` `/new` `/status` `/verbose` `/v` |
 
 The TUI runs pi's `InteractiveMode` locally for the full pi experience (editor, streaming, model switching, compaction). Tool execution (read, write, patch, exec) is proxied through the gateway's HTTP API to the sandbox. The LLM session runs in the TUI process.
 
@@ -161,21 +161,22 @@ graph TB
 sequenceDiagram
     participant CLI as Shell 1: beige gateway start
     participant GW as Gateway
-    participant Tools as Tool Registry
+    participant PL as Plugin System
     participant SM as Sandbox Manager
     participant SS as Socket Servers
     participant API as HTTP API
-    participant TG as Telegram
 
     CLI->>GW: new Gateway(config)
     CLI->>GW: gateway.start()
 
-    GW->>Tools: loadTools(config)
-    Tools-->>GW: loaded tools + handlers
+    GW->>PL: loadPlugins(config)
+    PL-->>GW: loaded plugins + registered tools/channels/hooks/skills
+
+    GW->>GW: validate agent tool references
 
     loop For each agent in config
         GW->>SM: createSandbox(agentName)
-        SM->>SM: generate launchers
+        SM->>SM: generate launchers (tools on PATH)
         SM->>SM: docker create + start
         GW->>SS: start socket server
         SS-->>GW: listening on ~/.beige/sockets/<agent>.sock
@@ -184,9 +185,7 @@ sequenceDiagram
     GW->>API: start HTTP API on :7433
     API-->>GW: listening
 
-    opt Telegram enabled in config
-        GW->>TG: bot.start() (background)
-    end
+    GW->>PL: startPlugins() (background processes)
 
     Note over GW: Gateway ready ✓
 ```
@@ -224,16 +223,16 @@ Multiple agents can run simultaneously, each with their own sandbox, socket, too
 
 ```mermaid
 graph TB
-    TG[Telegram Bot] --> CM[Channel Manager]
+    CH[Channels<br/>TUI / Telegram plugin / ...] --> GW[Gateway]
 
-    CM -->|user A| AM1[Agent: travel]
-    CM -->|user B| AM2[Agent: dev]
+    GW -->|user A| AM1[Agent: travel]
+    GW -->|user B| AM2[Agent: dev]
 
     AM1 --> PI1[pi SDK — Claude Sonnet]
     AM2 --> PI2[pi SDK — Claude Opus]
 
-    PI1 --> SB1[Sandbox: travel<br/>tools: kv, browser]
-    PI2 --> SB2[Sandbox: dev<br/>tools: kv, git]
+    PI1 --> SB1[Sandbox: travel<br/>tools: kv, chrome]
+    PI2 --> SB2[Sandbox: dev<br/>tools: git, github]
 
     SB1 -->|socket| SS1[Socket: travel.sock]
     SB2 -->|socket| SS2[Socket: dev.sock]

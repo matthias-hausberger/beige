@@ -1,0 +1,109 @@
+---
+title: "Channels"
+description: "How plugins provide channels for agent interaction"
+icon: "message"
+---
+
+Channels are the interfaces through which users interact with agents. The gateway has one built-in channel (TUI); everything else is a plugin.
+
+## Built-in: TUI
+
+The TUI runs as a separate process and connects to the gateway via HTTP API:
+
+```bash
+beige tui assistant
+```
+
+It provides the full pi terminal experience — editor, streaming, model switching, compaction, history.
+
+## Plugin Channels
+
+Plugins can register channel adapters for other messaging platforms:
+
+```typescript
+export function createPlugin(config, ctx) {
+  const bot = new TelegramBot(config.token);
+
+  return {
+    register(reg) {
+      // Register the channel adapter
+      reg.channel({
+        sendMessage: async (chatId, threadId, text, opts) => {
+          await bot.api.sendMessage(chatId, text);
+        },
+        supportsMessaging: () => true,
+      });
+    },
+
+    async start() {
+      // Start polling for messages
+      bot.on("message:text", async (botCtx) => {
+        const response = await ctx.prompt(
+          `telegram:${botCtx.chat.id}`,
+          config.agentMapping.default,
+          botCtx.message.text
+        );
+        // Response is sent back via the channel adapter
+      });
+      await bot.start();
+    },
+
+    async stop() {
+      await bot.stop();
+    },
+  };
+}
+```
+
+### What Channels Can Do
+
+Channels can:
+- **Create sessions** via `ctx.prompt()` or `ctx.newSession()`
+- **Modify session settings** mid-conversation (model, verbose, streaming)
+- **Stream responses** via `ctx.promptStreaming()`
+- **Send proactive messages** via the channel adapter's `sendMessage()`
+- **Route responses** back to the correct chat/thread via `ReplyTarget`
+
+### Session Settings
+
+Channels can read and modify session state:
+
+```typescript
+// Get current settings
+const settings = ctx.getSessionSettings(sessionKey);
+
+// Change model mid-session
+ctx.updateSessionSettings(sessionKey, {
+  model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+});
+
+// Toggle verbose mode
+ctx.updateSessionSettings(sessionKey, { verbose: true });
+
+// Attach custom metadata
+ctx.setSessionMetadata(sessionKey, "lastActive", Date.now());
+```
+
+### Available Channel Plugins
+
+| Channel | Plugin | Description |
+|---|---|---|
+| Telegram | `@matthias-hausberger/beige-toolkit` | Telegram bot with streaming, verbose mode, thread support |
+
+### Custom Integrations via HTTP API
+
+You can also interact with agents directly via the gateway's HTTP API:
+
+```bash
+# Execute a tool
+curl -X POST http://127.0.0.1:7433/api/agents/assistant/exec \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "exec", "params": {"command": "ls /workspace"}}'
+
+# Send a prompt
+curl -X POST http://127.0.0.1:7433/api/agents/assistant/prompt \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello!", "sessionKey": "api:assistant:default"}'
+```
+
+See [Gateway HTTP API](/gateway/api) for the full reference.

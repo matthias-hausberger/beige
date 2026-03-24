@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { ToolRunner, loadToolManifest } from "./runner.js";
+import { ToolRunner } from "./runner.js";
 import type { ToolHandler } from "./runner.js";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
@@ -147,67 +147,3 @@ describe("ToolRunner", () => {
   });
 });
 
-describe("loadToolManifest", () => {
-  let tempDir: string;
-
-  beforeEach(() => {
-    tempDir = join(tmpdir(), `beige-tool-test-${Date.now()}`);
-    mkdirSync(tempDir, { recursive: true });
-  });
-
-  afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it("loads valid tool.json", () => {
-    const toolDir = join(tempDir, "my-tool");
-    mkdirSync(toolDir);
-
-    writeFileSync(join(toolDir, "tool.json"), JSON.stringify({
-      name: "my-tool",
-      description: "A test tool",
-      commands: ["run <arg>", "status"],
-      target: "gateway",
-    }));
-
-    const manifest = loadToolManifest(toolDir);
-
-    expect(manifest.name).toBe("my-tool");
-    expect(manifest.description).toBe("A test tool");
-    expect(manifest.commands).toEqual(["run <arg>", "status"]);
-    expect(manifest.target).toBe("gateway");
-  });
-
-  it("loads minimal tool.json", () => {
-    const toolDir = join(tempDir, "minimal-tool");
-    mkdirSync(toolDir);
-
-    writeFileSync(join(toolDir, "tool.json"), JSON.stringify({
-      name: "minimal",
-      description: "Minimal tool",
-      target: "sandbox",
-    }));
-
-    const manifest = loadToolManifest(toolDir);
-
-    expect(manifest.name).toBe("minimal");
-    expect(manifest.commands).toBeUndefined();
-    expect(manifest.target).toBe("sandbox");
-  });
-
-  it("throws when tool.json is missing", () => {
-    const toolDir = join(tempDir, "no-manifest");
-    mkdirSync(toolDir);
-
-    expect(() => loadToolManifest(toolDir)).toThrow();
-  });
-
-  it("throws when tool.json is invalid JSON", () => {
-    const toolDir = join(tempDir, "invalid-manifest");
-    mkdirSync(toolDir);
-
-    writeFileSync(join(toolDir, "tool.json"), "not valid json");
-
-    expect(() => loadToolManifest(toolDir)).toThrow();
-  });
-});

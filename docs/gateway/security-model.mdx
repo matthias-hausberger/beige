@@ -65,7 +65,7 @@ graph TB
 |--------|----------|-----------|
 | Read/write files in `/workspace` | ✅ | Writable bind mount |
 | Execute code (any language) | ✅ | Deno, sh, python, etc. in sandbox |
-| Call allowed tools via `/tools/bin/` | ✅ | Launcher → socket → policy → execute |
+| Call allowed tools via `$PATH` (plugin tools) | ✅ | Launcher → socket → policy → execute |
 | Access the internet | ✅ | Container has network access (for now) |
 | Read tool documentation | ✅ | Read-only mount at `/tools/packages/` |
 | Install packages in sandbox | ✅ | Can run `apt-get`, `npm`, etc. inside container |
@@ -84,7 +84,7 @@ graph TB
 | Access the Docker daemon | No Docker socket mount |
 | Modify gateway config | Config lives on host, not in sandbox |
 | Access audit logs | Logs are on host, not mounted |
-| Bypass tool logging | All `/tools/bin/` calls route through gateway socket |
+| Bypass tool logging | All plugin tool calls route through gateway socket |
 
 ## Threat Model
 
@@ -125,8 +125,8 @@ Each agent has its own Unix socket file. The gateway creates one socket per agen
 
 ```mermaid
 flowchart LR
-    A[Agent tries to<br/>modify /tools/bin/kv] --> B[Write fails:<br/>read-only mount]
-    A2[Agent tries to<br/>create /tools/bin/fake] --> B2[Write fails:<br/>read-only mount]
+    A[Agent tries to<br/>modify /tools/bin/ (read-only)] --> B[Write fails:<br/>read-only mount]
+    A2[Agent tries to<br/>create in /tools/bin/ (read-only)] --> B2[Write fails:<br/>read-only mount]
     A3[Agent copies launcher<br/>to /workspace and edits] --> C[Edited copy can still<br/>only connect to<br/>/beige/gateway.sock]
     C --> D[Gateway still enforces<br/>policy on the socket]
 
@@ -186,14 +186,14 @@ flowchart TD
     style Sandbox fill:#e0e8f0,stroke:#7a9cc9
 ```
 
-> Secrets exist **only** in the gateway process memory. They are resolved from environment variables at startup, used to configure the pi SDK and Telegram bot, and **never** passed to any sandbox container.
+> Secrets exist **only** in the gateway process memory. They are resolved from environment variables at startup, used to configure the pi SDK and plugin channels, and **never** passed to any sandbox container.
 
 ## Audit Log
 
 Every tool invocation produces a JSONL audit entry at `~/.beige/logs/audit.jsonl`.
 
 ```json
-{"ts":"2026-03-05T12:00:00.000Z","agent":"travel","type":"core_tool","tool":"exec","args":["/tools/bin/kv set trip:paris March 15"],"decision":"allowed","durationMs":45,"exitCode":0,"outputBytes":23}
+{"ts":"2026-03-05T12:00:00.000Z","agent":"travel","type":"core_tool","tool":"exec","args":["kv set trip:paris March 15"],"decision":"allowed","durationMs":45,"exitCode":0,"outputBytes":23}
 {"ts":"2026-03-05T12:00:00.050Z","agent":"travel","type":"tool","tool":"kv","args":["set","trip:paris","March 15"],"decision":"allowed","target":"gateway","durationMs":12,"exitCode":0,"outputBytes":2}
 ```
 

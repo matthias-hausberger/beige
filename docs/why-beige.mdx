@@ -59,7 +59,7 @@ Here's how Beige addresses the three issues described above and creates a **uniq
     exec deno run - <<'EOF'
     const users = [];
     for (let i = 1; i <= 50; i++) {
-      const result = await exec(`/tools/bin/kv get user:${i}`);
+      const result = await exec(`kv get user:${i}`);
       users.push(JSON.parse(result));
     }
     console.log(JSON.stringify(users));
@@ -77,7 +77,7 @@ Here's how Beige addresses the three issues described above and creates a **uniq
     ```typescript fetch-users.ts
     const users = [];
     for (let i = 1; i <= 50; i++) {
-      const result = await exec(`/tools/bin/kv get user:${i}`);
+      const result = await exec(`kv get user:${i}`);
       users.push(JSON.parse(result));
     }
     console.log(JSON.stringify(users));

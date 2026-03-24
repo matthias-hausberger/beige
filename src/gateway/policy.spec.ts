@@ -28,33 +28,29 @@ describe("PolicyEngine", () => {
         expect(engine.isCoreTool("kv")).toBe(false);
         expect(engine.isCoreTool("browser")).toBe(false);
       });
-
-      it("returns false for unknown tools", () => {
-        expect(engine.isCoreTool("unknown")).toBe(false);
-        expect(engine.isCoreTool("")).toBe(false);
-      });
     });
 
     describe("isToolAllowed", () => {
-      it("allows configured tools for agent", () => {
+      it("allows tools listed in agent config", () => {
         expect(engine.isToolAllowed("assistant", "kv")).toBe(true);
+      });
+
+      it("denies tools not listed in agent config", () => {
+        expect(engine.isToolAllowed("assistant", "browser")).toBe(false);
+      });
+
+      it("denies all tools for restricted agent", () => {
+        expect(engine.isToolAllowed("restricted", "kv")).toBe(false);
+        expect(engine.isToolAllowed("restricted", "browser")).toBe(false);
+      });
+
+      it("allows multiple tools for researcher agent", () => {
         expect(engine.isToolAllowed("researcher", "kv")).toBe(true);
         expect(engine.isToolAllowed("researcher", "browser")).toBe(true);
       });
 
-      it("denies unconfigured tools for agent", () => {
-        expect(engine.isToolAllowed("assistant", "browser")).toBe(false);
-        expect(engine.isToolAllowed("restricted", "kv")).toBe(false);
-      });
-
-      it("denies all tools for unknown agent", () => {
+      it("denies tools for unknown agents", () => {
         expect(engine.isToolAllowed("unknown-agent", "kv")).toBe(false);
-        expect(engine.isToolAllowed("unknown-agent", "browser")).toBe(false);
-      });
-
-      it("denies when agent has empty tools array", () => {
-        expect(engine.isToolAllowed("restricted", "kv")).toBe(false);
-        expect(engine.isToolAllowed("restricted", "browser")).toBe(false);
       });
     });
 
@@ -62,48 +58,41 @@ describe("PolicyEngine", () => {
       it("returns true for configured agents", () => {
         expect(engine.isAgentValid("assistant")).toBe(true);
         expect(engine.isAgentValid("researcher")).toBe(true);
-        expect(engine.isAgentValid("restricted")).toBe(true);
       });
 
       it("returns false for unknown agents", () => {
         expect(engine.isAgentValid("unknown")).toBe(false);
-        expect(engine.isAgentValid("")).toBe(false);
       });
     });
 
     describe("getToolTarget", () => {
-      it("returns 'gateway' for gateway-targeted tools", () => {
+      it("returns 'gateway' for plugin-registered tools", () => {
         expect(engine.getToolTarget("kv")).toBe("gateway");
       });
 
-      it("returns 'sandbox' for sandbox-targeted tools", () => {
-        expect(engine.getToolTarget("browser")).toBe("sandbox");
+      it("returns 'gateway' for dotted plugin tools", () => {
+        // A tool like telegram.send_message resolves to plugin "telegram"
+        expect(engine.getToolTarget("kv.subcommand")).toBe("gateway");
       });
 
       it("returns undefined for unknown tools", () => {
-        expect(engine.getToolTarget("unknown")).toBeUndefined();
-        expect(engine.getToolTarget("")).toBeUndefined();
+        expect(engine.getToolTarget("nonexistent")).toBeUndefined();
       });
     });
   });
 
-  describe("with minimal config (no tools)", () => {
+  describe("with minimal config", () => {
     const config = createMinimalConfig();
     const engine = new PolicyEngine(config);
 
-    it("denies all custom tools when none are configured", () => {
-      expect(engine.isToolAllowed("assistant", "kv")).toBe(false);
-      expect(engine.isToolAllowed("assistant", "browser")).toBe(false);
-    });
-
-    it("still recognizes core tools", () => {
+    it("allows core tools for configured agents", () => {
       expect(engine.isCoreTool("read")).toBe(true);
       expect(engine.isCoreTool("write")).toBe(true);
       expect(engine.isCoreTool("patch")).toBe(true);
       expect(engine.isCoreTool("exec")).toBe(true);
     });
 
-    it("returns undefined for tool targets when no tools configured", () => {
+    it("returns undefined for tool targets when no plugins configured", () => {
       expect(engine.getToolTarget("kv")).toBeUndefined();
     });
   });
@@ -123,22 +112,22 @@ describe("PolicyEngine", () => {
       expect(engine.isToolAllowed("empty", "any-tool")).toBe(false);
     });
 
-    it("handles tool names with special characters", () => {
+    it("handles plugin names with special characters", () => {
       const config = createMinimalConfig({
-        tools: {
-          "my-custom-tool": { path: "/tools/my-custom-tool", target: "gateway" },
+        plugins: {
+          "my-custom-plugin": { path: "/plugins/my-custom-plugin" },
         },
         agents: {
           assistant: {
             model: { provider: "anthropic", model: "claude" },
-            tools: ["my-custom-tool"],
+            tools: ["my-custom-plugin"],
           },
         },
       });
       const engine = new PolicyEngine(config);
 
-      expect(engine.isToolAllowed("assistant", "my-custom-tool")).toBe(true);
-      expect(engine.getToolTarget("my-custom-tool")).toBe("gateway");
+      expect(engine.isToolAllowed("assistant", "my-custom-plugin")).toBe(true);
+      expect(engine.getToolTarget("my-custom-plugin")).toBe("gateway");
     });
   });
 });

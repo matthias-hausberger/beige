@@ -1,0 +1,204 @@
+---
+title: "Plugins"
+description: "How the Beige plugin system works — manifest, entry point, config, lifecycle"
+icon: "cube"
+---
+
+## Plugin Package Structure
+
+```
+plugins/my-plugin/
+├── plugin.json    # Manifest: name, description, what it provides
+├── package.json   # Optional: npm dependencies
+├── index.ts       # Entry point: exports createPlugin()
+├── README.md      # User/developer documentation
+└── SKILL.md       # Agent usage guide (for tool-providing plugins)
+```
+
+## plugin.json — Manifest
+
+```json
+{
+  "name": "my-plugin",
+  "description": "Does something useful",
+  "commands": [
+    "run <arg>  — Process input",
+    "status     — Show current state"
+  ],
+  "provides": {
+    "tools": ["my-plugin"],
+    "channel": false,
+    "hooks": [],
+    "skills": []
+  }
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | Yes | Plugin identifier — must be unique |
+| `description` | Yes | Short description |
+| `commands` | No | Usage hints shown in agent system prompt |
+| `provides` | No | Declarative listing of what this plugin provides |
+| `configSchema` | No | JSON Schema for plugin config validation |
+
+<Note>
+**Legacy support**: Plugins can also use `tool.json` (the old format). The gateway auto-converts it to a plugin manifest internally. New plugins should use `plugin.json`.
+</Note>
+
+## index.ts — Entry Point
+
+Every plugin exports a `createPlugin` function:
+
+```typescript
+import type { PluginContext, PluginRegistrar, PluginInstance } from "@matthias-hausberger/beige";
+
+export function createPlugin(
+  config: Record<string, unknown>,
+  ctx: PluginContext
+): PluginInstance {
+  return {
+    register(reg: PluginRegistrar) {
+      // Register tools, channels, hooks, skills here
+      reg.tool({
+        name: "my-plugin",
+        description: "Does something useful",
+        commands: ["run <arg>", "status"],
+        handler: async (args, _, sessionContext) => {
+          const [command, ...rest] = args;
+          if (command === "run") {
+            return { output: `Processed: ${rest.join(" ")}`, exitCode: 0 };
+          }
+          return { output: `Unknown command: ${command}`, exitCode: 1 };
+        },
+      });
+    },
+
+    // Optional: start background processes
+    async start() {
+      // Called after all plugins are registered
+    },
+
+    // Optional: clean up on shutdown
+    async stop() {
+      // Called in reverse order on gateway shutdown
+    },
+  };
+}
+```
+
+## Config
+
+Plugins are configured in `config.json5` under the `plugins` key:
+
+```json5
+{
+  plugins: {
+    "my-plugin": {
+      path: "./plugins/my-plugin",    // or auto-resolved for installed plugins
+      config: {                        // passed to createPlugin(config, ctx)
+        apiKey: "${MY_API_KEY}",
+        timeout: 30,
+      },
+    },
+  },
+}
+```
+
+### Per-Agent Config Overrides
+
+Different agents can have different plugin configs via `pluginConfigs`:
+
+```json5
+{
+  plugins: {
+    git: {
+      path: "./plugins/git",
+      config: { allowForcePush: false },
+    },
+  },
+  agents: {
+    safe: {
+      tools: ["git"],
+      // Uses base config (allowForcePush: false)
+    },
+    power: {
+      tools: ["git"],
+      pluginConfigs: {
+        git: { allowForcePush: true },  // deep-merged with base config
+      },
+    },
+  },
+}
+```
+
+## Tool Naming Rules
+
+All tools registered by a plugin **must** start with the plugin name:
+
+| Plugin | Allowed tool names |
+|---|---|
+| `git` | `git` |
+| `telegram` | `telegram`, `telegram.send_message`, `telegram.get_chat_info` |
+
+This is enforced at registration time. Combined with unique plugin names, it guarantees no tool name collisions.
+
+- **Single-tool plugins**: Register a tool with the plugin name (e.g. plugin `git` → tool `git`)
+- **Multi-tool plugins**: Use dot notation (e.g. plugin `telegram` → tools `telegram.send_message`, `telegram.get_chat_info`)
+
+## PluginContext
+
+The `PluginContext` object is provided to every plugin and gives access to gateway capabilities:
+
+```typescript
+interface PluginContext {
+  // Send a prompt to an agent session
+  prompt(sessionKey: string, agentName: string, message: string, opts?): Promise<string>;
+  promptStreaming(sessionKey: string, agentName: string, message: string, onDelta, opts?): Promise<string>;
+  newSession(sessionKey: string, agentName: string): Promise<void>;
+
+  // Session settings
+  getSessionSettings(sessionKey: string): SessionSettings;
+  updateSessionSettings(sessionKey: string, update: Partial<SessionSettings>): void;
+  setSessionMetadata(sessionKey: string, key: string, value: unknown): void;
+  getSessionMetadata(sessionKey: string, key: string): unknown;
+
+  // Cross-plugin tool invocation
+  invokeTool(toolName: string, args: string[], sessionContext?): Promise<ToolResult>;
+
+  // Read-only config and info
+  config: Readonly<BeigeConfig>;
+  agentNames: string[];
+
+  // Channel registry
+  getChannel(name: string): ChannelAdapter | undefined;
+  getRegisteredTools(): string[];
+
+  // Logging
+  log: PluginLogger;
+}
+```
+
+## Installing Plugins
+
+```bash
+# From npm
+beige plugins install npm:@matthias-hausberger/beige-toolkit
+
+# From GitHub
+beige plugins install github:matthias-hausberger/beige-toolkit
+
+# From local directory
+beige plugins install ./my-plugin
+
+# List installed plugins
+beige plugins list
+
+# Update all plugins
+beige plugins update
+
+# Remove a plugin
+beige plugins remove my-plugin
+```
+
+Installed plugins are auto-discovered — no need to specify `path` in config. Add config overrides as needed.

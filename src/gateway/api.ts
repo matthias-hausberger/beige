@@ -5,7 +5,7 @@ import type { BeigeSessionStore } from "./sessions.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { AuditLogger } from "./audit.js";
 import type { Gateway } from "./gateway.js";
-import { buildToolContext, type LoadedTool } from "../tools/registry.js";
+import type { PluginRegistry } from "../plugins/registry.js";
 import { buildSkillContext, type LoadedSkill } from "../skills/registry.js";
 
 export interface GatewayAPIOptions {
@@ -15,7 +15,7 @@ export interface GatewayAPIOptions {
   sessionStore: BeigeSessionStore;
   sandbox: SandboxManager;
   audit: AuditLogger;
-  loadedTools: Map<string, LoadedTool>;
+  pluginRegistry: PluginRegistry;
   loadedSkills: Map<string, LoadedSkill>;
   port: number;
   host: string;
@@ -90,7 +90,7 @@ export class GatewayAPI {
           fallbackModels: config.fallbackModels ?? [],
           tools: config.tools,
           skills: config.skills ?? [],
-          toolContext: buildToolContext(config.tools, this.opts.loadedTools),
+          toolContext: buildPluginToolContext(config.tools, this.opts.pluginRegistry),
           skillContext: buildSkillContext(config.skills ?? [], this.opts.loadedSkills),
         }));
         return this.json(res, 200, { agents });
@@ -336,4 +336,33 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on("end", () => resolve(Buffer.concat(chunks).toString()));
     req.on("error", reject);
   });
+}
+
+/**
+ * Build tool context string for the system prompt from the plugin registry.
+ */
+function buildPluginToolContext(
+  agentTools: string[],
+  registry: PluginRegistry
+): string {
+  if (agentTools.length === 0) return "";
+
+  const lines: string[] = ["## Available Tools", ""];
+
+  for (const toolName of agentTools) {
+    const tool = registry.getTool(toolName);
+    if (!tool) continue;
+
+    lines.push(`### ${toolName}`);
+    lines.push(`${tool.description}`);
+    if (tool.commands?.length) {
+      lines.push("Commands:");
+      for (const cmd of tool.commands) {
+        lines.push(`  ${toolName} ${cmd}`);
+      }
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
 }

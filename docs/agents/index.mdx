@@ -18,7 +18,7 @@ graph TB
         A1[LLM Session]
         A2[Docker Sandbox]
         A3["/workspace (persistent)"]
-        A4["/tools/bin/kv"]
+        A4["Tools on PATH"]
         A5["/skills/code-review/"]
     end
 
@@ -26,7 +26,7 @@ graph TB
         B1[LLM Session]
         B2[Docker Sandbox]
         B3["/workspace (persistent)"]
-        B4["/tools/bin/kv"]
+        B4["Tools on PATH"]
     end
 
     A1 --> A2
@@ -64,8 +64,8 @@ Agents are defined in `config.json5` under `agents`:
         { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
       ],
 
-      // Tools this agent can use (names from the tools registry)
-      tools: ["kv", "browser"],
+      // Tools this agent can use (names from plugin-registered tools)
+      tools: ["git", "github", "slack"],
 
       // Skills this agent has access to (optional)
       skills: ["code-review"],
@@ -91,50 +91,60 @@ Agents are defined in `config.json5` under `agents`:
 |-------|----------|-------------|
 | `model` | Yes | Provider, model ID, and thinking level |
 | `fallbackModels` | No | Models to try if primary fails or is rate-limited |
-| `tools` | No | Tool names from the tools registry (empty = no tools) |
-| `skills` | No | Skill names from the skills registry |
+| `tools` | No | Tool names registered by plugins (empty = core tools only) |
+| `skills` | No | Skill names from skills registry or plugin-registered |
+| `pluginConfigs` | No | Per-agent plugin config overrides (deep-merged with base) |
 | `sandbox` | No | Docker image, extra host mounts, extra env vars |
 
-**Model Restriction**: The `model` and `fallbackModels` together define the **only** models an agent can use. Users cannot switch to other models via the TUI or API — even if other providers are configured. This ensures predictable behavior and cost control. See [LLM Providers → Model Restriction](/agents/providers#model-restriction) for details.
+**Model Restriction**: The `model` and `fallbackModels` together define the **only** models an agent can use. Users cannot switch to other models via the TUI or API. See [LLM Providers → Model Restriction](/agents/providers#model-restriction) for details.
 
-For provider and model configuration details, see [LLM Providers](/agents/providers). For the complete list of all config fields and their defaults, see the [Config Reference](/agents/configuration).
+For the complete list of all config fields and their defaults, see the [Config Reference](/agents/configuration).
 
 ---
 
 ## Tool Permissions
 
-Tools are registered globally in `config.json5`, then assigned to agents by name:
+Tools are provided by plugins and assigned to agents by name:
 
 ```json5
 {
-  tools: {
-    kv: { path: "~/.beige/tools/kv", target: "gateway" },
-    browser: { path: "./tools/browser", target: "gateway" },
+  plugins: {
+    git: { config: { allowForcePush: false } },
+    github: { config: { allowedCommands: ["repo", "issue", "pr"] } },
   },
 
   agents: {
     // Full access
     assistant: {
       model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-      tools: ["kv", "browser"],
+      tools: ["git", "github"],
     },
 
-    // Restricted — only kv, no browser
+    // Restricted — only git, no github
     intern: {
       model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-      tools: ["kv"],
+      tools: ["git"],
     },
   },
 }
 ```
 
-An agent can only use tools that are **both** registered under `tools` and listed in its `tools` array. This is the deny-by-default policy.
+An agent can only use tools listed in its `tools` array. This is the deny-by-default policy. Every agent always has the 4 core tools (read, write, patch, exec) regardless of config.
+
+Plugin tools are available on the agent's `$PATH` inside the sandbox, so agents call them naturally:
+
+```bash
+exec: git status        # calls the git plugin tool
+exec: gh issue list     # calls the github plugin tool
+```
+
+See [Extensibility → Tools](/extensibility/tools) for details on how tools work.
 
 ---
 
 ## Skills
 
-Skills are read-only knowledge packages (documentation files) mounted into the sandbox. Unlike tools, which execute code, skills provide context and guidelines the agent reads on demand.
+Skills are read-only knowledge packages mounted into the sandbox. Unlike tools, which execute code, skills provide context and guidelines the agent reads on demand.
 
 ```json5
 {
@@ -145,20 +155,20 @@ Skills are read-only knowledge packages (documentation files) mounted into the s
   agents: {
     assistant: {
       model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-      tools: ["kv"],
+      tools: ["git"],
       skills: ["code-review"],
     },
   },
 }
 ```
 
-Skills are mounted at `/skills/<name>/` in the sandbox. The system prompt lists available skills; the agent reads the full documentation when relevant:
+Skills are mounted at `/skills/<name>/` in the sandbox. The system prompt references them; the agent reads the docs when relevant:
 
 ```bash
-exec cat /skills/code-review/README.md
+exec: cat /skills/code-review/README.md
 ```
 
-For more on creating skills, see [Skills](/skills).
+See [Extensibility → Skills](/extensibility/skills) for details.
 
 ---
 
@@ -181,8 +191,8 @@ Mount additional host directories into the sandbox:
 ```json5
 sandbox: {
   extraMounts: {
-    "/home/user/projects": "/projects",      // share a project directory
-    "/home/user/.gitconfig": "/etc/gitconfig", // share git config
+    "/home/user/projects": "/projects",
+    "/home/user/.gitconfig": "/etc/gitconfig",
   },
 }
 ```
@@ -222,22 +232,15 @@ Each agent's conversation history is persisted to disk as JSONL files:
 | Channel | Session Key |
 |---------|-------------|
 | TUI | `tui:<agent>:default` |
-| Telegram | `telegram:<chatId>` or `telegram:<chatId>:<threadId>` |
+| Telegram (plugin) | `telegram:<chatId>` or `telegram:<chatId>:<threadId>` |
 
-### Session Commands
+### Session Commands (TUI)
 
-In the TUI:
 ```bash
 /new              # Start a fresh session (old one preserved on disk)
-/sessions         # List saved sessions for the current agent
-/resume 2         # Resume session #2
-/agent dev        # Switch to a different agent
-```
-
-In Telegram:
-```bash
-/new              # Start a fresh session
-/status           # Show current session, agent, and settings
+/beige-sessions   # List saved sessions for the current agent
+/beige-resume 2   # Resume session #2
+/beige-agent dev  # Switch to a different agent
 ```
 
 ---
@@ -252,9 +255,9 @@ In Telegram:
     },
   },
 
-  tools: {
-    kv: { path: "~/.beige/tools/kv", target: "gateway" },
-    browser: { path: "./tools/browser", target: "gateway" },
+  plugins: {
+    git: {},
+    github: { config: { allowedCommands: ["repo", "issue", "pr"] } },
   },
 
   skills: {
@@ -265,39 +268,28 @@ In Telegram:
     // Main assistant — full access
     assistant: {
       model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-      tools: ["kv", "browser"],
+      tools: ["git", "github"],
       skills: ["code-review"],
     },
 
     // Developer — code-focused with project mount
     dev: {
       model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-      tools: ["kv"],
+      tools: ["git"],
       skills: ["code-review"],
       sandbox: {
         extraMounts: { "/home/user/projects": "/projects" },
       },
     },
 
-    // Restricted — minimal tools, no skills
+    // Restricted — core tools only
     intern: {
       model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-      tools: ["kv"],
-    },
-  },
-
-  channels: {
-    telegram: {
-      enabled: true,
-      token: "${TELEGRAM_BOT_TOKEN}",
-      allowedUsers: [123456789],
-      agentMapping: { default: "assistant" },
+      tools: [],
     },
   },
 }
 ```
-
-The [Config Reference](/agents/configuration) documents every available field with types, defaults, and examples. If you use VS Code or another editor with JSON Schema support, add `"$schema": "..."` at the top of your `config.json5` for inline autocomplete — the schema path is shown in the Config Reference.
 
 ---
 
@@ -310,10 +302,9 @@ The gateway validates agent configuration at startup:
 | `llm.providers` exists | Missing or empty |
 | `agents` exists | Missing or empty |
 | Each agent has `model.provider` + `model.model` | Missing model |
-| Agent's `model.provider` exists in `llm.providers` | Unknown provider |
-| Agent's tools exist in `tools` registry | Unknown tool |
-| Agent's skills exist in `skills` registry | Unknown skill |
-| Telegram `agentMapping.default` exists | Points to unknown agent |
+| Agent's tools resolve to plugin-registered tools | Unknown tool |
+| Agent's skills exist in skills registry or plugin-registered | Unknown skill |
+| Agent's `pluginConfigs` keys exist in `plugins` | Unknown plugin |
 | All `${VAR}` references resolve | Environment variable not set |
 
 ---

@@ -3,6 +3,7 @@ import { beigeDir } from "../paths.js";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { BeigeConfig } from "../config/schema.js";
 import { loadConfig } from "../config/loader.js";
+import { validateAgentToolReferences } from "../config/schema.js";
 import { AuditLogger } from "./audit.js";
 import { PolicyEngine } from "./policy.js";
 import { AgentManager } from "./agent-manager.js";
@@ -12,10 +13,16 @@ import { GatewayAPI } from "./api.js";
 import { SandboxManager } from "../sandbox/manager.js";
 import { AgentSocketServer } from "../socket/server.js";
 import { ToolRunner } from "../tools/runner.js";
-import { loadTools, type LoadedTool } from "../tools/registry.js";
 import { loadSkills, type LoadedSkill } from "../skills/registry.js";
-import { TelegramChannel } from "../channels/telegram.js";
-import { ChannelRegistry } from "../channels/registry.js";
+import {
+  PluginRegistry,
+  loadPlugins,
+  startPlugins,
+  stopPlugins,
+  createPluginContext,
+  type AgentManagerRef,
+  type LoadedPlugin,
+} from "../plugins/index.js";
 import { logUnhandledRejection } from "./error-logger.js";
 
 export class Gateway {
@@ -30,18 +37,17 @@ export class Gateway {
   private agentManager!: AgentManager;
   private api!: GatewayAPI;
   private socketServers = new Map<string, AgentSocketServer>();
-  private telegramChannel?: TelegramChannel;
-  private loadedTools!: Map<string, LoadedTool>;
   private loadedSkills!: Map<string, LoadedSkill>;
-  private channelRegistry!: ChannelRegistry;
+  private pluginRegistry!: PluginRegistry;
+  private loadedPlugins: LoadedPlugin[] = [];
   private restarting = false;
   /**
-   * Stable mutable reference to the AgentManager passed to gateway tools at
-   * load time.  Tools close over this object and dereference `.current` at
+   * Stable mutable reference to the AgentManager passed to plugins at
+   * load time. Plugins close over this object and dereference `.current` at
    * call time, so it must be the *same object* across restarts — only
    * `.current` is updated, not the ref itself.
    */
-  private readonly agentManagerRef: { current: AgentManager | null } = { current: null };
+  private readonly agentManagerRef: AgentManagerRef = { current: null };
 
   constructor(config: BeigeConfig, configPath: string) {
     this.config = config;
@@ -58,48 +64,71 @@ export class Gateway {
   async start(): Promise<void> {
     console.log("[GATEWAY] Starting Beige gateway...");
 
-    // 0. Set up unhandled rejection handler for better error logging
-    // This catches any promise rejections that weren't handled elsewhere
+    // 0. Set up unhandled rejection handler
     const rejectionHandler = (reason: unknown, promise: Promise<unknown>) => {
       logUnhandledRejection(reason, promise);
     };
     process.on("unhandledRejection", rejectionHandler);
 
-    // 1. Create channel registry
-    this.channelRegistry = new ChannelRegistry();
+    // 1. Create plugin registry
+    this.pluginRegistry = new PluginRegistry();
 
-    // 2. Load tool packages and register handlers.
-    //    Tools are loaded before AgentManager exists, so we pass agentManagerRef
-    //    (a stable class-level object).  Tool handlers dereference .current at
-    //    call time, so they always see the live manager — including after a
-    //    restart, which updates .current on the same ref object.
-    this.agentManagerRef.current = null; // clear stale ref from any previous start()
-    this.loadedTools = await loadTools(this.config, this.toolRunner, {
-      channelRegistry: this.channelRegistry,
+    // 2. Create plugin context (agentManagerRef is resolved later)
+    this.agentManagerRef.current = null;
+    const pluginCtx = createPluginContext({
+      config: this.config,
       agentManagerRef: this.agentManagerRef,
       sessionStore: this.sessionStore,
-      beigeConfig: this.config,
+      settingsStore: this.settingsStore,
+      registry: this.pluginRegistry,
     });
-    console.log(`[GATEWAY] Loaded ${this.loadedTools.size} tool(s)`);
 
-    // 3. Load skill packages
+    // 3. Load plugins — this calls createPlugin() and register() for each
+    this.loadedPlugins = await loadPlugins(this.config, this.pluginRegistry, pluginCtx);
+    console.log(`[GATEWAY] Loaded ${this.loadedPlugins.length} plugin(s)`);
+
+    // 4. Register plugin tools with the ToolRunner (for sandbox tool calls)
+    for (const [toolName, pluginTool] of this.pluginRegistry.getAllTools()) {
+      this.toolRunner.registerHandler(toolName, pluginTool.handler);
+    }
+
+    // 5. Validate that all agent tool references resolve to registered tools
+    const registeredToolNames = new Set(this.pluginRegistry.getRegisteredToolNames());
+    validateAgentToolReferences(this.config, registeredToolNames);
+
+    // 6. Load standalone skill packages
     this.loadedSkills = await loadSkills(this.config);
-    console.log(`[GATEWAY] Loaded ${this.loadedSkills.size} skill(s)`);
+    console.log(`[GATEWAY] Loaded ${this.loadedSkills.size} standalone skill(s)`);
 
-    // 4. Set up auth and model registry for pi SDK
+    // 7. Merge plugin-registered skills into loadedSkills
+    for (const [name, pluginSkill] of this.pluginRegistry.getAllSkills()) {
+      if (!this.loadedSkills.has(name)) {
+        this.loadedSkills.set(name, {
+          name,
+          path: pluginSkill.path,
+          manifest: { name, description: pluginSkill.description },
+        });
+      }
+    }
+
+    // 8. Set up auth and model registry for pi SDK
     const authStorage = this.setupAuth();
     const beigeModelsPath = resolve(beigeDir(), "models.json");
     const modelRegistry = new ModelRegistry(authStorage, beigeModelsPath);
 
-    // 5. Create sandbox manager
-    this.sandboxManager = new SandboxManager(this.config, this.loadedTools, this.loadedSkills);
+    // 9. Create sandbox manager
+    this.sandboxManager = new SandboxManager(
+      this.config,
+      this.pluginRegistry,
+      this.loadedSkills
+    );
 
-    // 6. Create agent manager and resolve the ref so gateway tools can use it.
+    // 10. Create agent manager and resolve the ref so plugins can use it
     this.agentManager = new AgentManager(
       this.config,
       this.sandboxManager,
       this.audit,
-      this.loadedTools,
+      this.pluginRegistry,
       this.loadedSkills,
       authStorage,
       modelRegistry,
@@ -107,15 +136,15 @@ export class Gateway {
     );
     this.agentManagerRef.current = this.agentManager;
 
-    // 7. Build beige-sandbox image if any agent needs it (no-op otherwise)
+    // 11. Build beige-sandbox image if any agent needs it
     await this.sandboxManager.ensureSandboxImage();
 
-    // 8. Start sandboxes and socket servers for each agent
+    // 12. Start sandboxes and socket servers for each agent
     for (const agentName of Object.keys(this.config.agents)) {
       await this.startAgentInfra(agentName);
     }
 
-    // 9. Start HTTP API (for TUI and other external channels)
+    // 13. Start HTTP API
     const host = this.config.gateway?.host ?? "127.0.0.1";
     const port = this.config.gateway?.port ?? 7433;
 
@@ -126,26 +155,18 @@ export class Gateway {
       sessionStore: this.sessionStore,
       sandbox: this.sandboxManager,
       audit: this.audit,
-      loadedTools: this.loadedTools,
+      pluginRegistry: this.pluginRegistry,
       loadedSkills: this.loadedSkills,
       host,
       port,
     });
     await this.api.start();
 
-    // 10. Start Telegram channel (non-blocking)
-    if (this.config.channels?.telegram?.enabled) {
-      this.telegramChannel = new TelegramChannel(
-        this.config.channels.telegram,
-        this.agentManager,
-        this.sessionStore,
-        this.settingsStore,
-        this.channelRegistry
-      );
-      this.telegramChannel.start().catch((err) => {
-        console.error("[GATEWAY] Telegram bot error:", err);
-      });
-    }
+    // 14. Start all plugins (background processes)
+    await startPlugins(this.loadedPlugins);
+
+    // 15. Fire gatewayStarted hooks
+    await this.pluginRegistry.executeGatewayStarted();
 
     console.log("[GATEWAY] Beige gateway started ✓");
   }
@@ -196,9 +217,15 @@ export class Gateway {
       await this.agentManager?.drainAll();
     }
 
-    if (this.telegramChannel) {
-      await this.telegramChannel.stop();
-      this.telegramChannel = undefined;
+    // Fire gatewayShutdown hooks
+    if (this.pluginRegistry) {
+      await this.pluginRegistry.executeGatewayShutdown();
+    }
+
+    // Stop plugins (reverse order)
+    if (this.loadedPlugins.length > 0) {
+      await stopPlugins(this.loadedPlugins);
+      this.loadedPlugins = [];
     }
 
     await this.api?.stop();
@@ -235,8 +262,6 @@ export class Gateway {
   }
 
   private setupAuth(): AuthStorage {
-    // Use beige's own auth file so credentials are isolated from pi's
-    // ~/.pi/agent/auth.json.
     const beigeAuthPath = resolve(beigeDir(), "auth.json");
     const authStorage = AuthStorage.create(beigeAuthPath);
     for (const [providerName, providerConfig] of Object.entries(

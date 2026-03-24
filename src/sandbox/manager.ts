@@ -5,7 +5,7 @@ import { beigeDir } from "../paths.js";
 import { PassThrough } from "stream";
 import { fileURLToPath } from "url";
 import type { BeigeConfig, AgentConfig } from "../config/schema.js";
-import type { LoadedTool } from "../tools/registry.js";
+import type { PluginRegistry } from "../plugins/registry.js";
 import type { LoadedSkill } from "../skills/registry.js";
 
 /** The image name prefix we build and manage. Any image starting with this is ours. */
@@ -28,7 +28,7 @@ export class SandboxManager {
 
   constructor(
     private config: BeigeConfig,
-    private loadedTools: Map<string, LoadedTool>,
+    private pluginRegistry: PluginRegistry,
     private loadedSkills: Map<string, LoadedSkill>
   ) {
     this.docker = new Docker();
@@ -69,11 +69,19 @@ export class SandboxManager {
       `${socketPath}:/beige/gateway.sock`,
     ];
 
-    // Mount tool packages (read-only)
+    // Mount plugin package directories (read-only) for tools that have a path
+    // This allows agents to read SKILL.md and README.md
     for (const toolName of agentConfig.tools) {
-      const tool = this.loadedTools.get(toolName);
-      if (tool) {
-        binds.push(`${tool.path}:/tools/packages/${toolName}:ro`);
+      // Find the plugin that provides this tool
+      const pluginTool = this.pluginRegistry.getTool(toolName);
+      if (!pluginTool) continue;
+
+      // The plugin's path is resolved from the loaded plugin; for now,
+      // we check the config for the plugin path
+      const pluginName = toolName.includes(".") ? toolName.split(".")[0] : toolName;
+      const pluginConfig = this.config.plugins?.[pluginName];
+      if (pluginConfig?.path) {
+        binds.push(`${pluginConfig.path}:/tools/packages/${toolName}:ro`);
       }
     }
 
@@ -97,20 +105,24 @@ export class SandboxManager {
 
     console.log(`[SANDBOX] Creating container for agent '${agentName}' (image: ${image})`);
 
+    // Build environment: prepend /tools/bin to PATH so tools shadow system binaries
+    const envVars = [
+      "PATH=/tools/bin:/usr/local/bin:/usr/bin:/bin",
+      ...Object.entries(agentConfig.sandbox?.extraEnv ?? {}).map(
+        ([k, v]) => `${k}=${v}`
+      ),
+    ];
+
     const container = await this.docker.createContainer({
       Image: image,
       name: `beige-${agentName}`,
       Hostname: `beige-${agentName}`,
       WorkingDir: "/workspace",
-      Cmd: ["sleep", "infinity"], // Keep container running
+      Cmd: ["sleep", "infinity"],
       HostConfig: {
         Binds: binds,
-        // No env vars from host — agent cannot access gateway secrets
       },
-      // Only pass safe, non-secret env vars
-      Env: Object.entries(agentConfig.sandbox?.extraEnv ?? {}).map(
-        ([k, v]) => `${k}=${v}`
-      ),
+      Env: envVars,
     });
 
     await container.start();
@@ -135,9 +147,12 @@ export class SandboxManager {
     }
 
     const agentConfig = this.config.agents[agentName];
-    const baseEnv = Object.entries(agentConfig?.sandbox?.extraEnv ?? {}).map(
-      ([k, v]) => `${k}=${v}`
-    );
+    const baseEnv = [
+      "PATH=/tools/bin:/usr/local/bin:/usr/bin:/bin",
+      ...Object.entries(agentConfig?.sandbox?.extraEnv ?? {}).map(
+        ([k, v]) => `${k}=${v}`
+      ),
+    ];
     const additionalEnv = env ? Object.entries(env).map(([k, v]) => `${k}=${v}`) : [];
 
     const exec = await container.exec({
@@ -160,11 +175,9 @@ export class SandboxManager {
         let stderr = "";
 
         if (stdin) {
-          // In hijack mode, we get a raw stream
           stream.write(stdin);
           stream.end();
 
-          // Demux the stream
           const stdoutStream = new PassThrough();
           const stderrStream = new PassThrough();
 
@@ -187,7 +200,6 @@ export class SandboxManager {
             });
           });
         } else {
-          // Non-hijack mode: use demuxStream
           const stdoutStream = new PassThrough();
           const stderrStream = new PassThrough();
 
@@ -223,7 +235,6 @@ export class SandboxManager {
    * Remove an agent's sandbox container.
    */
   async removeSandbox(agentName: string): Promise<void> {
-    // Try to remove by name
     try {
       const existing = this.docker.getContainer(`beige-${agentName}`);
       await existing.stop().catch(() => {});
@@ -246,13 +257,8 @@ export class SandboxManager {
   /**
    * Check which agents use a beige-managed image and, if any do, ensure the
    * image is built before containers are created.
-   *
-   * - Skipped entirely when no agent references a beige-sandbox image.
-   * - Skipped when the image already exists (unless `force` is true).
-   * - Builds one image per unique beige image tag referenced across all agents.
    */
   async ensureSandboxImage(force = false): Promise<void> {
-    // Collect the set of beige-managed image tags that agents actually need.
     const needed = new Set<string>();
     for (const agentConfig of Object.values(this.config.agents)) {
       const image = agentConfig.sandbox?.image ?? BEIGE_IMAGE_DEFAULT;
@@ -276,15 +282,7 @@ export class SandboxManager {
     }
   }
 
-  /**
-   * Build the beige-sandbox Docker image from the bundled Dockerfile.
-   * Streams build output to stdout so the user can see progress.
-   */
   private async buildSandboxImage(tag: string): Promise<void> {
-    // sandbox/ lives two directories up from src/sandbox/manager.ts
-    // At runtime (dist/sandbox/manager.js) it's still two levels up from dist/.
-    // We resolve relative to this file using import.meta.url.
-    // src/sandbox/manager.ts → up to src/sandbox → up to project root
     const projectRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
     const sandboxDir = resolve(projectRoot, "sandbox");
 
@@ -295,7 +293,6 @@ export class SandboxManager {
       { t: tag }
     );
 
-    // Stream build output line-by-line
     await new Promise<void>((res, rej) => {
       this.docker.modem.followProgress(
         stream,
@@ -315,17 +312,10 @@ export class SandboxManager {
     console.log(`[SANDBOX] Image '${tag}' built successfully ✓`);
   }
 
-  /**
-   * Returns true when `image` is a beige-managed image (i.e. one we build).
-   */
   private isBeigeImage(image: string): boolean {
-    // Match "beige-sandbox", "beige-sandbox:latest", "beige-sandbox:custom-tag", etc.
     return image === BEIGE_IMAGE_PREFIX || image.startsWith(`${BEIGE_IMAGE_PREFIX}:`);
   }
 
-  /**
-   * Returns true when the given Docker image tag already exists locally.
-   */
   private async imageExists(image: string): Promise<boolean> {
     try {
       await this.docker.getImage(image).inspect();
@@ -335,10 +325,6 @@ export class SandboxManager {
     }
   }
 
-  /**
-   * Get the workspace directory for an agent.
-   * Returns the configured workspaceDir if set, otherwise the default path.
-   */
   private getWorkspaceDir(agentName: string, agentConfig: AgentConfig): string {
     if (agentConfig.workspaceDir) {
       return agentConfig.workspaceDir;
@@ -346,18 +332,11 @@ export class SandboxManager {
     return resolve(this.beigeDir, "agents", agentName, "workspace");
   }
 
-  /**
-   * Write the default AGENTS.md into the agent's workspace if it doesn't already exist.
-   * The template lives alongside this module at src/gateway/default-agents-md.md.
-   * Once written the agent is free to edit the file — we never overwrite it.
-   */
   private ensureAgentsMd(agentName: string, workspaceDir: string): void {
     const agentsMdPath = join(workspaceDir, "AGENTS.md");
     if (existsSync(agentsMdPath)) return;
 
     try {
-      // Resolve relative to this compiled file: dist/sandbox/manager.js → up two levels
-      // → project root, then into dist/gateway/default-agents-md.md (copied by build)
       const templatePath = fileURLToPath(
         new URL("../gateway/default-agents-md.md", import.meta.url)
       );
@@ -365,13 +344,14 @@ export class SandboxManager {
       writeFileSync(agentsMdPath, content, "utf-8");
       console.log(`[SANDBOX] Created AGENTS.md for agent '${agentName}'`);
     } catch (err) {
-      // Non-fatal — agent will simply start without a pre-populated AGENTS.md
       console.warn(`[SANDBOX] Could not write AGENTS.md for agent '${agentName}': ${err}`);
     }
   }
 
   /**
    * Generate tool launcher scripts for an agent.
+   * Launchers are shell scripts that call the tool-client, which connects
+   * to the gateway via Unix socket.
    */
   private generateLaunchers(
     agentName: string,
@@ -379,18 +359,18 @@ export class SandboxManager {
     launchersDir: string
   ): void {
     for (const toolName of agentConfig.tools) {
-      const tool = this.loadedTools.get(toolName);
-      if (!tool) continue;
+      const pluginTool = this.pluginRegistry.getTool(toolName);
+      if (!pluginTool) continue;
 
-      // Generate a launcher script that calls the tool-client
       const launcher = [
         "#!/bin/sh",
         `# Auto-generated by beige gateway. DO NOT EDIT.`,
-        `# Tool: ${toolName} | Target: ${tool.manifest.target}`,
+        `# Tool: ${toolName}`,
         `exec /beige/tool-client "${toolName}" "$@"`,
         "",
       ].join("\n");
 
+      // For dotted tool names (e.g. telegram.send_message), use the full name
       const launcherPath = join(launchersDir, toolName);
       writeFileSync(launcherPath, launcher);
       chmodSync(launcherPath, 0o755);

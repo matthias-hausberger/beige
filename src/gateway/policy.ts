@@ -32,10 +32,17 @@ export class PolicyEngine {
   }
 
   /**
-   * Get the target for a tool (gateway or sandbox).
+   * Get the target for a tool. In the plugin system, all plugin-registered
+   * tools run on the gateway. Core tools are handled directly.
    */
   getToolTarget(toolName: string): "gateway" | "sandbox" | undefined {
-    const tool = this.config.tools[toolName];
-    return tool?.target;
+    // In the plugin architecture, all registered tools target the gateway.
+    // The plugin config doesn't have a "target" field — plugins always run in-process.
+    const plugin = this.config.plugins?.[toolName];
+    if (plugin) return "gateway";
+    // For dotted tool names (e.g. telegram.send_message), check the base plugin
+    const baseName = toolName.split(".")[0];
+    if (this.config.plugins?.[baseName]) return "gateway";
+    return undefined;
   }
 }

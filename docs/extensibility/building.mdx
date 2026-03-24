@@ -1,0 +1,286 @@
+---
+title: "Building Plugins"
+description: "Step-by-step guide to creating a Beige plugin"
+icon: "hammer"
+---
+
+## Quick Start: Tool-Only Plugin
+
+The simplest plugin wraps a CLI tool or API.
+
+### Step 1: Create the package
+
+```
+plugins/my-tool/
+├── plugin.json
+├── index.ts
+├── README.md
+└── SKILL.md
+```
+
+### Step 2: Write the manifest
+
+```json
+{
+  "name": "my-tool",
+  "description": "Does something useful",
+  "commands": ["run <input>  — Process input"],
+  "provides": { "tools": ["my-tool"] }
+}
+```
+
+### Step 3: Implement the plugin
+
+```typescript
+import type { PluginContext, PluginRegistrar, PluginInstance } from "@matthias-hausberger/beige";
+
+export function createPlugin(
+  config: Record<string, unknown>,
+  ctx: PluginContext
+): PluginInstance {
+  return {
+    register(reg: PluginRegistrar) {
+      reg.tool({
+        name: "my-tool",
+        description: "Does something useful",
+        commands: ["run <input>  — Process input"],
+        handler: async (args) => {
+          const [command, ...rest] = args;
+          if (command === "run") {
+            return { output: `Processed: ${rest.join(" ")}`, exitCode: 0 };
+          }
+          return { output: `Unknown command: ${command}`, exitCode: 1 };
+        },
+      });
+    },
+  };
+}
+```
+
+### Step 4: Write documentation
+
+**SKILL.md** (for agents):
+```markdown
+# my-tool — Usage Guide
+
+## Calling Convention
+```sh
+my-tool <command> [args...]
+```
+
+## Examples
+```sh
+my-tool run hello world
+```
+```
+
+**README.md** (for users):
+```markdown
+# my-tool
+
+A Beige plugin that does something useful.
+
+## Configuration
+No configuration needed.
+```
+
+### Step 5: Register in config
+
+```json5
+{
+  plugins: {
+    "my-tool": {
+      path: "./plugins/my-tool",
+    },
+  },
+  agents: {
+    assistant: {
+      tools: ["my-tool"],
+    },
+  },
+}
+```
+
+### Step 6: Restart the gateway
+
+```bash
+beige gateway restart
+```
+
+---
+
+## Multi-Tool Plugin
+
+If your plugin provides multiple tools, use dot notation:
+
+```typescript
+register(reg) {
+  reg.tool({
+    name: "mycloud.deploy",
+    description: "Deploy an application",
+    handler: async (args) => { ... },
+  });
+  reg.tool({
+    name: "mycloud.logs",
+    description: "View application logs",
+    handler: async (args) => { ... },
+  });
+}
+```
+
+Agent config:
+```json5
+agents: {
+  assistant: {
+    tools: ["mycloud.deploy", "mycloud.logs"],
+  },
+}
+```
+
+---
+
+## Channel Plugin
+
+A plugin that provides a messaging channel:
+
+```typescript
+export function createPlugin(config, ctx) {
+  return {
+    register(reg) {
+      reg.channel({
+        sendMessage: async (chatId, threadId, text) => { ... },
+        supportsMessaging: () => true,
+      });
+
+      // Optionally register tools too
+      reg.tool({
+        name: "mychannel.send",
+        description: "Send a proactive message",
+        handler: async (args) => { ... },
+      });
+    },
+
+    async start() {
+      // Start receiving messages (polling, webhook, etc.)
+    },
+
+    async stop() {
+      // Clean up
+    },
+  };
+}
+```
+
+---
+
+## Plugin with Hooks
+
+A plugin that intercepts messages:
+
+```typescript
+export function createPlugin(config, ctx) {
+  return {
+    register(reg) {
+      reg.hook("prePrompt", async (event) => {
+        // Log every message
+        console.log(`Message from ${event.channel}: ${event.message.slice(0, 50)}`);
+        return { message: event.message };
+      });
+
+      reg.hook("postResponse", async (event) => {
+        // Strip sensitive data
+        const cleaned = event.response.replace(/secret/gi, "***");
+        return { response: cleaned };
+      });
+    },
+  };
+}
+```
+
+---
+
+## Cross-Plugin Interaction
+
+Plugins can invoke tools from other plugins via `ctx.invokeTool()`:
+
+```typescript
+// A scheduler plugin that calls git from another plugin
+async function runDailySync(ctx) {
+  const result = await ctx.invokeTool("git", ["pull", "origin", "main"]);
+  if (result.exitCode !== 0) {
+    console.error("Daily sync failed:", result.output);
+  }
+}
+```
+
+---
+
+## Distributing Plugins
+
+### As an npm package
+
+```bash
+npm publish
+# Users install with:
+beige plugins install npm:@your-scope/your-plugin
+```
+
+### As a GitHub repo
+
+```bash
+# Users install with:
+beige plugins install github:your-org/your-plugin
+```
+
+### Package with multiple plugins
+
+Put multiple plugins in subdirectories:
+
+```
+my-toolkit/
+├── plugins/
+│   ├── git/
+│   │   ├── plugin.json
+│   │   └── index.ts
+│   ├── github/
+│   │   ├── plugin.json
+│   │   └── index.ts
+│   └── slack/
+│       ├── plugin.json
+│       └── index.ts
+└── package.json
+```
+
+All plugins are discovered and installed automatically.
+
+---
+
+## Migration from v1 Tools
+
+If you have existing tools using the old `tool.json` + `createHandler()` format:
+
+```typescript
+// Old format (v1)
+export function createHandler(config, ctx) {
+  return async (args, _, sessionContext) => {
+    return { output: "result", exitCode: 0 };
+  };
+}
+
+// New format (v2)
+export function createPlugin(config, ctx) {
+  return {
+    register(reg) {
+      reg.tool({
+        name: "my-tool",
+        description: "...",
+        handler: async (args, _, sessionContext) => {
+          return { output: "result", exitCode: 0 };
+        },
+      });
+    },
+  };
+}
+```
+
+The gateway also supports `tool.json` manifests — they're auto-converted to plugin manifests. But new plugins should use `plugin.json`.

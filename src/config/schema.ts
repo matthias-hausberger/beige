@@ -61,11 +61,11 @@ const AgentConfig = Type.Object(
       })
     ),
     tools: Type.Array(Type.String(), {
-      description: "Tool names from the tools registry that this agent can invoke",
+      description: "Tool names registered by plugins that this agent can invoke",
     }),
     skills: Type.Optional(
       Type.Array(Type.String(), {
-        description: "Skill names from the skills registry mounted into this agent's sandbox",
+        description: "Skill names (from skills registry or plugin-registered) mounted into this agent's sandbox",
       })
     ),
     workspaceDir: Type.Optional(
@@ -75,14 +75,14 @@ const AgentConfig = Type.Object(
       })
     ),
     sandbox: Type.Optional(SandboxConfig),
-    toolConfigs: Type.Optional(
+    pluginConfigs: Type.Optional(
       Type.Record(
         Type.String(),
         Type.Record(Type.String(), Type.Unknown()),
         {
           description:
-            "Per-agent tool config overrides. Keys must reference tools in this agent's tools array. " +
-            "Values are deep-merged with the top-level tool config from config.tools.<name>.config.",
+            "Per-agent plugin config overrides. Keys must reference plugins in the plugins registry. " +
+            "Values are deep-merged with the top-level plugin config from config.plugins.<name>.config.",
         }
       )
     ),
@@ -132,29 +132,22 @@ const LLMConfig = Type.Object(
   { title: "LLMConfig" }
 );
 
-const ToolConfig = Type.Object(
+const PluginConfig = Type.Object(
   {
     path: Type.Optional(
       Type.String({
         description:
-          "Path to the tool package directory. Resolved relative to the config file unless absolute. " +
-          "Auto-resolved for tools installed via 'beige tools install'.",
-      })
-    ),
-    target: Type.Optional(
-      Type.Union([Type.Literal("gateway"), Type.Literal("sandbox")], {
-        description:
-          '"gateway" runs the handler on the host process. "sandbox" is planned. ' +
-          "Auto-resolved for tools installed via 'beige tools install'.",
+          "Path to the plugin package directory. Resolved relative to the config file unless absolute. " +
+          "Auto-resolved for plugins installed via 'beige plugins install'.",
       })
     ),
     config: Type.Optional(
       Type.Record(Type.String(), Type.Unknown(), {
-        description: "Arbitrary config object passed to createHandler(config) at startup",
+        description: "Arbitrary config object passed to createPlugin(config, ctx) at startup",
       })
     ),
   },
-  { title: "ToolConfig" }
+  { title: "PluginConfig" }
 );
 
 const SkillConfig = Type.Object(
@@ -185,62 +178,17 @@ const GatewayServerConfig = Type.Object(
   { title: "GatewayServerConfig" }
 );
 
-const ChannelDefaultSettings = Type.Object(
-  {
-    verbose: Type.Optional(
-      Type.Boolean({
-        description:
-          "Send a notification for every tool call the agent makes (e.g. 🔧 exec: ls). Default: false",
-      })
-    ),
-    streaming: Type.Optional(
-      Type.Boolean({
-        description:
-          "Stream responses to the user in real-time. Default: true",
-      })
-    ),
-  },
-  { title: "ChannelDefaultSettings" }
-);
-
-const TelegramChannelConfig = Type.Object(
-  {
-    enabled: Type.Boolean({ description: "Set to true to activate the Telegram bot" }),
-    token: Type.String({
-      description: 'Telegram bot token from @BotFather. Use "${TELEGRAM_BOT_TOKEN}".',
-    }),
-    allowedUsers: Type.Array(Type.Number(), {
-      description:
-        "Telegram user IDs permitted to interact with the bot. All others are silently ignored.",
-    }),
-    agentMapping: Type.Object(
-      {
-        default: Type.String({
-          description: "Agent name that handles all incoming messages",
-        }),
-      },
-      { description: "Maps Telegram chats to agents" }
-    ),
-    defaults: Type.Optional(ChannelDefaultSettings),
-  },
-  { title: "TelegramChannelConfig" }
-);
-
-const ChannelsConfig = Type.Object(
-  {
-    telegram: Type.Optional(TelegramChannelConfig),
-  },
-  { title: "ChannelsConfig" }
-);
-
 // ── Root schema ──────────────────────────────────────────────────────────────
 
 export const BeigeConfigSchema = Type.Object(
   {
     llm: LLMConfig,
-    tools: Type.Record(Type.String(), ToolConfig, {
-      description: "Tool registry. Each key becomes the tool name used in agent configs and /tools/bin/.",
-    }),
+    plugins: Type.Optional(
+      Type.Record(Type.String(), PluginConfig, {
+        description:
+          "Plugin registry. Each key becomes the plugin name. Plugins can provide tools, channels, hooks, and skills.",
+      })
+    ),
     skills: Type.Optional(
       Type.Record(Type.String(), SkillConfig, {
         description: "Skill registry. Each key becomes the skill name used in agent configs.",
@@ -251,7 +199,6 @@ export const BeigeConfigSchema = Type.Object(
         "Agent definitions. Each agent gets its own Docker sandbox, Unix socket, and LLM session.",
     }),
     gateway: Type.Optional(GatewayServerConfig),
-    channels: Type.Optional(ChannelsConfig),
   },
   {
     title: "BeigeConfig",
@@ -263,15 +210,12 @@ export const BeigeConfigSchema = Type.Object(
 
 export type BeigeConfig = Static<typeof BeigeConfigSchema>;
 export type LLMProviderConfig = Static<typeof LLMProviderConfig>;
-export type ToolConfig = Static<typeof ToolConfig>;
+export type PluginConfig = Static<typeof PluginConfig>;
 export type SkillConfig = Static<typeof SkillConfig>;
 export type AgentConfig = Static<typeof AgentConfig>;
 export type ModelRef = Static<typeof ModelRef>;
 export type SandboxConfig = Static<typeof SandboxConfig>;
 export type GatewayServerConfig = Static<typeof GatewayServerConfig>;
-export type ChannelsConfig = Static<typeof ChannelsConfig>;
-export type TelegramChannelConfig = Static<typeof TelegramChannelConfig>;
-export type ChannelDefaultSettings = Static<typeof ChannelDefaultSettings>;
 
 // ── Manifests (not part of config.json5, kept here for co-location) ──────────
 
@@ -284,13 +228,6 @@ export interface SkillManifest {
     tools?: string[];
     skills?: string[];
   };
-}
-
-export interface ToolManifest {
-  name: string;
-  description: string;
-  commands?: string[];
-  target: "gateway" | "sandbox";
 }
 
 // ── Validation ───────────────────────────────────────────────────────────────
@@ -307,55 +244,47 @@ export function validateConfig(config: unknown): BeigeConfig {
 
   const c = config as BeigeConfig;
 
+  // Ensure plugins object exists (default to empty)
+  if (!c.plugins) {
+    (c as any).plugins = {};
+  }
+
   // Cross-reference checks TypeBox cannot express (references between keys)
   for (const [agentName, agent] of Object.entries(c.agents)) {
     if (!agent.model?.provider || !agent.model?.model) {
       throw new Error(`Config: agents.${agentName}.model requires provider and model`);
     }
-    for (const toolName of agent.tools) {
-      if (!c.tools[toolName]) {
+    // Note: tool references are validated after plugins are loaded (tools are
+    // registered dynamically by plugins, not statically in config).
+    // We still validate pluginConfigs keys reference known plugins.
+    for (const pluginName of Object.keys(agent.pluginConfigs ?? {})) {
+      if (!c.plugins![pluginName]) {
         throw new Error(
-          `Config: agent '${agentName}' references unknown tool '${toolName}'`
+          `Config: agent '${agentName}' has pluginConfigs for '${pluginName}' but that plugin is not in config.plugins`
         );
       }
-      const tool = c.tools[toolName];
-      if (!tool.path) {
-        throw new Error(
-          `Config: tool '${toolName}' (used by agent '${agentName}') has no path. ` +
-          `Install it with 'beige tools install <source>' or specify a path in config.`
-        );
-      }
-      if (!tool.target) {
-        throw new Error(
-          `Config: tool '${toolName}' (used by agent '${agentName}') has no target. ` +
-          `Install it with 'beige tools install <source>' or specify target: "gateway" | "sandbox" in config.`
-        );
-      }
-    }
-    for (const skillName of agent.skills ?? []) {
-      if (!c.skills?.[skillName]) {
-        throw new Error(
-          `Config: agent '${agentName}' references unknown skill '${skillName}'`
-        );
-      }
-    }
-    for (const toolName of Object.keys(agent.toolConfigs ?? {})) {
-      if (!agent.tools.includes(toolName)) {
-        throw new Error(
-          `Config: agent '${agentName}' has toolConfigs for '${toolName}' but that tool is not in agent.tools`
-        );
-      }
-    }
-  }
-
-  if (c.channels?.telegram?.enabled) {
-    const defaultAgent = c.channels.telegram.agentMapping?.default;
-    if (defaultAgent && !c.agents[defaultAgent]) {
-      throw new Error(
-        `Config: telegram.agentMapping.default references unknown agent '${defaultAgent}'`
-      );
     }
   }
 
   return c;
+}
+
+/**
+ * Validate that all agent tool references resolve to registered tools.
+ * Called after plugins are loaded and tools are registered.
+ */
+export function validateAgentToolReferences(
+  config: BeigeConfig,
+  registeredTools: Set<string>
+): void {
+  for (const [agentName, agent] of Object.entries(config.agents)) {
+    for (const toolName of agent.tools) {
+      if (!registeredTools.has(toolName)) {
+        throw new Error(
+          `Config: agent '${agentName}' references unknown tool '${toolName}'. ` +
+          `Registered tools: ${[...registeredTools].join(", ") || "(none)"}`
+        );
+      }
+    }
+  }
 }

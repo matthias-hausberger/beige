@@ -2,42 +2,42 @@ import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { beigeDir } from "../paths.js";
 import JSON5 from "json5";
-import { type BeigeConfig, type ToolConfig, type SkillConfig, validateConfig } from "./schema.js";
-import { listInstalledTools } from "../tools/installer.js";
+import { type BeigeConfig, type PluginConfig, type SkillConfig, validateConfig } from "./schema.js";
+import { listInstalledPlugins } from "../plugins/installer.js";
 
 /**
- * Merge installed tools (from ~/.beige/tools/) into the config.
+ * Merge installed plugins (from ~/.beige/plugins/) into the config.
  *
- * For each installed tool:
- * - If the tool is already in config.tools with path+target: skip (user override)
- * - If the tool is in config.tools without path/target: enrich with installed path+target
- * - If the tool is not in config.tools: add it with path+target from disk
+ * For each installed plugin:
+ * - If the plugin is already in config.plugins with path: skip (user override)
+ * - If the plugin is in config.plugins without path: enrich with installed path
+ * - If the plugin is not in config.plugins: add it with path from disk
  */
-function mergeInstalledTools(config: BeigeConfig): void {
-  const installed = listInstalledTools();
+function mergeInstalledPlugins(config: BeigeConfig): void {
+  const installed = listInstalledPlugins();
 
-  for (const tool of installed) {
-    const existing = config.tools[tool.name];
+  if (!config.plugins) {
+    (config as any).plugins = {};
+  }
 
-    if (existing && existing.path && existing.target) {
-      // User has fully specified this tool — skip
+  for (const plugin of installed) {
+    const existing = config.plugins![plugin.name];
+
+    if (existing && existing.path) {
+      // User has fully specified this plugin — skip
       continue;
     }
 
     if (existing) {
-      // User defined the tool (likely for config overrides) but without path/target.
-      // Enrich from the installed tool.
+      // User defined the plugin (likely for config overrides) but without path.
+      // Enrich from the installed plugin.
       if (!existing.path) {
-        existing.path = tool.path;
-      }
-      if (!existing.target) {
-        existing.target = tool.manifest.target;
+        existing.path = plugin.path;
       }
     } else {
-      // Tool not in config at all — auto-add from installed tools.
-      config.tools[tool.name] = {
-        path: tool.path,
-        target: tool.manifest.target,
+      // Plugin not in config at all — auto-add from installed plugins.
+      config.plugins![plugin.name] = {
+        path: plugin.path,
       };
     }
   }
@@ -71,12 +71,13 @@ function resolveEnvVars(value: unknown): unknown {
 }
 
 /**
- * Resolve relative tool paths against the config file directory.
+ * Resolve relative plugin paths against the config file directory.
  */
-function resolveToolPaths(config: BeigeConfig, configDir: string): void {
-  for (const tool of Object.values(config.tools)) {
-    if (tool.path && !tool.path.startsWith("/")) {
-      tool.path = resolve(configDir, tool.path);
+function resolvePluginPaths(config: BeigeConfig, configDir: string): void {
+  if (!config.plugins) return;
+  for (const plugin of Object.values(config.plugins)) {
+    if (plugin.path && !plugin.path.startsWith("/")) {
+      plugin.path = resolve(configDir, plugin.path);
     }
   }
 }
@@ -116,15 +117,13 @@ export function loadConfig(configPath: string): BeigeConfig {
   const parsed = JSON5.parse(raw);
   const resolved = resolveEnvVars(parsed) as BeigeConfig;
 
-  // Resolve relative tool paths BEFORE merging installed tools.
-  // This ensures user-specified relative paths are resolved first,
-  // then mergeInstalledTools can fill in missing paths from disk.
-  resolveToolPaths(resolved, configDir);
+  // Resolve relative plugin paths BEFORE merging installed plugins.
+  resolvePluginPaths(resolved, configDir);
 
-  // Installed tools must be merged before validateConfig runs its cross-reference
-  // checks — otherwise agent tool references that come from installed tools
+  // Installed plugins must be merged before validateConfig runs its cross-reference
+  // checks — otherwise agent plugin references that come from installed plugins
   // are rejected as unknown.
-  mergeInstalledTools(resolved);
+  mergeInstalledPlugins(resolved);
 
   const config = validateConfig(resolved);
   resolveSkillPaths(config, configDir);

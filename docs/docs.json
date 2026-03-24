@@ -53,57 +53,28 @@
         ]
       },
       {
-        "tab": "Channels",
+        "tab": "Extensibility",
         "pages": [
-          "channels/index",
+          "extensibility/index",
+          "extensibility/plugins",
+          "extensibility/tools",
+          "extensibility/channels",
+          "extensibility/skills",
+          "extensibility/hooks",
+          "extensibility/building",
           {
-            "group": "Individual Channels",
+            "group": "Beige Toolkit",
+            "root": "tools/beige-toolkit/index",
             "pages": [
-              "channels/tui",
-              "channels/telegram"
+              "tools/beige-toolkit/apple-calendar",
+              "tools/beige-toolkit/chrome",
+              "tools/beige-toolkit/confluence",
+              "tools/beige-toolkit/github",
+              "tools/beige-toolkit/sessions",
+              "tools/beige-toolkit/slack",
+              "tools/beige-toolkit/spawn"
             ]
           }
-        ]
-      },
-      {
-        "tab": "Tools",
-        "pages": [
-          "tools/index",
-          "tools/core-capabilities",
-          "tools/installing",
-          "tools/managing",
-          {
-            "group": "Build Your Own",
-            "root": "tools/building/index",
-            "pages": [
-              "tools/building/tool-anatomy",
-              "tools/building/distributing"
-            ]
-          },
-          {
-            "group": "Toolkits",
-            "pages": [
-              {
-                "group": "@matthias-hausberger/beige-toolkit",
-                "root": "tools/beige-toolkit/index",
-                "pages": [
-                  "tools/beige-toolkit/apple-calendar",
-                  "tools/beige-toolkit/chrome",
-                  "tools/beige-toolkit/confluence",
-                  "tools/beige-toolkit/github",
-                  "tools/beige-toolkit/sessions",
-                  "tools/beige-toolkit/slack",
-                  "tools/beige-toolkit/spawn"
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Skills",
-        "pages": [
-          "skills/index"
         ]
       },
       {

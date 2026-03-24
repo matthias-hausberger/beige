@@ -19,9 +19,9 @@ Beige is a secure, open-source, sandboxed agent system where AI agents write and
 
 ### What's common to tools like [OpenClaw](https://openclaw.ai/)
 
-- **Channels** — Interact via TUI, Telegram, HTTP API, or custom channels
+- **Plugins** — Extensible plugin system for tools, channels, hooks, and skills
+- **Channels** — Interact via TUI (built-in), Telegram (plugin), HTTP API, or custom channels
 - **Skills** — Read-only knowledge packages for agent context
-- **Tools** — Extensible tool system for agent capabilities
 - **Policy Enforcement** — Fine-grained control over what agents can do
 - **Audit Logging** — Every tool invocation is logged for accountability
 
@@ -54,10 +54,10 @@ graph TB
     end
 
     subgraph "External Channels"
-        TUI[TUI]
-        TG[Telegram]
+        TUI[TUI — built-in]
+        PLUG[Plugin Channels]
         TUI -->|HTTP API| CH
-        TG --> CH
+        PLUG --> CH
     end
 
     subgraph "Docker Sandboxes"
@@ -66,9 +66,9 @@ graph TB
     SB1 -->|Unix socket| SS
 ```
 
-**The Gateway** is the orchestrator. It manages Docker containers, routes tool calls, enforces policies (deny by default), logs every action, and connects and listens to external channels.
+**The Gateway** is the orchestrator. It loads plugins, manages Docker containers, routes tool calls, enforces policies (deny by default), logs every action, and serves channels.
 
-**The Sandbox** is where each agent run [core capabilities](/tools/core-capabilities) — an isolated Docker container with a writable `/workspace`, read-only tool mounts, and no access to host secrets or environment variables.
+**The Sandbox** is where each agent runs — an isolated Docker container with a writable `/workspace`, plugin tools on `$PATH`, read-only skill mounts, and no access to host secrets or environment variables.
 
 ## Next Steps
 

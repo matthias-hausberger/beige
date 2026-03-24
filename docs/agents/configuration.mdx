@@ -6,19 +6,6 @@ icon: "sliders"
 
 Beige is configured with a single `~/.beige/config.json5` file. JSON5 is JSON with comments, trailing commas, and unquoted keys. You can also override the path with `--config`.
 
-## Editor Autocomplete
-
-Add a `$schema` line to get inline autocomplete and validation in VS Code, JetBrains, and any editor that supports JSON Schema:
-
-```json5
-{
-  $schema: "https://raw.githubusercontent.com/matthias-hausberger/beige/main/config.schema.json",
-  // ... rest of config
-}
-```
-
-The schema is generated from the TypeBox definitions in `src/config/schema.ts` and committed at `config.schema.json` in the repository. `beige setup` writes this line automatically into the generated config.
-
 ## Environment Variables
 
 Any string value can reference environment variables using `${VAR_NAME}`. Variables are resolved at startup — if a referenced variable is not set, the gateway exits with an error.
@@ -27,14 +14,9 @@ Any string value can reference environment variables using `${VAR_NAME}`. Variab
 apiKey: "${ANTHROPIC_API_KEY}",  // resolved from env at startup
 ```
 
-## Tool Path Resolution
+## Plugin Path Resolution
 
-Tool `path` values are resolved relative to the config file's directory, unless they are absolute paths.
-
-| Install mode | Recommended path style |
-|---|---|
-| **npm global** | Absolute (`/Users/you/.beige/tools/kv`) — written by `beige setup` |
-| **Source / git clone** | Absolute or repo-relative (`./tools/kv`) |
+Plugin `path` values are resolved relative to the config file's directory, unless they are absolute paths. Installed plugins (via `beige plugins install`) are auto-resolved.
 
 ---
 
@@ -43,11 +25,8 @@ Tool `path` values are resolved relative to the config file's directory, unless 
 ```json5
 {
   // ── LLM Providers ────────────────────────────────────────────────────
-  // Configure one or more LLM providers. Each key becomes a provider name
-  // that agents reference in their model config.
   llm: {
     providers: {
-      // Built-in providers only need an apiKey.
       anthropic: {
         apiKey: "${ANTHROPIC_API_KEY}",
       },
@@ -57,7 +36,7 @@ Tool `path` values are resolved relative to the config file's directory, unless 
       google: {
         apiKey: "${GOOGLE_API_KEY}",
       },
-      // Custom / OpenAI-compatible providers also need baseUrl and api.
+      // Custom / OpenAI-compatible providers
       zai: {
         apiKey: "${ZAI_API_KEY}",
         baseUrl: "https://api.zai.com/v1",
@@ -71,82 +50,73 @@ Tool `path` values are resolved relative to the config file's directory, unless 
     },
   },
 
-  // ── Tool Registry ─────────────────────────────────────────────────────
-  // Tools installed via `beige tools install` are auto-discovered — no entry needed.
-  // Add entries here only for: custom config, or tools not installed via beige.
-  tools: {
-    // Installed tool with custom config (path/target auto-resolved)
+  // ── Plugins ──────────────────────────────────────────────────────────
+  // Plugins provide tools, channels, hooks, and skills.
+  // Installed via `beige plugins install` are auto-discovered.
+  plugins: {
+    // Plugin with custom config (path auto-resolved if installed)
     github: {
       config: { allowedCommands: ["repo", "issue", "pr"] },
     },
-    // Local tool (not installed via beige — path and target required)
+    // Local plugin (path required)
     kv: {
-      path: "~/.beige/tools/kv",  // path to tool package directory
-      target: "gateway",           // where the handler runs: "gateway" | "sandbox"(future)
-      config: {},                  // arbitrary config passed to createHandler()
+      path: "~/.beige/plugins/kv",
+      config: {},
+    },
+    // Channel plugin
+    telegram: {
+      config: {
+        token: "${TELEGRAM_BOT_TOKEN}",
+        allowedUsers: [123456789],
+        agentMapping: { default: "assistant" },
+        defaults: { verbose: false, streaming: true },
+      },
     },
   },
 
-  // ── Skill Registry ────────────────────────────────────────────────────
-  // Register skill packages (read-only knowledge mounted at /skills/<name>/).
+  // ── Skills ────────────────────────────────────────────────────────────
+  // Standalone skill packages (plugins can also register skills).
   skills: {
     "code-review": {
-      path: "./skills/code-review",  // path to skill package directory
+      path: "./skills/code-review",
     },
   },
 
   // ── Agents ───────────────────────────────────────────────────────────
-  // Each agent gets its own Docker sandbox, Unix socket, and LLM session.
   agents: {
     assistant: {
       model: {
-        provider: "anthropic",                    // must match a key in llm.providers
-        model: "claude-sonnet-4-6",        // model ID as the provider expects it
-        thinkingLevel: "off",                     // off | minimal | low | medium | high
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        thinkingLevel: "off",
       },
-      fallbackModels: [                           // tried in order if primary fails
+      fallbackModels: [
         { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
       ],
-      tools: ["kv"],                              // tool names from the tools registry above
-      skills: ["code-review"],                    // skill names from the skills registry above
-      toolConfigs: {                              // per-agent tool config overrides (deep-merged
-        kv: {                                     //   with the top-level tools.kv.config)
+      tools: ["kv", "github", "telegram.send_message"],
+      skills: ["code-review"],
+      pluginConfigs: {
+        kv: {
           denyCommands: ["del"],
         },
       },
       sandbox: {
-        image: "beige-sandbox:latest",            // Docker image (default)
-        extraMounts: {                            // additional host→container bind mounts
-          "/host/path": "/container/path",        // reduces isolation — use carefully
+        image: "beige-sandbox:latest",
+        extraMounts: {
+          "/host/path": "/container/path",
         },
-        extraEnv: {                               // env vars for the container
-          "NODE_ENV": "production",               // never use for secrets — agent can read these
+        extraEnv: {
+          "NODE_ENV": "production",
         },
       },
     },
   },
 
   // ── Gateway ───────────────────────────────────────────────────────────
-  // All fields are optional; defaults shown.
   gateway: {
-    host: "127.0.0.1",                           // HTTP API bind address
-    port: 7433,                                   // HTTP API port
-    logFile: "~/.beige/logs/gateway.log",         // daemon log file
-  },
-
-  // ── Channels ─────────────────────────────────────────────────────────
-  channels: {
-    telegram: {
-      enabled: true,
-      token: "${TELEGRAM_BOT_TOKEN}",
-      allowedUsers: [123456789],                  // Telegram user IDs allowed to interact
-      agentMapping: {
-        default: "assistant",                     // agent that handles messages
-      },
-      defaults: {
-        verbose: false,                           // send tool-call notifications by default
-      },
-    },
+    host: "127.0.0.1",
+    port: 7433,
+    logFile: "~/.beige/logs/gateway.log",
   },
 }
 ```
@@ -172,13 +142,12 @@ Tool `path` values are resolved relative to the config file's directory, unless 
 | `openai-responses` | OpenAI Responses API |
 | `google-generative-ai` | Google Gemini (default for `google`) |
 
-### `tools.<name>`
+### `plugins.<name>`
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `path` | No | Path to the tool package directory. Auto-resolved for installed tools. Required for tools not installed via `beige tools install`. |
-| `target` | No | `"gateway"` (runs on host) — `"sandbox"` is future. Auto-resolved from `tool.json` for installed tools. |
-| `config` | No | Arbitrary object passed to `createHandler(config)` |
+| `path` | No | Path to the plugin package directory. Auto-resolved for installed plugins. |
+| `config` | No | Arbitrary object passed to `createPlugin(config, ctx)` |
 
 ### `skills.<name>`
 
@@ -196,15 +165,7 @@ Tool `path` values are resolved relative to the config file's directory, unless 
 
 ### `agents.<name>.fallbackModels`
 
-Optional array of fallback models tried in order when the primary model fails (rate limits, errors).
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `provider` | Yes | Must match a key in `llm.providers` |
-| `model` | Yes | Model ID as the provider expects it |
-| `thinkingLevel` | No | `off` \| `minimal` \| `low` \| `medium` \| `high` |
-
-**Model restriction**: The `model` and `fallbackModels` define the **only** models an agent can use. Users cannot switch to other models via the TUI or API. This ensures predictable behavior and cost control.
+Optional array of fallback models tried in order when the primary model fails.
 
 ### `agents.<name>.sandbox`
 
@@ -216,84 +177,17 @@ Optional array of fallback models tried in order when the primary model fails (r
 
 ### `agents.<name>.workspaceDir`
 
-Optional. Absolute or relative path (relative to the config file) for the agent's workspace directory. 
+Optional. Absolute or relative path for the agent's workspace directory.
 
 - **Default**: `~/.beige/agents/<agentName>/workspace/`
 - **Inside sandbox**: Always mounted at `/workspace`
 
-The workspace is where the agent reads and writes files. If the directory doesn't exist, it will be created. An `AGENTS.md` file is automatically created in the workspace if it doesn't exist.
+### `agents.<name>.pluginConfigs`
 
-```json5
-agents: {
-  assistant: {
-    model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-    tools: ["kv"],
-    workspaceDir: "./workspaces/assistant",  // relative to config file
-  },
-  projectBot: {
-    model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-    tools: [],
-    workspaceDir: "/home/user/projects/my-project",  // absolute path
-  },
-}
-```
-
-### `agents.<name>.toolConfigs`
-
-Optional. Per-agent tool config overrides. Each key must reference a tool in the agent's `tools` array. Values are **deep-merged** with the top-level `tools.<name>.config` — nested objects are recursively merged, while arrays and primitives from the agent override replace the base value.
-
-This is an alternative to registering the same tool under multiple names (e.g. `kv`, `kv-readonly`, `kv-nodelete`). When the only difference between agents is config, `toolConfigs` is cleaner.
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `toolConfigs` | No | `{ "<toolName>": { ... } }` — overrides deep-merged with `tools.<toolName>.config` |
-
-```json5
-agents: {
-  // Instead of registering kv-nodelete as a separate tool,
-  // override the kv config for this specific agent:
-  "no-delete-agent": {
-    model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-    tools: ["kv"],
-    toolConfigs: {
-      kv: {
-        denyCommands: ["del"],  // merged with top-level tools.kv.config
-      },
-    },
-  },
-}
-```
+Optional. Per-agent plugin config overrides. Each key must reference a plugin in `config.plugins`. Values are **deep-merged** with the top-level `plugins.<name>.config`.
 
 <Warning>
-**Arrays are replaced, not merged.** The deep-merge recursively merges nested objects, but arrays (and primitives) from the agent override **replace** the base value entirely. This is important for security-sensitive lists like `denyCommands`, `allowCommands`, `allowReadSpaces`, and `allowWriteSpaces`.
-
-For example, if you deny `"messages send"` in the global tool config and want to **also** deny `"messages draft"` for a specific agent, you must repeat both entries in the agent override — the override array does not append to the base array:
-
-```json5
-{
-  tools: {
-    slack: {
-      config: {
-        denyCommands: ["messages send"],          // global deny
-      },
-    },
-  },
-  agents: {
-    writer: {
-      tools: ["slack"],
-      toolConfigs: {
-        slack: {
-          // ✅ Correct: repeat the global entry + add the new one
-          denyCommands: ["messages send", "messages draft"],
-
-          // ❌ Wrong: this would REPLACE the base list, removing "messages send"
-          // denyCommands: ["messages draft"],
-        },
-      },
-    },
-  },
-}
-```
+**Arrays are replaced, not merged.** The deep-merge recursively merges nested objects, but arrays and primitives from the agent override **replace** the base value entirely.
 </Warning>
 
 ### `gateway`
@@ -304,41 +198,23 @@ For example, if you deny `"messages send"` in the global tool config and want to
 | `port` | `7433` | HTTP API port |
 | `logFile` | `~/.beige/logs/gateway.log` | Daemon stdout/stderr log file |
 
-### `channels.telegram`
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `enabled` | Yes | `true` to activate the Telegram bot |
-| `token` | Yes | Telegram bot token from BotFather |
-| `allowedUsers` | Yes | Array of Telegram user IDs permitted to interact |
-| `agentMapping.default` | Yes | Agent name to handle all incoming messages |
-| `defaults.verbose` | No | Default `false` — when `true`, bot sends tool-call notifications |
-
 ---
 
 ## Validation at Startup
-
-The gateway checks the following at startup and exits with an error if any check fails:
 
 | Check | Error if |
 |-------|----------|
 | `llm.providers` exists | Missing or empty |
 | `agents` exists | Missing or empty |
 | Each agent has `model.provider` + `model.model` | Missing model config |
-| Agent's `model.provider` exists in `llm.providers` | Unknown provider |
-| Agent's tools all exist in `tools` registry | Unknown tool |
-| Agent's `toolConfigs` keys all exist in agent's `tools` | `toolConfigs` key not in agent's tools |
-| Agent's skills all exist in `skills` registry | Unknown skill |
-| Skill's `requires.tools` all in agent's `tools` | Missing required tool |
-| Skill's `requires.skills` all in agent's `skills` | Missing required skill |
-| Telegram `agentMapping.default` exists | Points to unknown agent |
+| Agent's `pluginConfigs` keys exist in `plugins` | Unknown plugin in `pluginConfigs` |
+| Agent's tools resolve to registered plugin tools | Unknown tool (checked after plugin loading) |
+| Agent's skills exist in `skills` or plugin-registered | Unknown skill |
 | All `${VAR}` references resolve | Environment variable not set |
 
 ---
 
 ## Minimal Working Config
-
-The smallest config that will start:
 
 ```json5
 {
@@ -347,7 +223,6 @@ The smallest config that will start:
       anthropic: { apiKey: "${ANTHROPIC_API_KEY}" },
     },
   },
-  tools: {},
   agents: {
     bot: {
       model: { provider: "anthropic", model: "claude-sonnet-4-6" },
@@ -357,39 +232,36 @@ The smallest config that will start:
 }
 ```
 
-This agent has no custom tools but can still use the 4 core tools (`read`, `write`, `patch`, `exec`) inside its sandbox.
+This agent has no plugins but can still use the 4 core tools (`read`, `write`, `patch`, `exec`) inside its sandbox.
 
 ---
 
 ## Host Directory Structure
-
-The gateway creates and manages these directories under `~/.beige/`:
 
 ```
 ~/.beige/
 ├── config.json5                   # main config file
 ├── agents/
 │   └── <agent>/
-│       ├── workspace/             # mounted as /workspace (rw) in sandbox (default location)
-│       │                          # can be configured via workspaceDir to any path
-│       └── launchers/             # generated launcher scripts, mounted as /tools/bin (ro)
+│       ├── workspace/             # mounted as /workspace (rw) in sandbox
+│       └── launchers/             # generated launcher scripts → /tools/bin (ro)
 ├── sessions/
 │   ├── session-map.json           # maps session keys → .jsonl file paths
-│   ├── session-settings.json      # per-session setting overrides (e.g. verbose)
+│   ├── session-settings.json      # per-session setting overrides
 │   └── <agent>/
 │       └── <id>.jsonl             # pi conversation session files
 ├── sockets/
 │   └── <agent>.sock               # Unix socket per agent
-├── tools/                             # installed tools (gateway scans this)
-│   ├── github/                        # tool directory (real or symlink)
-│   ├── github.meta.json               # install metadata (source, timestamp)
+├── plugins/                       # installed plugins (auto-discovered)
+│   ├── github/
+│   ├── github.meta.json
 │   └── kv/
-├── packages/                          # intact multi-tool packages
+├── packages/                      # intact multi-plugin packages
 │   └── matthias-hausberger-beige-toolkit/
 ├── data/
-│   ├── kv.json                    # KV tool data
-│   └── provider-health.json       # rate limit cooldown state
+│   ├── kv.json
+│   └── provider-health.json
 └── logs/
-    ├── audit.jsonl                # append-only audit log (every tool call)
-    └── gateway.log                # daemon stdout/stderr (configurable)
+    ├── audit.jsonl                # append-only audit log
+    └── gateway.log                # daemon stdout/stderr
 ```

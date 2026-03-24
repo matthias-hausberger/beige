@@ -1,176 +1,114 @@
 # Beige — AI Agent Context
 
-> **Note:** This file provides context for AI assistants (like Claude, ChatGPT, etc.) working on this codebase. Human contributors should refer to [CONTRIBUTING.md](CONTRIBUTING.md).
+> **Note:** This file provides context for AI assistants working on this codebase.
 
 ## Project Overview
 
-Beige is a secure, open-source, sandboxed agent system. AI agents write and execute code inside Docker containers. The gateway orchestrates LLM calls, enforces policies, audit-logs every tool invocation, and routes tool execution.
+Beige is a secure, open-source, sandboxed agent system built around a **plugin architecture**. AI agents write and execute code inside Docker containers. The gateway orchestrates LLM calls, enforces policies, audit-logs every tool invocation, and routes tool execution. Everything that extends the gateway — tools, channels, hooks, skills — is provided by plugins.
 
 - **Stack**: TypeScript + Node.js (gateway), Deno (inside sandbox containers)
-- **LLM layer**: pi SDK (`@mariozechner/pi-coding-agent`) — handles providers, streaming, sessions
+- **LLM layer**: pi SDK (`@mariozechner/pi-coding-agent`)
 - **Config format**: JSON5 at `~/.beige/config.json5`
 
-## Guidelines
-
-Before making changes, review:
-- **`CONTRIBUTING.md`** — Development setup, code style, PR process
-- **`docs/architecture.md`** — System design and directory layout
-- **`docs/tools.md`** — How to write tool packages
-- **`docs/skills.md`** — How to write skill packages
-
-### Code Style
-- TypeScript strict mode
-- ES modules (ESNext)
-- Prefer `async/await` over raw promises
-- Meaningful variable names
-- Keep commits focused (one logical change per commit)
-
-### Testing
-- **Always add tests** for new functionality
-- Place tests alongside source files: `src/module/foo.spec.ts` tests `src/module/foo.ts`
-- Use the existing test framework patterns in the codebase
-- Run tests with `pnpm test` or `pnpm run test`
-
-## Architecture (two-process model)
+## Architecture
 
 ```
-Shell 1: beige              ← Gateway: sandboxes, sockets, tools, audit, HTTP API (:7433), Telegram
+Shell 1: beige              ← Gateway: plugins, sandboxes, sockets, audit, HTTP API (:7433)
 Shell 2: beige tui [agent]  ← TUI: pi InteractiveMode (LLM local), tools proxied via gateway HTTP API
 ```
 
-The gateway always runs. Channels connect to it:
-- **Telegram** — in-process channel (GrammY)
-- **TUI** — separate process, connects via HTTP API, runs pi InteractiveMode locally
+The gateway loads plugins at startup. Plugins can register:
+- **Tools** — executables on the agent's PATH inside sandboxes
+- **Channels** — messaging adapters (Telegram, Discord, etc.)
+- **Hooks** — intercept messages, tool calls, lifecycle events
+- **Skills** — read-only knowledge packages mounted in sandboxes
+- **Background processes** — polling, timers, watchers
 
-Core tools (read, write, patch, exec) execute in Docker sandboxes via the gateway. The TUI proxies tool calls through `POST /api/agents/:name/exec`.
+**TUI is the only built-in channel.** Everything else (Telegram, etc.) is a plugin in beige-toolkit.
+
+Core tools (read, write, patch, exec) are built into the gateway. Plugin tools are exposed via `/tools/bin/` on the sandbox PATH.
 
 ## Key Directories
 
 ```
 src/
 ├── gateway/          # Gateway core (gateway.ts, api.ts, agent-manager.ts, sessions.ts, audit.ts, policy.ts)
-├── channels/         # Channel adapters (telegram.ts, tui.ts)
+├── plugins/          # Plugin system (types.ts, registry.ts, loader.ts, context.ts, installer.ts)
+├── channels/         # TUI channel (tui.ts)
 ├── config/           # Config loading + schema (loader.ts, schema.ts)
 ├── sandbox/          # Docker container lifecycle (manager.ts)
-├── skills/           # Skill loading and context building (registry.ts)
+├── skills/           # Standalone skill loading (registry.ts)
 ├── socket/           # Unix socket server + protocol (server.ts, protocol.ts)
-├── tools/            # Tool registry, runner, core tools (registry.ts, runner.ts, core.ts)
-├── tools/            # Tool registry, runner, core tools, installer (registry.ts, runner.ts, core.ts, installer.ts)
+├── tools/            # Core tools + tool runner (core.ts, runner.ts)
 ├── cli.ts            # CLI entry point
-└── index.ts          # Programmatic exports
+└── index.ts          # Programmatic exports (including plugin types for beige-toolkit)
 sandbox/              # Dockerfile + tool-client for sandbox containers
-tools/kv/             # Example gateway-targeted tool (key-value store)
-skills/               # Example skills (code-review)
-docs/                 # Full documentation suite (architecture, flows, security, config, tools)
-examples/             # Example config
-project/              # Vision + use cases
-~/.beige/             # Runtime data (config, sessions, sockets, logs, agent workspaces)
+docs/                 # Documentation (extensibility, gateway, agents, config)
+~/.beige/             # Runtime data (config, sessions, sockets, logs, plugins, agent workspaces)
 ```
 
-## Docs
+## Config Structure (v2)
 
-- `docs/architecture.md` — component design, directory layout, data flow
-- `docs/system-overview.md` — diagrams, channel model, startup sequence
-- `docs/request-flows.md` — 10 sequence diagrams covering all flows
-- `docs/security-model.md` — threat model, defense layers
-- `docs/configuration.md` — full config reference, directory layout
-- `docs/tools.md` — writing tools, protocol, mounting
-- `docs/skills.md` — writing skills, dependencies, mounting
-- `docs/tools/installing.mdx` — installing tools from npm, GitHub, local
-- `docs/tools/building/` — creating and distributing tools
-- `docs/api.md` — HTTP API reference for gateway endpoints
-- `docs/design/vision.md` — project vision and goals
-- `docs/design/usecases.md` — use cases
+```json5
+{
+  llm: { providers: { anthropic: { apiKey: "..." } } },
+  plugins: {
+    git: { path: "...", config: { ... } },
+    telegram: { config: { token: "...", ... } },
+  },
+  skills: { "code-review": { path: "..." } },
+  agents: {
+    assistant: {
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+      tools: ["git", "telegram.send_message"],
+      skills: ["code-review"],
+      pluginConfigs: { git: { allowForcePush: true } },
+    },
+  },
+  gateway: { host: "127.0.0.1", port: 7433 },
+}
+```
 
 ## Key Decisions
 
+- **Plugin architecture** — tools, channels, hooks, and skills are all provided by plugins
 - **4 core tools only** (read, write, patch, exec) — everything else composes through exec
+- **Tools on PATH** — `/tools/bin` is prepended to $PATH in sandboxes; agents call tools naturally
+- **Tool naming** — tools must start with the plugin name (e.g. `git` or `telegram.send_message`)
+- **TUI is the only built-in channel** — Telegram etc. are plugins in beige-toolkit
+- **Hooks** — prePrompt, postResponse, preToolExec, postToolExec, session/gateway lifecycle
+- **Plugin types exported from beige** — no separate SDK package; beige-toolkit depends on beige
 - **Unix domain sockets** — one per agent, identity from connection not payload
 - **JSON5 config** — comments, env var interpolation via `${VAR}`
-- **pi SDK for LLM** — no custom provider implementation, uses `AuthStorage.setRuntimeApiKey()`
-- **Gateway HTTP API** on port 7433 — TUI and future channels connect here
 - **Sessions persist** to `~/.beige/sessions/<agent>/` as `.jsonl` files
-- **Skills** — read-only knowledge packages mounted at `/skills/<name>/`, referenced in system prompt
-- **Toolkits** — distributable collections of tools, installable from npm, GitHub, or local paths
 
-## Current State
+## Plugin Interface
 
-Code compiles and runs. The system is functional:
-- Gateway starts and manages Docker sandboxes
-- TUI connects via HTTP API
-- Telegram bot works with streaming responses
-- KV tool is operational
+```typescript
+// Plugin entry point (index.ts)
+export function createPlugin(config, ctx: PluginContext): PluginInstance {
+  return {
+    register(reg: PluginRegistrar) {
+      reg.tool({ name: "myplugin", handler: ... });
+      reg.channel({ sendMessage: ..., supportsMessaging: ... });
+      reg.hook("prePrompt", async (event) => { ... });
+      reg.skill({ name: "guide", path: "...", description: "..." });
+    },
+    async start() { /* background processes */ },
+    async stop() { /* cleanup */ },
+  };
+}
+```
 
-### Development Commands
+## Development Commands
 
 ```bash
 pnpm install           # Install dependencies
 pnpm run build         # Compile TypeScript
+pnpm test              # Run tests
 pnpm run beige         # Run CLI via tsx (dev mode)
-pnpm run start         # Run compiled CLI
 
 # Development workflow
-pnpm run beige gateway start --foreground   # Start gateway
-pnpm run beige tui assistant                # Start TUI
-```
-
----
-
-## Background Jobs with `gob`
-
-Use `gob` for servers, long-running commands, and builds.
-
-### When to Use gob
-
-Use `gob` for:
-- **Servers**: `gob add npm run dev`
-- **Long-running processes**: `gob add npm run watch`
-- **Builds**: `gob run make build`
-- **Parallel build steps**: Run multiple builds concurrently
-
-Do NOT use `gob` for:
-- Quick commands: `git status`, `ls`, `cat`
-- CLI tools: `jira`, `kubectl`, `todoist`
-- File operations: `mv`, `cp`, `rm`
-
-### gob Commands
-
-- `gob add <cmd>` - Start command in background, returns job ID
-- `gob add --description "context" <cmd>` - Start with description for context
-- `gob run <cmd>` - Run and wait for completion (equivalent to `gob add` + `gob await`)
-- `gob run --description "context" <cmd>` - Run with description for context
-- `gob await <job_id>` - Wait for job to finish, stream output
-- `gob list` - List jobs with IDs, status, and descriptions
-- `gob logs <job_id>` - View stdout and stderr (stdout→stdout, stderr→stderr)
-- `gob stdout <job_id>` - View current stdout (useful if job may be stuck)
-- `gob stop <job_id>` - Graceful stop
-- `gob restart <job_id>` - Stop + start
-
-### Stuck Detection
-
-`gob run` and `gob await` automatically detect potentially stuck jobs:
-- Timeout: avg duration + 1 min (or 5 min if no history), triggers if no output for 1 min
-- Job continues running in background
-- Use `gob logs <id>` or `gob stdout <id>` to check output, `gob await <id>` to continue waiting
-
-### Examples
-
-Servers and long-running:
-```
-gob add npm run dev                              # Start dev server
-gob add --description "File watcher" npm run watch  # With description
-```
-
-Builds:
-```
-gob run make build                           # Run build, wait for completion
-gob run npm run test                         # Run tests, wait for completion
-gob run --description "Type check" npm run typecheck  # With description
-```
-
-Regular commands (no gob):
-```
-git status
-kubectl get pods
-jira issue list
+pnpm run beige gateway start --foreground
+pnpm run beige tui assistant
 ```

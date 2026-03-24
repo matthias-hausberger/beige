@@ -1,0 +1,41 @@
+/**
+ * Plugin system — public exports.
+ */
+
+export { PluginRegistry } from "./registry.js";
+export { loadPlugins, startPlugins, stopPlugins, loadPluginManifest } from "./loader.js";
+export { createPluginContext, createLogger } from "./context.js";
+export type { AgentManagerRef, PluginContextDeps } from "./context.js";
+export type { LoadedPlugin } from "./loader.js";
+
+// Re-export all plugin types so consumers (beige-toolkit) can import from beige
+export type {
+  PluginManifest,
+  PluginInstance,
+  PluginContext,
+  PluginRegistrar,
+  PluginTool,
+  PluginSkill,
+  PluginLogger,
+  ChannelAdapter,
+  SendMessageOptions,
+  ToolResult,
+  ToolHandler,
+  ReplyTarget,
+  SessionSettings,
+  PromptOpts,
+  CreatePluginFn,
+  HookName,
+  HookHandler,
+  HookTypeMap,
+  PrePromptEvent,
+  PrePromptResult,
+  PostResponseEvent,
+  PostResponseResult,
+  PreToolExecEvent,
+  PreToolExecResult,
+  PostToolExecEvent,
+  PostToolExecResult,
+  SessionLifecycleEvent,
+  GatewayLifecycleEvent,
+} from "./types.js";

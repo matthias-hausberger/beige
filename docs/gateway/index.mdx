@@ -16,7 +16,7 @@ graph TB
         PE[Policy Engine]
         AL[Audit Logger]
         API[HTTP API :7433]
-        TG[Telegram Bot]
+        PL[Plugin System]
     end
 
     subgraph "Docker Sandboxes"
@@ -25,8 +25,9 @@ graph TB
     end
 
     subgraph "Channels"
-        PHONE[Telegram]
+        TUI[TUI Process]
         HTTP[HTTP Client]
+        PLUG_CH[Plugin Channels]
     end
 
     AM --> SM
@@ -37,10 +38,11 @@ graph TB
     SS --> PE
     PE --> AL
 
+    TUI -->|HTTP :7433| API
     HTTP -->|HTTP :7433| API
-    PHONE -->|Telegram API| TG
+    PLUG_CH --> PL
     API --> AM
-    TG --> AM
+    PL --> AM
 ```
 
 ---
@@ -54,8 +56,8 @@ graph TB
 | **Socket Server** | Listens on a Unix socket per agent; receives tool requests from inside the sandbox |
 | **Policy Engine** | Checks every tool invocation against the agent's allowed-tools list before it runs |
 | **Audit Logger** | Appends a structured JSONL record for every tool call — tool, args, timing, decision |
-| **HTTP API** | REST endpoints on port 7433 for channels and external integrations |
-| **Telegram Bot** | In-process channel that forwards messages to agents and streams replies |
+| **HTTP API** | REST endpoints on port 7433 for TUI and external integrations |
+| **Plugin System** | Loads plugins that provide tools, channels, hooks, and skills |
 
 ---
 

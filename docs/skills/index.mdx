@@ -235,8 +235,8 @@ See `skills/code-review/` in this repository for a complete example with:
 |--------|-------|--------|
 | Purpose | Do things | Know things |
 | Type | Executables | Documentation |
-| Location | `/tools/bin/<name>` | `/skills/<name>/` |
-| Invocation | `exec /tools/bin/<name>` | `exec cat /skills/<name>/README.md` |
+| Location | On `$PATH` (via `/tools/bin/`) | `/skills/<name>/` |
+| Invocation | `exec <name> [args]` | `exec cat /skills/<name>/README.md` |
 | System prompt | Description + commands | Name + description only |
 | Best for | Actions, integrations | Knowledge, guidelines, patterns |
 

@@ -3,7 +3,7 @@
  * Import from './test/fixtures.js' (relative to src/).
  */
 
-import type { BeigeConfig, AgentConfig, ToolConfig, LLMProviderConfig, SkillConfig } from "../config/schema.js";
+import type { BeigeConfig, AgentConfig, PluginConfig, LLMProviderConfig, SkillConfig } from "../config/schema.js";
 
 /**
  * Minimal valid config for testing.
@@ -15,20 +15,19 @@ export function createMinimalConfig(overrides: Partial<BeigeConfig> = {}): Beige
         anthropic: { apiKey: "test-key" },
       },
     },
-    tools: {},
+    plugins: {},
     agents: {
       assistant: {
         model: { provider: "anthropic", model: "claude-sonnet-4-6" },
         tools: [],
       },
     },
-    channels: {},
     ...overrides,
   };
 }
 
 /**
- * Full config with tools and multiple agents.
+ * Full config with plugins and multiple agents.
  */
 export function createFullConfig(): BeigeConfig {
   return {
@@ -38,14 +37,12 @@ export function createFullConfig(): BeigeConfig {
         openai: { apiKey: "test-openai-key", baseUrl: "https://api.openai.com/v1" },
       },
     },
-    tools: {
+    plugins: {
       kv: {
-        path: "/tools/kv",
-        target: "gateway",
+        path: "/plugins/kv",
       },
       browser: {
-        path: "/tools/browser",
-        target: "sandbox",
+        path: "/plugins/browser",
         config: { headless: true },
       },
     },
@@ -66,14 +63,6 @@ export function createFullConfig(): BeigeConfig {
         tools: [],
       },
     },
-    channels: {
-      telegram: {
-        enabled: true,
-        token: "test-token",
-        allowedUsers: [123456789],
-        agentMapping: { default: "assistant" },
-      },
-    },
   };
 }
 
@@ -89,12 +78,11 @@ export function createAgentConfig(overrides: Partial<AgentConfig> = {}): AgentCo
 }
 
 /**
- * Create a mock tool config.
+ * Create a mock plugin config.
  */
-export function createToolConfig(overrides: Partial<ToolConfig> = {}): ToolConfig {
+export function createPluginConfig(overrides: Partial<PluginConfig> = {}): PluginConfig {
   return {
-    path: "/tools/test",
-    target: "gateway",
+    path: "/plugins/test",
     ...overrides,
   };
 }
@@ -120,13 +108,13 @@ export function createSkillConfig(overrides: Partial<SkillConfig> = {}): SkillCo
 }
 
 /**
- * Sample tool manifest for testing.
+ * Sample plugin manifest for testing.
  */
-export const sampleToolManifest = {
-  name: "test-tool",
-  description: "A test tool for unit tests",
+export const samplePluginManifest = {
+  name: "test-plugin",
+  description: "A test plugin for unit tests",
   commands: ["run <arg>", "status"],
-  target: "gateway" as const,
+  provides: { tools: ["test-plugin"] },
 };
 
 /**

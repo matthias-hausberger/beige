@@ -78,6 +78,18 @@ export class BeigeSessionStore {
   }
 
   /**
+   * Update metadata on an existing session entry and persist to disk.
+   * Deep-merges with existing metadata. Creates the metadata object if it
+   * doesn't exist yet.
+   */
+  updateMetadata(key: string, metadata: Record<string, unknown>): void {
+    const entry = this.sessionMap[key];
+    if (!entry) return;
+    entry.metadata = { ...(entry.metadata ?? {}), ...metadata };
+    this.saveMap();
+  }
+
+  /**
    * Reset a key's session — creates a new session file.
    * The old session file is kept on disk for history.
    *

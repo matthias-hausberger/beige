@@ -212,6 +212,13 @@ export class AgentManager {
     this.sessions.set(sessionKey, managed);
     console.log(`[AGENT] Session ready for '${agentName}' (key: ${sessionKey})`);
 
+    // Fire sessionCreated hook (fire-and-forget — don't block session return)
+    this.pluginRegistry.executeSessionCreated({
+      sessionKey,
+      agentName,
+      channel: "unknown",
+    }).catch((err) => console.error(`[AGENT] sessionCreated hook error:`, err));
+
     return managed;
   }
 
@@ -224,12 +231,24 @@ export class AgentManager {
     sessionKey: string,
     agentName: string,
     message: string,
-    opts?: { onToolStart?: OnToolStart }
+    opts?: { onToolStart?: OnToolStart; channel?: string }
   ): Promise<string> {
     const agentConfig = this.config.agents[agentName];
     if (!agentConfig) {
       throw new Error(`Unknown agent: ${agentName}`);
     }
+
+    // Execute prePrompt hooks — may transform or block the message
+    const preResult = await this.pluginRegistry.executePrePrompt({
+      message,
+      sessionKey,
+      agentName,
+      channel: opts?.channel ?? "unknown",
+    });
+    if (preResult.block) {
+      return preResult.reason ?? "Message blocked by plugin hook.";
+    }
+    const effectiveMessage = preResult.message;
 
     // Build list of models to try: primary + fallbacks
     const modelsToTry = this.getModelsToTry(agentConfig);
@@ -254,14 +273,25 @@ export class AgentManager {
         const result = await this.promptWithModel(
           sessionKey,
           agentName,
-          message,
+          effectiveMessage,
           modelRef,
           opts
         );
 
         // Success — mark provider as healthy
         this.providerHealth.markHealthy(provider, modelId);
-        return result;
+
+        // Execute postResponse hooks — may transform or suppress the response
+        const postResult = await this.pluginRegistry.executePostResponse({
+          response: result,
+          sessionKey,
+          agentName,
+          channel: opts?.channel ?? "unknown",
+        });
+        if (postResult.block) {
+          return "";
+        }
+        return postResult.response;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
         lastError = error;
@@ -305,12 +335,26 @@ export class AgentManager {
     agentName: string,
     message: string,
     onDelta: (delta: string) => void,
-    opts?: { onToolStart?: OnToolStart }
+    opts?: { onToolStart?: OnToolStart; channel?: string }
   ): Promise<string> {
     const agentConfig = this.config.agents[agentName];
     if (!agentConfig) {
       throw new Error(`Unknown agent: ${agentName}`);
     }
+
+    // Execute prePrompt hooks — may transform or block the message
+    const preResult = await this.pluginRegistry.executePrePrompt({
+      message,
+      sessionKey,
+      agentName,
+      channel: opts?.channel ?? "unknown",
+    });
+    if (preResult.block) {
+      const blocked = preResult.reason ?? "Message blocked by plugin hook.";
+      onDelta(blocked);
+      return blocked;
+    }
+    const effectiveMessage = preResult.message;
 
     // Build list of models to try: primary + fallbacks
     const modelsToTry = this.getModelsToTry(agentConfig);
@@ -335,7 +379,7 @@ export class AgentManager {
         const result = await this.promptStreamingWithModel(
           sessionKey,
           agentName,
-          message,
+          effectiveMessage,
           onDelta,
           modelRef,
           opts
@@ -343,7 +387,16 @@ export class AgentManager {
 
         // Success — mark provider as healthy
         this.providerHealth.markHealthy(provider, modelId);
-        return result;
+
+        // Execute postResponse hooks (note: for streaming, the deltas have
+        // already been sent; postResponse can still log/transform the final text)
+        const postResult = await this.pluginRegistry.executePostResponse({
+          response: result,
+          sessionKey,
+          agentName,
+          channel: opts?.channel ?? "unknown",
+        });
+        return postResult.block ? "" : postResult.response;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
         lastError = error;
@@ -610,6 +663,13 @@ export class AgentManager {
     this.sessions.set(sessionKey, managed);
     console.log(`[AGENT] Session ready for '${agentName}' (key: ${sessionKey})`);
 
+    // Fire sessionCreated hook (fire-and-forget — don't block session return)
+    this.pluginRegistry.executeSessionCreated({
+      sessionKey,
+      agentName,
+      channel: "unknown",
+    }).catch((err) => console.error(`[AGENT] sessionCreated hook error:`, err));
+
     return managed;
   }
 
@@ -688,6 +748,13 @@ export class AgentManager {
     if (existing) {
       existing.session.dispose();
       this.sessions.delete(sessionKey);
+
+      // Fire sessionDisposed hook (fire-and-forget)
+      this.pluginRegistry.executeSessionDisposed({
+        sessionKey,
+        agentName: existing.agentName,
+        channel: "unknown",
+      }).catch((err) => console.error(`[AGENT] sessionDisposed hook error:`, err));
     }
   }
 

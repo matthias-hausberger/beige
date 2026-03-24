@@ -70,10 +70,14 @@ export class Gateway {
     };
     process.on("unhandledRejection", rejectionHandler);
 
-    // 1. Create plugin registry
-    this.pluginRegistry = new PluginRegistry();
+    // 1. Wire config into tool runner for per-agent plugin config resolution
+    this.toolRunner.setConfig(this.config);
 
-    // 2. Create plugin context (agentManagerRef is resolved later)
+    // 2. Create plugin registry and wire it to the tool runner
+    this.pluginRegistry = new PluginRegistry();
+    this.toolRunner.setPluginRegistry(this.pluginRegistry);
+
+    // 3. Create plugin context (agentManagerRef is resolved later)
     this.agentManagerRef.current = null;
     const pluginCtx = createPluginContext({
       config: this.config,
@@ -83,24 +87,24 @@ export class Gateway {
       registry: this.pluginRegistry,
     });
 
-    // 3. Load plugins — this calls createPlugin() and register() for each
+    // 4. Load plugins — this calls createPlugin() and register() for each
     this.loadedPlugins = await loadPlugins(this.config, this.pluginRegistry, pluginCtx);
     console.log(`[GATEWAY] Loaded ${this.loadedPlugins.length} plugin(s)`);
 
-    // 4. Register plugin tools with the ToolRunner (for sandbox tool calls)
+    // 5. Register plugin tools with the ToolRunner (for sandbox tool calls)
     for (const [toolName, pluginTool] of this.pluginRegistry.getAllTools()) {
       this.toolRunner.registerHandler(toolName, pluginTool.handler);
     }
 
-    // 5. Validate that all agent tool references resolve to registered tools
+    // 6. Validate that all agent tool references resolve to registered tools
     const registeredToolNames = new Set(this.pluginRegistry.getRegisteredToolNames());
     validateAgentToolReferences(this.config, registeredToolNames);
 
-    // 6. Load standalone skill packages
+    // 7. Load standalone skill packages
     this.loadedSkills = await loadSkills(this.config);
     console.log(`[GATEWAY] Loaded ${this.loadedSkills.size} standalone skill(s)`);
 
-    // 7. Merge plugin-registered skills into loadedSkills
+    // 8. Merge plugin-registered skills into loadedSkills
     for (const [name, pluginSkill] of this.pluginRegistry.getAllSkills()) {
       if (!this.loadedSkills.has(name)) {
         this.loadedSkills.set(name, {
@@ -111,19 +115,19 @@ export class Gateway {
       }
     }
 
-    // 8. Set up auth and model registry for pi SDK
+    // 9. Set up auth and model registry for pi SDK
     const authStorage = this.setupAuth();
     const beigeModelsPath = resolve(beigeDir(), "models.json");
     const modelRegistry = new ModelRegistry(authStorage, beigeModelsPath);
 
-    // 9. Create sandbox manager
+    // 10. Create sandbox manager
     this.sandboxManager = new SandboxManager(
       this.config,
       this.pluginRegistry,
       this.loadedSkills
     );
 
-    // 10. Create agent manager and resolve the ref so plugins can use it
+    // 11. Create agent manager and resolve the ref so plugins can use it
     this.agentManager = new AgentManager(
       this.config,
       this.sandboxManager,
@@ -136,15 +140,15 @@ export class Gateway {
     );
     this.agentManagerRef.current = this.agentManager;
 
-    // 11. Build beige-sandbox image if any agent needs it
+    // 12. Build beige-sandbox image if any agent needs it
     await this.sandboxManager.ensureSandboxImage();
 
-    // 12. Start sandboxes and socket servers for each agent
+    // 13. Start sandboxes and socket servers for each agent
     for (const agentName of Object.keys(this.config.agents)) {
       await this.startAgentInfra(agentName);
     }
 
-    // 13. Start HTTP API
+    // 14. Start HTTP API
     const host = this.config.gateway?.host ?? "127.0.0.1";
     const port = this.config.gateway?.port ?? 7433;
 
@@ -162,10 +166,10 @@ export class Gateway {
     });
     await this.api.start();
 
-    // 14. Start all plugins (background processes)
+    // 15. Start all plugins (background processes)
     await startPlugins(this.loadedPlugins);
 
-    // 15. Fire gatewayStarted hooks
+    // 16. Fire gatewayStarted hooks
     await this.pluginRegistry.executeGatewayStarted();
 
     console.log("[GATEWAY] Beige gateway started ✓");

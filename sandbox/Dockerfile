@@ -23,6 +23,9 @@ RUN echo '#!/bin/sh' > /beige/tool-client && \
     echo 'exec deno run --allow-read --allow-write --allow-net --allow-env --unstable-net /beige/tool-client.ts "$@"' >> /beige/tool-client && \
     chmod +x /beige/tool-client
 
+# Prepend /tools/bin to PATH so plugin tools shadow system binaries
+ENV PATH="/tools/bin:/usr/local/bin:/usr/bin:/bin"
+
 WORKDIR /workspace
 
 # No CMD — container is started with "sleep infinity" by the gateway

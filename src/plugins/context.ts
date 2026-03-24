@@ -90,34 +90,23 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       if (update.streaming !== undefined) {
         settingsStore.set(sessionKey, "streaming", update.streaming);
       }
-      // model, replyTo, metadata are stored via session map entry metadata
+      // model, replyTo, channel, metadata are stored via session map entry metadata
       if (update.model || update.replyTo || update.channel || update.metadata) {
-        const entry = sessionStore.getEntry(sessionKey);
-        if (entry) {
-          const existingMeta = entry.metadata ?? {};
-          if (update.model) existingMeta._model = update.model;
-          if (update.replyTo) existingMeta._replyTo = update.replyTo;
-          if (update.channel) existingMeta._channel = update.channel;
-          if (update.metadata) {
-            existingMeta._pluginMeta = {
-              ...(existingMeta._pluginMeta as Record<string, unknown> ?? {}),
-              ...update.metadata,
-            };
-          }
-          // The session map is re-saved by updating the entry
-          // For now we store via a new session creation with metadata
-          // TODO: Add an updateMetadata method to BeigeSessionStore
+        const metaUpdate: Record<string, unknown> = {};
+        if (update.model) metaUpdate._model = update.model;
+        if (update.replyTo) metaUpdate._replyTo = update.replyTo;
+        if (update.channel) metaUpdate._channel = update.channel;
+        if (update.metadata) {
+          const entry = sessionStore.getEntry(sessionKey);
+          const existingPluginMeta = (entry?.metadata?._pluginMeta as Record<string, unknown>) ?? {};
+          metaUpdate._pluginMeta = { ...existingPluginMeta, ...update.metadata };
         }
+        sessionStore.updateMetadata(sessionKey, metaUpdate);
       }
     },
 
     setSessionMetadata(sessionKey, key, value) {
-      const entry = sessionStore.getEntry(sessionKey);
-      if (entry) {
-        const meta = entry.metadata ?? {};
-        meta[`plugin_${key}`] = value;
-        // Store back — requires session store support
-      }
+      sessionStore.updateMetadata(sessionKey, { [`plugin_${key}`]: value });
     },
 
     getSessionMetadata(sessionKey, key) {
@@ -153,6 +142,7 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
     },
 
     // ── Logging ────────────────────────────────────────────
+    // Default logger; overridden per-plugin in loader.ts with a namespaced one
     log: createLogger("plugins"),
   };
 

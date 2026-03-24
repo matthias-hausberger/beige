@@ -15,6 +15,7 @@ import type {
   CreatePluginFn,
 } from "./types.js";
 import type { PluginRegistry } from "./registry.js";
+import { createLogger } from "./context.js";
 
 export interface LoadedPlugin {
   name: string;
@@ -82,17 +83,22 @@ export async function loadPlugins(
       );
     }
 
-    // 4. Create plugin instance
+    // 4. Create per-plugin context with a namespaced logger
+    const pluginCtx: PluginContext = Object.create(ctx, {
+      log: { value: createLogger(pluginName), enumerable: true },
+    });
+
+    // 5. Create plugin instance
     let instance: PluginInstance;
     try {
-      instance = createPlugin(pluginConfig.config ?? {}, ctx);
+      instance = createPlugin(pluginConfig.config ?? {}, pluginCtx);
     } catch (err) {
       throw new Error(
         `Plugin '${pluginName}' createPlugin() failed: ${err}`
       );
     }
 
-    // 5. Register tools/channels/hooks/skills
+    // 6. Register tools/channels/hooks/skills
     const registrar = registry.createRegistrar(pluginName);
     try {
       instance.register(registrar);

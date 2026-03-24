@@ -65,7 +65,7 @@ describe("ToolRunner", () => {
       expect(result.output).toContain("Unknown tool");
     });
 
-    it("passes config to handler", async () => {
+    it("passes config to handler when set", async () => {
       const handler: ToolHandler = async (args, config) => ({
         output: `Config: ${JSON.stringify(config)}`,
         exitCode: 0,
@@ -73,10 +73,78 @@ describe("ToolRunner", () => {
 
       runner.registerHandler("configured", handler);
 
+      // Without config set on runner, config is undefined
       const result = await runner.run("configured", ["test"]);
-
-      // Config is undefined when called via run() directly
       expect(result.output).toContain("undefined");
+    });
+
+    it("resolves per-agent plugin config and passes to handler", async () => {
+      const handler: ToolHandler = async (args, config) => ({
+        output: `Config: ${JSON.stringify(config)}`,
+        exitCode: 0,
+      });
+
+      runner.registerHandler("git", handler);
+      runner.setConfig({
+        llm: { providers: { anthropic: {} } },
+        plugins: {
+          git: { config: { defaultBranch: "main", timeout: 30 } },
+        },
+        agents: {
+          dev: {
+            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+            tools: ["git"],
+            pluginConfigs: {
+              git: { defaultBranch: "develop" },
+            },
+          },
+          basic: {
+            model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+            tools: ["git"],
+          },
+        },
+      });
+
+      // Agent with override — should deep-merge
+      const devResult = await runner.run("git", ["status"], {
+        channel: "test",
+        agentName: "dev",
+      } as any);
+      expect(JSON.parse(devResult.output.replace("Config: ", ""))).toEqual({
+        defaultBranch: "develop",
+        timeout: 30,
+      });
+
+      // Agent without override — should get base config
+      const basicResult = await runner.run("git", ["status"], {
+        channel: "test",
+        agentName: "basic",
+      } as any);
+      expect(JSON.parse(basicResult.output.replace("Config: ", ""))).toEqual({
+        defaultBranch: "main",
+        timeout: 30,
+      });
+    });
+
+    it("resolves config for dotted tool names", async () => {
+      const handler: ToolHandler = async (args, config) => ({
+        output: `Config: ${JSON.stringify(config)}`,
+        exitCode: 0,
+      });
+
+      runner.registerHandler("telegram.send", handler);
+      runner.setConfig({
+        llm: { providers: { anthropic: {} } },
+        plugins: {
+          telegram: { config: { botToken: "abc123" } },
+        },
+        agents: {},
+      });
+
+      const result = await runner.run("telegram.send", ["hello"]);
+      expect(JSON.parse(result.output.replace("Config: ", ""))).toEqual({
+        botToken: "abc123",
+      });
     });
 
     it("handles handler errors", async () => {

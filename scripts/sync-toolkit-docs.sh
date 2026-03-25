@@ -28,8 +28,8 @@ if [ -z "$TOOLKIT_SRC" ]; then
 fi
 
 # Validate the source looks right
-if [ ! -d "$TOOLKIT_SRC/tools" ]; then
-  echo "Error: $TOOLKIT_SRC does not contain a tools/ directory" >&2
+if [ ! -d "$TOOLKIT_SRC/plugins" ]; then
+  echo "Error: $TOOLKIT_SRC does not contain a plugins/ directory" >&2
   exit 1
 fi
 
@@ -65,37 +65,37 @@ convert_md_to_mdx \
   "$DEST_DIR/index.mdx" \
   "@matthias-hausberger/beige-toolkit"
 
-# --- 2. Discover tools by scanning for tool.json files ---
-TOOLS=()
-for tool_json in "$TOOLKIT_SRC"/tools/*/tool.json; do
-  tool_dir="$(dirname "$tool_json")"
-  tool="$(basename "$tool_dir")"
-  TOOLS+=("$tool")
+# --- 2. Discover plugins by scanning for plugin.json files ---
+PLUGINS=()
+for plugin_json in "$TOOLKIT_SRC"/plugins/*/plugin.json; do
+  plugin_dir="$(dirname "$plugin_json")"
+  plugin="$(basename "$plugin_dir")"
+  PLUGINS+=("$plugin")
 done
 
-TOOL_PAGES=()
+PLUGIN_PAGES=()
 
-for tool in "${TOOLS[@]}"; do
-  TOOL_README="$TOOLKIT_SRC/tools/$tool/README.md"
-  if [ ! -f "$TOOL_README" ]; then
-    echo "Warning: $tool has no README.md, skipping."
+for plugin in "${PLUGINS[@]}"; do
+  PLUGIN_README="$TOOLKIT_SRC/plugins/$plugin/README.md"
+  if [ ! -f "$PLUGIN_README" ]; then
+    echo "Warning: $plugin has no README.md, skipping."
     continue
   fi
 
-  echo "Syncing $tool..."
+  echo "Syncing $plugin..."
 
   # Extract title from first H1 in README
-  TOOL_TITLE="$(head -5 "$TOOL_README" | grep -m1 '^# ' | sed 's/^# //')"
-  if [ -z "$TOOL_TITLE" ]; then
-    TOOL_TITLE="$tool"
+  PLUGIN_TITLE="$(head -5 "$PLUGIN_README" | grep -m1 '^# ' | sed 's/^# //')"
+  if [ -z "$PLUGIN_TITLE" ]; then
+    PLUGIN_TITLE="$plugin"
   fi
 
   convert_md_to_mdx \
-    "$TOOL_README" \
-    "$DEST_DIR/$tool.mdx" \
-    "$TOOL_TITLE"
+    "$PLUGIN_README" \
+    "$DEST_DIR/$plugin.mdx" \
+    "$PLUGIN_TITLE"
 
-  TOOL_PAGES+=("tools/beige-toolkit/$tool")
+  PLUGIN_PAGES+=("tools/beige-toolkit/$plugin")
 done
 
 # --- 3. Update docs.json navigation ---
@@ -110,12 +110,12 @@ with open(docs_json_path) as f:
     docs = json.load(f)
 
 # Build the toolkit group with root page
-tool_pages = """${TOOL_PAGES[*]}""".split()
+plugin_pages = """${PLUGIN_PAGES[*]}""".split()
 
 toolkit_entry = {
     "group": "@matthias-hausberger/beige-toolkit",
     "root": "tools/beige-toolkit/index",
-    "pages": tool_pages
+    "pages": plugin_pages
 }
 
 toolkits_group = {
@@ -141,11 +141,11 @@ with open(docs_json_path, "w") as f:
     json.dump(docs, f, indent=2)
     f.write("\n")
 
-print(f"  Updated Tools tab with {len(tool_pages)} tool pages + root in Toolkits group")
+print(f"  Updated Tools tab with {len(plugin_pages)} plugin pages + root in Toolkits group")
 PYEOF
 
 echo ""
-echo "✅ Synced ${#TOOL_PAGES[@]} tool docs + index to $DEST_DIR"
+echo "✅ Synced ${#PLUGIN_PAGES[@]} plugin docs + index to $DEST_DIR"
 
 # Cleanup temp clone if we made one
 if [ -n "$CLEANUP_TMP" ]; then

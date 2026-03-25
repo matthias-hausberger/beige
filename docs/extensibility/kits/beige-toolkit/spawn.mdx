@@ -83,12 +83,18 @@ agents: {
 
 **Sub-agent support** — every agent can spawn itself:
 ```json5
-config: {
-  targets: {
-    "SELF": { maxDepth: 2 },
-    reviewer: {},
+{
+  tools: {
+    spawn: {
+      config: {
+        targets: {
+          "SELF": { maxDepth: 2 },
+          reviewer: {},
+        },
+      },
+    },
   },
-},
+}
 ```
 
 ### Per-Agent Configuration (toolConfigs)

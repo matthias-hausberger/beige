@@ -58,36 +58,66 @@ Access is controlled at the **command path** level. A command path is the leadin
 
 **Read-only agent** (can read everything, cannot send or mutate auth):
 ```json5
-config: {
-  denyCommands: ["messages send", "messages draft", "auth login", "auth logout", "update"],
+{
+  tools: {
+    slack: {
+      config: {
+        denyCommands: ["messages send", "messages draft", "auth login", "auth logout", "update"],
+      },
+    },
+  },
 }
 ```
 
 **Strictly scoped agent** (can only list channels and read history):
 ```json5
-config: {
-  allowCommands: ["conversations list", "conversations read"],
+{
+  tools: {
+    slack: {
+      config: {
+        allowCommands: ["conversations list", "conversations read"],
+      },
+    },
+  },
 }
 ```
 
 **Notification agent** (can only send messages, nothing else):
 ```json5
-config: {
-  allowCommands: ["messages send"],
+{
+  tools: {
+    slack: {
+      config: {
+        allowCommands: ["messages send"],
+      },
+    },
+  },
 }
 ```
 
 **React-only agent** (can only add emoji reactions):
 ```json5
-config: {
-  allowCommands: ["messages react"],
+{
+  tools: {
+    slack: {
+      config: {
+        allowCommands: ["messages react"],
+      },
+    },
+  },
 }
 ```
 
 **Full access except sending** (everything allowed except send and draft):
 ```json5
-config: {
-  denyCommands: ["messages send", "messages draft"],
+{
+  tools: {
+    slack: {
+      config: {
+        denyCommands: ["messages send", "messages draft"],
+      },
+    },
+  },
 }
 ```
 

@@ -105,42 +105,72 @@ The `search` command accepts free-text queries that may contain CQL expressions.
 
 **Read-only agent, all spaces:**
 ```json5
-config: {
-  denyCommands: ["create", "create-child", "update", "delete", "move", "copy-tree",
-                 "attachment-upload", "attachment-delete", "comment", "comment-delete",
-                 "property-set", "property-delete"],
+{
+  tools: {
+    confluence: {
+      config: {
+        denyCommands: ["create", "create-child", "update", "delete", "move", "copy-tree",
+                       "attachment-upload", "attachment-delete", "comment", "comment-delete",
+                       "property-set", "property-delete"],
+      },
+    },
+  },
 }
 ```
 
 **Read-only agent, scoped to DOCS and TEAM spaces:**
 ```json5
-config: {
-  denyCommands: ["create", "create-child", "update", "delete", "move", "copy-tree",
-                 "attachment-upload", "attachment-delete", "comment", "comment-delete",
-                 "property-set", "property-delete"],
-  allowReadSpaces: ["DOCS", "TEAM"],
-  requireSpaceOnSearch: true,
+{
+  tools: {
+    confluence: {
+      config: {
+        denyCommands: ["create", "create-child", "update", "delete", "move", "copy-tree",
+                       "attachment-upload", "attachment-delete", "comment", "comment-delete",
+                       "property-set", "property-delete"],
+        allowReadSpaces: ["DOCS", "TEAM"],
+        requireSpaceOnSearch: true,
+      },
+    },
+  },
 }
 ```
 
 **Documentation bot (reads anywhere, writes only to DRAFTS):**
 ```json5
-config: {
-  allowWriteSpaces: ["DRAFTS"],
+{
+  tools: {
+    confluence: {
+      config: {
+        allowWriteSpaces: ["DRAFTS"],
+      },
+    },
+  },
 }
 ```
 
 **Write-safe agent (all reads allowed; only non-destructive writes):**
 ```json5
-config: {
-  denyCommands: ["delete", "move", "attachment-delete", "comment-delete", "property-delete"],
+{
+  tools: {
+    confluence: {
+      config: {
+        denyCommands: ["delete", "move", "attachment-delete", "comment-delete", "property-delete"],
+      },
+    },
+  },
 }
 ```
 
 **Full access, always use the production profile:**
 ```json5
-config: {
-  profile: "production",
+{
+  tools: {
+    confluence: {
+      config: {
+        profile: "production",
+      },
+    },
+  },
 }
 ```
 

@@ -1,0 +1,134 @@
+---
+title: "wrangler tool"
+---
+
+{/* Auto-generated from beige-toolkit — do not edit manually. */}
+{/* Run: pnpm run docs:sync-toolkit */}
+
+
+A CLI wrapper for Cloudflare's Wrangler, providing controlled access to Workers, D1 databases, KV namespaces, R2 buckets, Pages, and more.
+
+## Features
+
+- **Per-agent authentication** - Each agent can have its own Cloudflare API token
+- **Allowlist/denylist** - Fine-grained command permissions at any depth
+- **Prefix matching** - Block or allow entire command hierarchies
+- **Auto binary detection** - Uses local `node_modules/.bin/wrangler` when available
+
+## Configuration
+
+Add to your agent's config:
+
+```json5
+{
+  tools: {
+    wrangler: {
+      config: {
+        apiToken: "${CLOUDFLARE_API_TOKEN}",  // Required
+        accountId: "${CLOUDFLARE_ACCOUNT_ID}", // Optional
+        allowCommands: ["deploy", "tail", "d1", "kv"],
+        denyCommands: ["d1 database destroy"],
+        timeout: 180,
+      },
+    },
+  },
+}
+```
+
+### Config Options
+
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
+| `apiToken` | string | Yes | Cloudflare API token. Use `${ENV_VAR}` for injection. |
+| `accountId` | string | No | Cloudflare account ID. Optional for single-account tokens. |
+| `allowCommands` | string \| string[] | No | Whitelist of permitted command paths. |
+| `denyCommands` | string \| string[] | No | Blacklist. Deny takes precedence over allow. |
+| `timeout` | number | No | Timeout in seconds. Default: 180. |
+| `wranglerPath` | string | No | Override path to wrangler binary. |
+
+## Permission Model
+
+Command paths are extracted from all non-flag arguments:
+
+```
+wrangler d1 database create mydb --remote  →  "d1 database create"
+wrangler kv namespace list                  →  "kv namespace list"
+wrangler deploy --env production            →  "deploy"
+```
+
+**Prefix matching** - `"d1"` matches all d1 commands, `"d1 database destroy"` matches only that command.
+
+**Evaluation order**:
+1. `denyCommands` checked first → blocked if matched
+2. `allowCommands` checked second → blocked if set and not matched
+3. If neither is configured, all commands are permitted
+
+## Examples
+
+### Read-only D1 access
+
+```json5
+{
+  tools: {
+    wrangler: {
+      config: {
+        apiToken: "${CF_READ_TOKEN}",
+        allowCommands: ["d1 database list", "d1 execute", "kv namespace list", "kv key list"],
+      },
+    },
+  },
+}
+```
+
+### Full access except destructive operations
+
+```json5
+{
+  tools: {
+    wrangler: {
+      config: {
+        apiToken: "${CF_TOKEN}",
+        denyCommands: ["d1 database destroy", "r2 bucket delete", "kv namespace delete"],
+      },
+    },
+  },
+}
+```
+
+### Deploy-only
+
+```json5
+{
+  tools: {
+    wrangler: {
+      config: {
+        apiToken: "${CF_DEPLOY_TOKEN}",
+        allowCommands: ["deploy", "tail"],
+      },
+    },
+  },
+}
+```
+
+## Installation
+
+Wrangler must be installed on the gateway host:
+
+```bash
+# Per-project (recommended)
+npm install wrangler --save-dev
+
+# Global
+npm install -g wrangler
+```
+
+## Usage
+
+```
+wrangler deploy
+wrangler dev --port 8787
+wrangler d1 database list
+wrangler kv namespace list
+wrangler r2 bucket create my-bucket
+wrangler pages deploy ./dist
+```

@@ -2,7 +2,7 @@
 #
 # sync-toolkit-docs.sh
 #
-# Syncs documentation from @matthias-hausberger/beige-toolkit into docs/tools/beige-toolkit/.
+# Syncs documentation from @matthias-hausberger/beige-toolkit into docs/extensibility/kits/beige-toolkit/.
 # Converts each README.md to an .mdx page with Mintlify frontmatter (title only),
 # and updates docs.json navigation automatically.
 #
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DEST_DIR="$REPO_ROOT/docs/tools/beige-toolkit"
+DEST_DIR="$REPO_ROOT/docs/extensibility/kits/beige-toolkit"
 DOCS_JSON="$REPO_ROOT/docs/docs.json"
 TOOLKIT_SRC="${1:-}"
 
@@ -95,7 +95,7 @@ for plugin in "${PLUGINS[@]}"; do
     "$DEST_DIR/$plugin.mdx" \
     "$PLUGIN_TITLE"
 
-  PLUGIN_PAGES+=("tools/beige-toolkit/$plugin")
+  PLUGIN_PAGES+=("extensibility/kits/beige-toolkit/$plugin")
 done
 
 # --- 3. Update docs.json navigation ---
@@ -114,7 +114,7 @@ plugin_pages = """${PLUGIN_PAGES[*]}""".split()
 
 toolkit_entry = {
     "group": "@matthias-hausberger/beige-toolkit",
-    "root": "tools/beige-toolkit/index",
+    "root": "extensibility/kits/beige-toolkit/index",
     "pages": plugin_pages
 }
 
@@ -123,9 +123,9 @@ toolkits_group = {
     "pages": [toolkit_entry]
 }
 
-# Find the Tools tab
+# Find the Extensibility tab
 for tab in docs["navigation"]["tabs"]:
-    if isinstance(tab, dict) and tab.get("tab") == "Tools":
+    if isinstance(tab, dict) and tab.get("tab") == "Extensibility":
         # Remove any existing Toolkits group
         new_pages = []
         for page in tab["pages"]:

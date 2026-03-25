@@ -63,16 +63,24 @@
           "extensibility/hooks",
           "extensibility/building",
           {
-            "group": "Beige Toolkit",
-            "root": "tools/beige-toolkit/index",
+            "group": "Toolkits",
             "pages": [
-              "tools/beige-toolkit/apple-calendar",
-              "tools/beige-toolkit/chrome",
-              "tools/beige-toolkit/confluence",
-              "tools/beige-toolkit/github",
-              "tools/beige-toolkit/sessions",
-              "tools/beige-toolkit/slack",
-              "tools/beige-toolkit/spawn"
+              {
+                "group": "@matthias-hausberger/beige-toolkit",
+                "root": "extensibility/kits/beige-toolkit/index",
+                "pages": [
+                  "extensibility/kits/beige-toolkit/apple-calendar",
+                  "extensibility/kits/beige-toolkit/chrome",
+                  "extensibility/kits/beige-toolkit/confluence",
+                  "extensibility/kits/beige-toolkit/git",
+                  "extensibility/kits/beige-toolkit/github",
+                  "extensibility/kits/beige-toolkit/sessions",
+                  "extensibility/kits/beige-toolkit/slack",
+                  "extensibility/kits/beige-toolkit/spawn",
+                  "extensibility/kits/beige-toolkit/telegram",
+                  "extensibility/kits/beige-toolkit/wrangler"
+                ]
+              }
             ]
           }
         ]

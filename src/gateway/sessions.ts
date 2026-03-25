@@ -5,7 +5,7 @@ import { beigeDir } from "../paths.js";
 /**
  * Beige session store.
  *
- * Maps external identifiers (Telegram chat+thread, TUI session name, etc.)
+ * Maps external identifiers (channel-specific keys like chat IDs, TUI session names, etc.)
  * to pi session files on disk.
  *
  * Session files are stored at:
@@ -173,13 +173,6 @@ export class BeigeSessionStore {
     });
 
     return agents.flatMap((agent) => this.listSessions(agent, opts));
-  }
-
-  /**
-   * Build a session key for Telegram.
-   */
-  static telegramKey(chatId: number, threadId?: number): string {
-    return threadId ? `telegram:${chatId}:${threadId}` : `telegram:${chatId}`;
   }
 
   /**

@@ -1,12 +1,12 @@
 /**
- * LLM-specific error handling for user-friendly Telegram messages.
+ * LLM-specific error handling for user-friendly messages.
  *
  * This module provides:
  * - LLM error classification (beyond generic errors)
- * - User-friendly error messages suitable for Telegram display
+ * - User-friendly error messages suitable for channel display
  * - Error formatting utilities
  *
- * Used by the Telegram channel to show helpful messages instead of raw errors.
+ * Used by channel plugins to show helpful messages instead of raw errors.
  *
  * @see BEIGE-006 for design rationale
  */
@@ -195,10 +195,20 @@ export function getLLMErrorInfo(err: unknown): LLMErrorInfo {
 }
 
 /**
- * Format an LLM error for Telegram display.
+ * Format an LLM error for channel display.
  * Returns a concise, user-friendly message with optional technical details.
+ *
+ * @deprecated Use formatChannelError instead.
  */
 export function formatTelegramError(err: unknown, verbose: boolean = false): string {
+  return formatChannelError(err, verbose);
+}
+
+/**
+ * Format an LLM error for channel display.
+ * Returns a concise, user-friendly message with optional technical details.
+ */
+export function formatChannelError(err: unknown, verbose: boolean = false): string {
   const info = getLLMErrorInfo(err);
   const { emoji, message } = USER_MESSAGES[info.category];
 
@@ -225,7 +235,7 @@ export function isAllModelsExhausted(err: unknown): boolean {
 }
 
 /**
- * Format the "all models failed" error for Telegram.
+ * Format the "all models failed" error for channel display.
  */
 export function formatAllModelsExhaustedError(err: unknown): string {
   // Extract the last error message if available
@@ -234,7 +244,7 @@ export function formatAllModelsExhaustedError(err: unknown): string {
     : "Unknown error";
 
   return `❌ All AI models failed. This might be a temporary issue.\n\n` +
-    `💡 Try again in a few minutes, or use /new to start fresh.\n\n` +
+    `💡 Try again in a few minutes, or start a new session.\n\n` +
     `Last error: ${lastError}`;
 }
 

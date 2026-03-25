@@ -40,7 +40,7 @@ export class PolicyEngine {
     // The plugin config doesn't have a "target" field — plugins always run in-process.
     const plugin = this.config.plugins?.[toolName];
     if (plugin) return "gateway";
-    // For dotted tool names (e.g. telegram.send_message), check the base plugin
+    // For dotted tool names (e.g. slack.send_message), check the base plugin
     const baseName = toolName.split(".")[0];
     if (this.config.plugins?.[baseName]) return "gateway";
     return undefined;

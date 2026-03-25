@@ -7,6 +7,14 @@ export { Gateway } from "./gateway/gateway.js";
 export { GatewayAPI } from "./gateway/api.js";
 export { loadConfig } from "./config/loader.js";
 export { BeigeSessionStore } from "./gateway/sessions.js";
+export {
+  formatChannelError,
+  /** @deprecated Use formatChannelError instead */
+  formatTelegramError,
+  isAllModelsExhausted,
+  formatAllModelsExhaustedError,
+  getErrorTag,
+} from "./gateway/llm-errors.js";
 export { launchTUI } from "./channels/tui.js";
 export type { BeigeConfig } from "./config/schema.js";
 

@@ -5,7 +5,6 @@
   "type": "object",
   "required": [
     "llm",
-    "tools",
     "agents"
   ],
   "properties": {
@@ -59,33 +58,20 @@
         }
       }
     },
-    "tools": {
-      "description": "Tool registry. Each key becomes the tool name used in agent configs and /tools/bin/.",
+    "plugins": {
+      "description": "Plugin registry. Each key becomes the plugin name. Plugins can provide tools, channels, hooks, and skills.",
       "type": "object",
       "patternProperties": {
         "^(.*)$": {
-          "title": "ToolConfig",
+          "title": "PluginConfig",
           "type": "object",
           "properties": {
             "path": {
-              "description": "Path to the tool package directory. Resolved relative to the config file unless absolute. Auto-resolved for tools installed via 'beige tools install'.",
+              "description": "Path to the plugin package directory. Resolved relative to the config file unless absolute. Auto-resolved for plugins installed via 'beige plugins install'.",
               "type": "string"
             },
-            "target": {
-              "description": "\"gateway\" runs the handler on the host process. \"sandbox\" is planned. Auto-resolved for tools installed via 'beige tools install'.",
-              "anyOf": [
-                {
-                  "const": "gateway",
-                  "type": "string"
-                },
-                {
-                  "const": "sandbox",
-                  "type": "string"
-                }
-              ]
-            },
             "config": {
-              "description": "Arbitrary config object passed to createHandler(config) at startup",
+              "description": "Arbitrary config object passed to createPlugin(config, ctx) at startup",
               "type": "object",
               "patternProperties": {
                 "^(.*)$": {}
@@ -217,14 +203,14 @@
               }
             },
             "tools": {
-              "description": "Tool names from the tools registry that this agent can invoke",
+              "description": "Tool names registered by plugins that this agent can invoke",
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
             "skills": {
-              "description": "Skill names from the skills registry mounted into this agent's sandbox",
+              "description": "Skill names (from skills registry or plugin-registered) mounted into this agent's sandbox",
               "type": "array",
               "items": {
                 "type": "string"
@@ -262,8 +248,8 @@
                 }
               }
             },
-            "toolConfigs": {
-              "description": "Per-agent tool config overrides. Keys must reference tools in this agent's tools array. Values are deep-merged with the top-level tool config from config.tools.<name>.config.",
+            "pluginConfigs": {
+              "description": "Per-agent plugin config overrides. Keys must reference plugins in the plugins registry. Values are deep-merged with the top-level plugin config from config.plugins.<name>.config.",
               "type": "object",
               "patternProperties": {
                 "^(.*)$": {
@@ -293,66 +279,6 @@
         "logFile": {
           "description": "Daemon stdout/stderr log file. Default: ~/.beige/logs/gateway.log",
           "type": "string"
-        }
-      }
-    },
-    "channels": {
-      "title": "ChannelsConfig",
-      "type": "object",
-      "properties": {
-        "telegram": {
-          "title": "TelegramChannelConfig",
-          "type": "object",
-          "required": [
-            "enabled",
-            "token",
-            "allowedUsers",
-            "agentMapping"
-          ],
-          "properties": {
-            "enabled": {
-              "description": "Set to true to activate the Telegram bot",
-              "type": "boolean"
-            },
-            "token": {
-              "description": "Telegram bot token from @BotFather. Use \"${TELEGRAM_BOT_TOKEN}\".",
-              "type": "string"
-            },
-            "allowedUsers": {
-              "description": "Telegram user IDs permitted to interact with the bot. All others are silently ignored.",
-              "type": "array",
-              "items": {
-                "type": "number"
-              }
-            },
-            "agentMapping": {
-              "description": "Maps Telegram chats to agents",
-              "type": "object",
-              "required": [
-                "default"
-              ],
-              "properties": {
-                "default": {
-                  "description": "Agent name that handles all incoming messages",
-                  "type": "string"
-                }
-              }
-            },
-            "defaults": {
-              "title": "ChannelDefaultSettings",
-              "type": "object",
-              "properties": {
-                "verbose": {
-                  "description": "Send a notification for every tool call the agent makes (e.g. 🔧 exec: ls). Default: false",
-                  "type": "boolean"
-                },
-                "streaming": {
-                  "description": "Stream responses to the user in real-time. Default: true",
-                  "type": "boolean"
-                }
-              }
-            }
-          }
         }
       }
     }

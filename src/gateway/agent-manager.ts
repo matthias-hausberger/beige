@@ -73,7 +73,7 @@ export interface ManagedSession {
 
 /**
  * Manages agent sessions. Supports multiple concurrent sessions per agent
- * (e.g. one per Telegram chat/thread).
+ * (e.g. one per channel chat/thread).
  *
  * Each agent has one sandbox + socket. Sessions share the sandbox but have
  * independent conversation histories.
@@ -103,7 +103,7 @@ export class AgentManager {
   /**
    * Get or create a session for a given key.
    *
-   * @param sessionKey  Unique key (e.g. "telegram:123:456" or "tui:assistant:default")
+   * @param sessionKey  Unique key (e.g. "tui:assistant:default" or "channelName:chatId:threadId")
    * @param agentName   Which agent to use
    * @param opts.forceNew     If true, always create a new session (for /new command)
    * @param opts.sessionFile  If set, open this specific session file (for /resume)

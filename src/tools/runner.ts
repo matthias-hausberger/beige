@@ -141,7 +141,7 @@ export class ToolRunner {
   ): Record<string, unknown> | undefined {
     if (!this.config) return undefined;
 
-    // Derive plugin name from tool name (e.g. "telegram.send_message" → "telegram")
+    // Derive plugin name from tool name (e.g. "slack.send_message" → "slack")
     const pluginName = toolName.includes(".") ? toolName.split(".")[0] : toolName;
 
     const baseConfig = this.config.plugins?.[pluginName]?.config;

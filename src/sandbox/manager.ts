@@ -370,7 +370,7 @@ export class SandboxManager {
         "",
       ].join("\n");
 
-      // For dotted tool names (e.g. telegram.send_message), use the full name
+      // For dotted tool names (e.g. slack.send_message), use the full name
       const launcherPath = join(launchersDir, toolName);
       writeFileSync(launcherPath, launcher);
       chmodSync(launcherPath, 0o755);

@@ -201,18 +201,6 @@ describe("BeigeSessionStore", () => {
   });
 
   describe("static key builders", () => {
-    describe("telegramKey", () => {
-      it("builds key for chat without thread", () => {
-        const key = BeigeSessionStore.telegramKey(123456);
-        expect(key).toBe("telegram:123456");
-      });
-
-      it("builds key for chat with thread", () => {
-        const key = BeigeSessionStore.telegramKey(123456, 789);
-        expect(key).toBe("telegram:123456:789");
-      });
-    });
-
     describe("tuiKey", () => {
       it("builds key for agent without session", () => {
         const key = BeigeSessionStore.tuiKey("assistant");

@@ -58,7 +58,7 @@ export interface ToolResult {
  *
  * Tool names must start with the plugin name:
  * - Single-tool plugin "git" → tool name "git"
- * - Multi-tool plugin "telegram" → tool names "telegram.send_message", etc.
+ * - Multi-tool plugin "slack" → tool names "slack.send_message", etc.
  */
 export interface PluginTool {
   /** Tool name. Must equal or start with `pluginName.` */

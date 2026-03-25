@@ -34,28 +34,22 @@ export interface SessionContext {
   threadId?: string;
 }
 
+/**
+ * Parse a session key into a SessionContext.
+ *
+ * Session keys follow the convention `channel:id1:id2:...`. The first segment
+ * is always the channel name. Remaining segments are channel-specific and are
+ * stored as chatId (second segment) and threadId (third segment) for backward
+ * compatibility — plugins may use these for any purpose.
+ */
 export function parseSessionKey(sessionKey: string): SessionContext {
   const parts = sessionKey.split(":");
   const channel = parts[0] ?? "";
-  
-  if (channel === "telegram") {
-    return {
-      sessionKey,
-      channel: "telegram",
-      chatId: parts[1],
-      threadId: parts[2],
-    };
-  }
-  
-  if (channel === "tui") {
-    return {
-      sessionKey,
-      channel: "tui",
-    };
-  }
-  
+
   return {
     sessionKey,
     channel,
+    chatId: parts[1],
+    threadId: parts[2],
   };
 }

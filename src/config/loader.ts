@@ -77,11 +77,10 @@ export function loadConfig(configPath: string): BeigeConfig {
   const raw = readFileSync(absolutePath, "utf-8");
   const parsed = JSON5.parse(raw);
   const resolved = resolveEnvVars(parsed) as BeigeConfig;
-
-  // Resolve relative plugin paths against the config file directory.
-  resolvePluginPaths(resolved, configDir);
-
   const config = validateConfig(resolved);
+
+  // Resolve relative paths against the config file directory
+  resolvePluginPaths(config, configDir);
   resolveSkillPaths(config, configDir);
   resolveWorkspacePaths(config, configDir);
 

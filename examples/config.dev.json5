@@ -29,29 +29,29 @@
 
   plugins: {
     git: {
-      path: "../../beige-toolkit/tools/git",
+      path: "../../beige-toolkit/plugins/git",
       config: {
         "identity.name": "Agent Beige",
         "identity.email": "${GITHUB_EMAIL}",
       },
     },
     github: {
-      path: "../../beige-toolkit/tools/github",
+      path: "../../beige-toolkit/plugins/github",
       config: {
         token: "${GITHUB_TOKEN}",
       },
     },
     chrome: {
-      path: "../../beige-toolkit/tools/chrome",
+      path: "../../beige-toolkit/plugins/chrome",
       config: {
         headless: true,
       },
     },
     sessions: {
-      path: "../../beige-toolkit/tools/sessions",
+      path: "../../beige-toolkit/plugins/sessions",
     },
     spawn: {
-      path: "../../beige-toolkit/tools/spawn",
+      path: "../../beige-toolkit/plugins/spawn",
       config: {
         targets: {
           SELF: {},
@@ -60,17 +60,17 @@
       },
     },
     wrangler: {
-      path: "../../beige-toolkit/tools/wrangler",
+      path: "../../beige-toolkit/plugins/wrangler",
       config: {
         accountId: "${CLOUDFLARE_ACCOUNT_ID}",
         apiToken: "${CLOUDFLARE_API_TOKEN}",
       },
     },
     slack: {
-      path: "../../beige-toolkit/tools/slack",
+      path: "../../beige-toolkit/plugins/slack",
     },
     confluence: {
-      path: "../../beige-toolkit/tools/confluence",
+      path: "../../beige-toolkit/plugins/confluence",
     },
     telegram: {
       path: "../../beige-toolkit/plugins/telegram",

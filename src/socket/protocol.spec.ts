@@ -11,7 +11,7 @@ describe("protocol", () => {
     it("encodes ToolRequest with newline suffix", () => {
       const msg: ToolRequest = {
         type: "tool_request",
-        tool: "kv",
+        tool: "git",
         args: ["set", "mykey", "myvalue"],
       };
 
@@ -71,11 +71,11 @@ describe("protocol", () => {
 
   describe("decodeMessage", () => {
     it("decodes ToolRequest", () => {
-      const json = '{"type":"tool_request","tool":"kv","args":["get","key"]}';
+      const json = '{"type":"tool_request","tool":"git","args":["get","key"]}';
       const msg = decodeMessage(json) as ToolRequest;
 
       expect(msg.type).toBe("tool_request");
-      expect(msg.tool).toBe("kv");
+      expect(msg.tool).toBe("git");
       expect(msg.args).toEqual(["get", "key"]);
     });
 
@@ -129,7 +129,7 @@ describe("protocol", () => {
     it("roundtrips ToolRequest with multiple args", () => {
       const original: ToolRequest = {
         type: "tool_request",
-        tool: "kv",
+        tool: "git",
         args: ["set", "key1", "value with spaces", "more"],
       };
 

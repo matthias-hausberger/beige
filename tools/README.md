@@ -1,1 +1,0 @@
-This folder showcases examples for tools. They are NOT added to an agent by default and NOT used.

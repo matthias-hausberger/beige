@@ -53,14 +53,15 @@ Here's how Beige addresses the three issues described above and creates a **uniq
 
 <Tabs sync={false}>
   <Tab title="Beige — single exec">
-    The agent issues one `exec` call with an inline script. Fifty KV lookups happen inside the sandbox, and only the final aggregated result returns to the LLM.
+    The agent issues one `exec` call with an inline script. Fifty database lookups happen inside the sandbox, and only the final aggregated result returns to the LLM.
 
     ```bash
     exec deno run - <<'EOF'
     const users = [];
     for (let i = 1; i <= 50; i++) {
-      const result = await exec(`kv get user:${i}`);
-      users.push(JSON.parse(result));
+      const proc = Deno.Command("db", { args: ["query", `user:${i}`] });
+      const result = await proc.output();
+      users.push(JSON.parse(new TextDecoder().decode(result.stdout)));
     }
     console.log(JSON.stringify(users));
     EOF
@@ -77,8 +78,9 @@ Here's how Beige addresses the three issues described above and creates a **uniq
     ```typescript fetch-users.ts
     const users = [];
     for (let i = 1; i <= 50; i++) {
-      const result = await exec(`kv get user:${i}`);
-      users.push(JSON.parse(result));
+      const proc = Deno.Command("db", { args: ["query", `user:${i}`] });
+      const result = await proc.output();
+      users.push(JSON.parse(new TextDecoder().decode(result.stdout)));
     }
     console.log(JSON.stringify(users));
     ```
@@ -97,105 +99,105 @@ Here's how Beige addresses the three issues described above and creates a **uniq
     Without a code runtime the LLM must call the tool once per item. Every call round-trips through the model context.
 
     ```
-    → tool_call: kv get user:1
+    → tool_call: db query user:1
     ← result: {"id":1,"name":"Alice"}
-    → tool_call: kv get user:2
+    → tool_call: db query user:2
     ← result: {"id":2,"name":"Bob"}
-    → tool_call: kv get user:3
+    → tool_call: db query user:3
     ← result: {"id":3,"name":"Carol"}
-    → tool_call: kv get user:4
+    → tool_call: db query user:4
     ← result: {"id":4,"name":"Dave"}
-    → tool_call: kv get user:5
+    → tool_call: db query user:5
     ← result: {"id":5,"name":"Eve"}
-    → tool_call: kv get user:6
+    → tool_call: db query user:6
     ← result: {"id":6,"name":"Frank"}
-    → tool_call: kv get user:7
+    → tool_call: db query user:7
     ← result: {"id":7,"name":"Grace"}
-    → tool_call: kv get user:8
+    → tool_call: db query user:8
     ← result: {"id":8,"name":"Heidi"}
-    → tool_call: kv get user:9
+    → tool_call: db query user:9
     ← result: {"id":9,"name":"Ivan"}
-    → tool_call: kv get user:10
+    → tool_call: db query user:10
     ← result: {"id":10,"name":"Judy"}
-    → tool_call: kv get user:11
+    → tool_call: db query user:11
     ← result: {"id":11,"name":"Karl"}
-    → tool_call: kv get user:12
+    → tool_call: db query user:12
     ← result: {"id":12,"name":"Laura"}
-    → tool_call: kv get user:13
+    → tool_call: db query user:13
     ← result: {"id":13,"name":"Mallory"}
-    → tool_call: kv get user:14
+    → tool_call: db query user:14
     ← result: {"id":14,"name":"Niaj"}
-    → tool_call: kv get user:15
+    → tool_call: db query user:15
     ← result: {"id":15,"name":"Olivia"}
-    → tool_call: kv get user:16
+    → tool_call: db query user:16
     ← result: {"id":16,"name":"Peggy"}
-    → tool_call: kv get user:17
+    → tool_call: db query user:17
     ← result: {"id":17,"name":"Quentin"}
-    → tool_call: kv get user:18
+    → tool_call: db query user:18
     ← result: {"id":18,"name":"Rupert"}
-    → tool_call: kv get user:19
+    → tool_call: db query user:19
     ← result: {"id":19,"name":"Sybil"}
-    → tool_call: kv get user:20
+    → tool_call: db query user:20
     ← result: {"id":20,"name":"Trent"}
-    → tool_call: kv get user:21
+    → tool_call: db query user:21
     ← result: {"id":21,"name":"Uma"}
-    → tool_call: kv get user:22
+    → tool_call: db query user:22
     ← result: {"id":22,"name":"Victor"}
-    → tool_call: kv get user:23
+    → tool_call: db query user:23
     ← result: {"id":23,"name":"Wendy"}
-    → tool_call: kv get user:24
+    → tool_call: db query user:24
     ← result: {"id":24,"name":"Xander"}
-    → tool_call: kv get user:25
+    → tool_call: db query user:25
     ← result: {"id":25,"name":"Yvonne"}
-    → tool_call: kv get user:26
+    → tool_call: db query user:26
     ← result: {"id":26,"name":"Zara"}
-    → tool_call: kv get user:27
+    → tool_call: db query user:27
     ← result: {"id":27,"name":"Aaron"}
-    → tool_call: kv get user:28
+    → tool_call: db query user:28
     ← result: {"id":28,"name":"Bella"}
-    → tool_call: kv get user:29
+    → tool_call: db query user:29
     ← result: {"id":29,"name":"Carlos"}
-    → tool_call: kv get user:30
+    → tool_call: db query user:30
     ← result: {"id":30,"name":"Diana"}
-    → tool_call: kv get user:31
+    → tool_call: db query user:31
     ← result: {"id":31,"name":"Ethan"}
-    → tool_call: kv get user:32
+    → tool_call: db query user:32
     ← result: {"id":32,"name":"Fiona"}
-    → tool_call: kv get user:33
+    → tool_call: db query user:33
     ← result: {"id":33,"name":"George"}
-    → tool_call: kv get user:34
+    → tool_call: db query user:34
     ← result: {"id":34,"name":"Hannah"}
-    → tool_call: kv get user:35
+    → tool_call: db query user:35
     ← result: {"id":35,"name":"Ian"}
-    → tool_call: kv get user:36
+    → tool_call: db query user:36
     ← result: {"id":36,"name":"Julia"}
-    → tool_call: kv get user:37
+    → tool_call: db query user:37
     ← result: {"id":37,"name":"Kevin"}
-    → tool_call: kv get user:38
+    → tool_call: db query user:38
     ← result: {"id":38,"name":"Lena"}
-    → tool_call: kv get user:39
+    → tool_call: db query user:39
     ← result: {"id":39,"name":"Marco"}
-    → tool_call: kv get user:40
+    → tool_call: db query user:40
     ← result: {"id":40,"name":"Nina"}
-    → tool_call: kv get user:41
+    → tool_call: db query user:41
     ← result: {"id":41,"name":"Oscar"}
-    → tool_call: kv get user:42
+    → tool_call: db query user:42
     ← result: {"id":42,"name":"Paula"}
-    → tool_call: kv get user:43
+    → tool_call: db query user:43
     ← result: {"id":43,"name":"Quinn"}
-    → tool_call: kv get user:44
+    → tool_call: db query user:44
     ← result: {"id":44,"name":"Rosa"}
-    → tool_call: kv get user:45
+    → tool_call: db query user:45
     ← result: {"id":45,"name":"Sam"}
-    → tool_call: kv get user:46
+    → tool_call: db query user:46
     ← result: {"id":46,"name":"Tara"}
-    → tool_call: kv get user:47
+    → tool_call: db query user:47
     ← result: {"id":47,"name":"Ugo"}
-    → tool_call: kv get user:48
+    → tool_call: db query user:48
     ← result: {"id":48,"name":"Vera"}
-    → tool_call: kv get user:49
+    → tool_call: db query user:49
     ← result: {"id":49,"name":"Will"}
-    → tool_call: kv get user:50
+    → tool_call: db query user:50
     ← result: {"id":50,"name":"Xena"}
     ```
 

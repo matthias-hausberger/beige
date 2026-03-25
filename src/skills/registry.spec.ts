@@ -261,15 +261,15 @@ describe("skills/registry", () => {
     it("validates multiple dependencies", () => {
       const skills = new Map([
         ["skill1", createSkillWithDeps("skill1", {
-          tools: ["git", "kv"],
+          tools: ["git", "github"],
           skills: ["basics"],
         })],
         ["basics", createSkillWithDeps("basics")],
       ]);
 
-      // Missing 'kv' tool
+      // Missing 'github' tool
       expect(() => validateSkillDeps(["skill1", "basics"], ["git"], skills)).toThrow(
-        "Skill 'skill1' requires tool 'kv' but it's not available to this agent"
+        "Skill 'skill1' requires tool 'github' but it's not available to this agent"
       );
     });
   });

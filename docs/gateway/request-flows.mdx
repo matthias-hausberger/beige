@@ -85,7 +85,7 @@ sequenceDiagram
 
 The most important flow. When `exec` runs a plugin tool (found on `$PATH` via `/tools/bin/`), the request bounces back to the gateway through the Unix socket.
 
-**Example:** `exec kv set trip:paris "March 15"`
+**Example:** `exec git set trip:paris "March 15"`
 
 ```mermaid
 sequenceDiagram
@@ -98,34 +98,34 @@ sequenceDiagram
     participant SS as Socket Server
     participant PE as Policy Engine
     participant TR as Tool Runner
-    participant KV as KV Handler<br/>(on gateway)
+    participant TH as Git Handler<br/>(on gateway)
 
-    Note over LLM,KV: Phase 1: Core tool exec → sandbox
+    Note over LLM,TH: Phase 1: Core tool exec → sandbox
 
-    LLM->>CT: exec("kv set trip:paris March 15")
+    LLM->>CT: exec("git commit trip:paris March 15")
     CT->>AL: log(agent, "core_tool", "exec", [...], "allowed")
-    CT->>SM: exec(agent, ["sh", "-c", "kv ..."])
+    CT->>SM: exec(agent, ["sh", "-c", "git ..."])
     SM->>SB: docker exec
 
-    Note over SB,KV: Phase 2: Launcher → gateway socket → tool execution
+    Note over SB,TH: Phase 2: Launcher → gateway socket → tool execution
 
-    SB->>SB: Shell finds kv on PATH → launcher script runs
-    SB->>TC: exec /beige/tool-client "kv" "set" "trip:paris" "March 15"
+    SB->>SB: Shell finds git on PATH → launcher script runs
+    SB->>TC: exec /beige/tool-client "git" "set" "trip:paris" "March 15"
     TC->>SS: connect to /beige/gateway.sock
-    TC->>SS: {"type":"tool_request","tool":"kv","args":["set","trip:paris","March 15"]}
+    TC->>SS: {"type":"tool_request","tool":"git","args":["set","trip:paris","March 15"]}
 
-    SS->>PE: isToolAllowed("travel", "kv")?
+    SS->>PE: isToolAllowed("travel", "git")?
     PE-->>SS: ✓ allowed
 
-    SS->>AL: log(agent, "tool", "kv", args, "allowed", "gateway")
-    SS->>TR: run("kv", args)
-    TR->>KV: handler(["set", "trip:paris", "March 15"])
-    KV->>KV: write to ~/.beige/data/kv.json
-    KV-->>TR: {output: "OK", exitCode: 0}
+    SS->>AL: log(agent, "tool", "git", args, "allowed", "gateway")
+    SS->>TR: run("git", args)
+    TR->>TH: handler(["set", "trip:paris", "March 15"])
+    TH->>TH: write to ~/.beige/data/plugin-data.json
+    TH-->>TR: {output: "OK", exitCode: 0}
     TR-->>SS: ToolResult
     SS->>AL: finish(exitCode=0, outputBytes)
 
-    Note over SB,KV: Phase 3: Response flows back
+    Note over SB,TH: Phase 3: Response flows back
 
     SS-->>TC: {"type":"tool_response","success":true,"output":"OK","exitCode":0}
     TC-->>SB: stdout: "OK", exit 0
@@ -138,7 +138,7 @@ sequenceDiagram
 > **Two audit log entries** are created:
 >
 > 1. `core_tool/exec` — the exec call itself
-> 2. `tool/kv` — the actual tool invocation through the socket
+> 2. `tool/git` — the actual tool invocation through the socket
 
 ## 5. Tool Call — Permission Denied
 
@@ -189,12 +189,12 @@ sequenceDiagram
 
     Note over SB,GW: Step 3: Script calls tools internally
 
-    SB->>SB: script runs kv list (on PATH)
-    SB->>GW: socket: tool_request(kv, ["list"])
+    SB->>SB: script runs git list (on PATH)
+    SB->>GW: socket: tool_request(git, ["list"])
     GW-->>SB: tool_response(keys)
     SB->>SB: script processes keys
-    SB->>SB: script runs kv set backup:timestamp ...
-    SB->>GW: socket: tool_request(kv, ["set", ...])
+    SB->>SB: script runs git set backup:timestamp ...
+    SB->>GW: socket: tool_request(git, ["set", ...])
     GW-->>SB: tool_response(OK)
     SB-->>CT: script output
     CT-->>LLM: combined output
@@ -214,7 +214,7 @@ sequenceDiagram
     participant PI as pi SDK
     participant LLM as LLM
 
-    User->>TG: "What's stored in my kv?"
+    User->>TG: "Show me the git log"
 
     TG->>AM: promptStreaming(agent, message, onDelta)
 
@@ -227,7 +227,7 @@ sequenceDiagram
     PI-->>TG: onDelta(" check...")
     Note over TG: rate limit: skip edit (< 1s)
 
-    LLM->>LLM: tool_call: exec kv list
+    LLM->>LLM: tool_call: exec git list
     Note over TG: typing indicator
 
     LLM-->>PI: text_delta "Here are your keys:\n..."

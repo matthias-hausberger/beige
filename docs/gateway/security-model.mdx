@@ -193,8 +193,8 @@ flowchart TD
 Every tool invocation produces a JSONL audit entry at `~/.beige/logs/audit.jsonl`.
 
 ```json
-{"ts":"2026-03-05T12:00:00.000Z","agent":"travel","type":"core_tool","tool":"exec","args":["kv set trip:paris March 15"],"decision":"allowed","durationMs":45,"exitCode":0,"outputBytes":23}
-{"ts":"2026-03-05T12:00:00.050Z","agent":"travel","type":"tool","tool":"kv","args":["set","trip:paris","March 15"],"decision":"allowed","target":"gateway","durationMs":12,"exitCode":0,"outputBytes":2}
+{"ts":"2026-03-05T12:00:00.000Z","agent":"travel","type":"core_tool","tool":"exec","args":["git commit trip:paris March 15"],"decision":"allowed","durationMs":45,"exitCode":0,"outputBytes":23}
+{"ts":"2026-03-05T12:00:00.050Z","agent":"travel","type":"tool","tool":"git","args":["set","trip:paris","March 15"],"decision":"allowed","target":"gateway","durationMs":12,"exitCode":0,"outputBytes":2}
 ```
 
 | Field | Description |

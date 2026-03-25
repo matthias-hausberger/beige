@@ -103,7 +103,7 @@ describe("AuditLogger", () => {
         agent: "assistant",
         phase: "finished",
         type: "tool",
-        tool: "kv",
+        tool: "git",
         args: ["set", "key", "value"],
         decision: "denied",
         error: "Permission denied",
@@ -122,7 +122,7 @@ describe("AuditLogger", () => {
         agent: "assistant",
         phase: "finished",
         type: "tool",
-        tool: "kv",
+        tool: "git",
         args: ["get", "key"],
         decision: "allowed",
         target: "gateway",
@@ -152,7 +152,7 @@ describe("AuditLogger", () => {
       logger.start(
         "assistant",
         "tool",
-        "kv",
+        "git",
         ["set", "key"],
         "denied"
       );
@@ -231,7 +231,7 @@ describe("AuditLogger", () => {
       const timer = logger.start(
         "assistant",
         "tool",
-        "kv",
+        "git",
         ["get"],
         "denied"
       );

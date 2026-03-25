@@ -59,8 +59,8 @@ Plugin `path` values are resolved relative to the config file's directory, unles
       config: { allowedCommands: ["repo", "issue", "pr"] },
     },
     // Local plugin (path required)
-    kv: {
-      path: "~/.beige/plugins/kv",
+    git: {
+      path: "~/.beige/plugins/git",
       config: {},
     },
     // Channel plugin
@@ -93,10 +93,10 @@ Plugin `path` values are resolved relative to the config file's directory, unles
       fallbackModels: [
         { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
       ],
-      tools: ["kv", "github", "telegram.send_message"],
+      tools: ["git", "github"],
       skills: ["code-review"],
       pluginConfigs: {
-        kv: {
+        git: {
           denyCommands: ["del"],
         },
       },
@@ -255,11 +255,11 @@ This agent has no plugins but can still use the 4 core tools (`read`, `write`, `
 ├── plugins/                       # installed plugins (auto-discovered)
 │   ├── github/
 │   ├── github.meta.json
-│   └── kv/
+│   └── git/
 ├── packages/                      # intact multi-plugin packages
 │   └── matthias-hausberger-beige-toolkit/
 ├── data/
-│   ├── kv.json
+│   ├── plugin-data.json
 │   └── provider-health.json
 └── logs/
     ├── audit.jsonl                # append-only audit log

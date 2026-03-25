@@ -112,10 +112,10 @@ describe("AgentSocketServer", () => {
 
   describe("policy enforcement", () => {
     it("denies tool not in agent's allowed list", async () => {
-      // "assistant" only has "kv" tool, not "browser"
+      // "assistant" only has "git" tool, not "chrome"
       const request: ToolRequest = {
         type: "tool_request",
-        tool: "browser",
+        tool: "chrome",
         args: ["navigate", "https://example.com"],
       };
 
@@ -127,15 +127,15 @@ describe("AgentSocketServer", () => {
     });
 
     it("allows tool in agent's allowed list", async () => {
-      // Register a handler for the "kv" tool
-      toolRunner.registerHandler("kv", async () => ({
+      // Register a handler for the "git" tool
+      toolRunner.registerHandler("git", async () => ({
         output: "OK",
         exitCode: 0,
       }));
 
       const request: ToolRequest = {
         type: "tool_request",
-        tool: "kv",
+        tool: "git",
         args: ["set", "key", "value"],
       };
 
@@ -149,14 +149,14 @@ describe("AgentSocketServer", () => {
 
   describe("tool execution", () => {
     it("executes registered handler", async () => {
-      toolRunner.registerHandler("kv", async (args) => ({
+      toolRunner.registerHandler("git", async (args) => ({
         output: `Got args: ${args.join(", ")}`,
         exitCode: 0,
       }));
 
       const request: ToolRequest = {
         type: "tool_request",
-        tool: "kv",
+        tool: "git",
         args: ["get", "mykey"],
       };
 
@@ -167,10 +167,10 @@ describe("AgentSocketServer", () => {
     });
 
     it("returns error for unknown tool (no handler)", async () => {
-      // "kv" is allowed but no handler registered
+      // "git" is allowed but no handler registered
       const request: ToolRequest = {
         type: "tool_request",
-        tool: "kv",
+        tool: "git",
         args: ["get", "key"],
       };
 
@@ -185,13 +185,13 @@ describe("AgentSocketServer", () => {
     });
 
     it("handles handler errors", async () => {
-      toolRunner.registerHandler("kv", async () => {
+      toolRunner.registerHandler("git", async () => {
         throw new Error("Handler crashed");
       });
 
       const request: ToolRequest = {
         type: "tool_request",
-        tool: "kv",
+        tool: "git",
         args: [],
       };
 
@@ -269,7 +269,7 @@ describe("AgentSocketServer", () => {
     });
 
     it("handles multiple messages in single data chunk", async () => {
-      toolRunner.registerHandler("kv", async (args) => ({
+      toolRunner.registerHandler("git", async (args) => ({
         output: `args: ${args[0]}`,
         exitCode: 0,
       }));
@@ -277,8 +277,8 @@ describe("AgentSocketServer", () => {
       const responses = await new Promise<ToolResponse[]>((resolve, reject) => {
         const client = createConnection(socketPath, () => {
           // Send two messages at once
-          const msg1: ToolRequest = { type: "tool_request", tool: "kv", args: ["first"] };
-          const msg2: ToolRequest = { type: "tool_request", tool: "kv", args: ["second"] };
+          const msg1: ToolRequest = { type: "tool_request", tool: "git", args: ["first"] };
+          const msg2: ToolRequest = { type: "tool_request", tool: "git", args: ["second"] };
           client.write(encodeMessage(msg1));
           client.write(encodeMessage(msg2));
           client.end();
@@ -315,12 +315,12 @@ describe("AgentSocketServer", () => {
 
   describe("audit logging", () => {
     it("logs allowed tool calls", async () => {
-      toolRunner.registerHandler("kv", async () => ({
+      toolRunner.registerHandler("git", async () => ({
         output: "OK",
         exitCode: 0,
       }));
 
-      await sendRequest({ type: "tool_request", tool: "kv", args: ["test"] });
+      await sendRequest({ type: "tool_request", tool: "git", args: ["test"] });
 
       const { readFileSync } = await import("fs");
       const log = readFileSync(auditLogPath, "utf-8");
@@ -330,20 +330,20 @@ describe("AgentSocketServer", () => {
       expect(lines.length).toBeGreaterThanOrEqual(2);
 
       const finishedEntry = JSON.parse(lines[lines.length - 1]);
-      expect(finishedEntry.tool).toBe("kv");
+      expect(finishedEntry.tool).toBe("git");
       expect(finishedEntry.decision).toBe("allowed");
     });
 
     it("logs denied tool calls", async () => {
-      // "browser" is not allowed for "assistant"
-      await sendRequest({ type: "tool_request", tool: "browser", args: [] });
+      // "chrome" is not allowed for "assistant"
+      await sendRequest({ type: "tool_request", tool: "chrome", args: [] });
 
       const { readFileSync } = await import("fs");
       const log = readFileSync(auditLogPath, "utf-8");
       const lines = log.trim().split("\n");
 
       const entry = JSON.parse(lines[0]);
-      expect(entry.tool).toBe("browser");
+      expect(entry.tool).toBe("chrome");
       expect(entry.decision).toBe("denied");
     });
   });

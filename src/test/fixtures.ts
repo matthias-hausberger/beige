@@ -38,25 +38,25 @@ export function createFullConfig(): BeigeConfig {
       },
     },
     plugins: {
-      kv: {
-        path: "/plugins/kv",
+      git: {
+        path: "/plugins/git",
       },
-      browser: {
-        path: "/plugins/browser",
+      chrome: {
+        path: "/plugins/chrome",
         config: { headless: true },
       },
     },
     agents: {
       assistant: {
         model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-        tools: ["kv"],
+        tools: ["git"],
       },
       researcher: {
         model: { provider: "anthropic", model: "claude-sonnet-4-6", thinkingLevel: "medium" },
         fallbackModels: [
           { provider: "openai", model: "gpt-4o" },
         ],
-        tools: ["kv", "browser"],
+        tools: ["git", "chrome"],
       },
       restricted: {
         model: { provider: "anthropic", model: "claude-sonnet-4-6" },

@@ -136,13 +136,13 @@ Register skills in `config.json5` and assign them to agents:
   agents: {
     assistant: {
       model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-      tools: ["kv"],
+      tools: ["git"],
       skills: ["code-review", "testing"],
     },
 
     reviewer: {
       model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-      tools: ["kv"],
+      tools: ["git"],
       skills: ["code-review", "git-workflow"],  // git-workflow requires git tool
     },
   },

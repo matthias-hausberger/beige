@@ -137,7 +137,7 @@ describe("validateConfig", () => {
         agents: {
           assistant: {
             model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-            tools: ["kv"],
+            tools: ["git"],
             pluginConfigs: {
               kv: { timeout: 5000 },
             },
@@ -155,7 +155,7 @@ describe("validateConfig", () => {
         agents: {
           assistant: {
             model: { provider: "anthropic", model: "claude-sonnet-4-6" },
-            tools: ["kv"],
+            tools: ["git"],
             pluginConfigs: {
               browser: { headless: true },
             },

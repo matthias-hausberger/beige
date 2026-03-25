@@ -63,7 +63,7 @@ The gateway is the single host process. It never runs untrusted code — all age
 | **Audit Logger** | Appends JSONL entries for every tool invocation (core and custom) |
 | **Sandbox Manager** | Creates/destroys Docker containers, generates tool launchers, runs `docker exec` |
 | **Socket Servers** | One Unix domain socket per agent. Receives tool requests from sandbox launchers |
-| **Tool Runner** | Executes gateway-hosted tool handlers (e.g. KV store) |
+| **Tool Runner** | Executes gateway-hosted tool handlers (e.g. plugin) |
 
 ### Channels
 
@@ -132,7 +132,7 @@ graph TB
         CONF[Config + Secrets]
         LOGS[Audit Logs]
         KEYS[API Keys]
-        KV_DATA[Tool Data — e.g. kv.json]
+        PD[Plugin Data]
         SESSION_SETTINGS[Session Settings<br/>session-settings.json]
         DOCKER[Docker Daemon]
     end
@@ -203,7 +203,7 @@ sequenceDiagram
     API-->>CLI2: ok
 
     CLI2->>API: GET /api/agents
-    API-->>CLI2: [{name: "assistant", tools: ["kv"]}]
+    API-->>CLI2: [{name: "assistant", tools: ["git"]}]
 
     CLI2->>TUI: createAgentSession (LLM local, tools proxied)
 
@@ -231,7 +231,7 @@ graph TB
     AM1 --> PI1[pi SDK — Claude Sonnet]
     AM2 --> PI2[pi SDK — Claude Opus]
 
-    PI1 --> SB1[Sandbox: travel<br/>tools: kv, chrome]
+    PI1 --> SB1[Sandbox: travel<br/>tools: git, chrome]
     PI2 --> SB2[Sandbox: dev<br/>tools: git, github]
 
     SB1 -->|socket| SS1[Socket: travel.sock]

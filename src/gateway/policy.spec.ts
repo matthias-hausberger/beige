@@ -25,32 +25,32 @@ describe("PolicyEngine", () => {
       });
 
       it("returns false for custom tools", () => {
-        expect(engine.isCoreTool("kv")).toBe(false);
-        expect(engine.isCoreTool("browser")).toBe(false);
+        expect(engine.isCoreTool("git")).toBe(false);
+        expect(engine.isCoreTool("chrome")).toBe(false);
       });
     });
 
     describe("isToolAllowed", () => {
       it("allows tools listed in agent config", () => {
-        expect(engine.isToolAllowed("assistant", "kv")).toBe(true);
+        expect(engine.isToolAllowed("assistant", "git")).toBe(true);
       });
 
       it("denies tools not listed in agent config", () => {
-        expect(engine.isToolAllowed("assistant", "browser")).toBe(false);
+        expect(engine.isToolAllowed("assistant", "chrome")).toBe(false);
       });
 
       it("denies all tools for restricted agent", () => {
-        expect(engine.isToolAllowed("restricted", "kv")).toBe(false);
-        expect(engine.isToolAllowed("restricted", "browser")).toBe(false);
+        expect(engine.isToolAllowed("restricted", "git")).toBe(false);
+        expect(engine.isToolAllowed("restricted", "chrome")).toBe(false);
       });
 
       it("allows multiple tools for researcher agent", () => {
-        expect(engine.isToolAllowed("researcher", "kv")).toBe(true);
-        expect(engine.isToolAllowed("researcher", "browser")).toBe(true);
+        expect(engine.isToolAllowed("researcher", "git")).toBe(true);
+        expect(engine.isToolAllowed("researcher", "chrome")).toBe(true);
       });
 
       it("denies tools for unknown agents", () => {
-        expect(engine.isToolAllowed("unknown-agent", "kv")).toBe(false);
+        expect(engine.isToolAllowed("unknown-agent", "git")).toBe(false);
       });
     });
 
@@ -67,12 +67,12 @@ describe("PolicyEngine", () => {
 
     describe("getToolTarget", () => {
       it("returns 'gateway' for plugin-registered tools", () => {
-        expect(engine.getToolTarget("kv")).toBe("gateway");
+        expect(engine.getToolTarget("git")).toBe("gateway");
       });
 
       it("returns 'gateway' for dotted plugin tools", () => {
-        // A tool like telegram.send_message resolves to plugin "telegram"
-        expect(engine.getToolTarget("kv.subcommand")).toBe("gateway");
+        // A tool like git.status resolves to plugin "git"
+        expect(engine.getToolTarget("git.status")).toBe("gateway");
       });
 
       it("returns undefined for unknown tools", () => {
@@ -93,7 +93,7 @@ describe("PolicyEngine", () => {
     });
 
     it("returns undefined for tool targets when no plugins configured", () => {
-      expect(engine.getToolTarget("kv")).toBeUndefined();
+      expect(engine.getToolTarget("git")).toBeUndefined();
     });
   });
 

@@ -113,7 +113,7 @@ describe("GatewayAPI", () => {
 
       const assistant = body.agents.find((a: any) => a.name === "assistant");
       expect(assistant).toBeDefined();
-      expect(assistant.tools).toContain("kv");
+      expect(assistant.tools).toContain("git");
     });
 
     it("includes model info for each agent", async () => {

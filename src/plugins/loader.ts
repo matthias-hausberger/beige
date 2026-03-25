@@ -122,14 +122,10 @@ export async function loadPlugins(
 }
 
 /**
- * Load and validate a plugin manifest from a plugin directory.
- *
- * Supports both plugin.json (new format) and tool.json (legacy compatibility
- * during migration — treated as a single-tool plugin).
+ * Load and validate a plugin manifest (plugin.json) from a plugin directory.
  */
 export function loadPluginManifest(pluginPath: string, pluginName: string): PluginManifest {
   const pluginJsonPath = join(pluginPath, "plugin.json");
-  const toolJsonPath = join(pluginPath, "tool.json");
 
   if (existsSync(pluginJsonPath)) {
     const raw = readFileSync(pluginJsonPath, "utf-8");
@@ -140,26 +136,6 @@ export function loadPluginManifest(pluginPath: string, pluginName: string): Plug
     }
 
     return manifest;
-  }
-
-  // Legacy: tool.json → convert to PluginManifest
-  if (existsSync(toolJsonPath)) {
-    const raw = readFileSync(toolJsonPath, "utf-8");
-    const toolManifest = JSON.parse(raw) as {
-      name: string;
-      description: string;
-      commands?: string[];
-      target: string;
-    };
-
-    return {
-      name: toolManifest.name,
-      description: toolManifest.description,
-      commands: toolManifest.commands,
-      provides: {
-        tools: [toolManifest.name],
-      },
-    };
   }
 
   // No manifest found — create a minimal one from the plugin name

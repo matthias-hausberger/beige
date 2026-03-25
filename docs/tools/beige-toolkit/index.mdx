@@ -191,7 +191,7 @@ pnpm smoke             # Full smoke sequence
 
 ### Adding a New Tool
 
-1. Create `tools/<name>/` with `tool.json`, `package.json`, `index.ts`, `README.md`, `SKILL.md`
+1. Create `tools/<name>/` with `plugin.json`, `package.json`, `index.ts`, `README.md`, `SKILL.md`
 2. Write tests in `tools/<name>/__tests__/`
 3. If the tool has npm dependencies, add them to `tools/<name>/package.json` under `dependencies`
 
@@ -222,14 +222,14 @@ beige-toolkit/
 ├── vitest.config.ts
 ├── tools/
 │   ├── github/
-│   │   ├── tool.json         # Tool manifest (name, description, target)
+│   │   ├── plugin.json         # Plugin manifest (name, description, provides)
 │   │   ├── package.json      # Tool's own dependencies (if any)
 │   │   ├── index.ts          # Handler (runs on the gateway host)
 │   │   ├── README.md         # User/developer documentation
 │   │   ├── SKILL.md          # Agent usage guide
 │   │   └── __tests__/
 │   ├── chrome/
-│   │   ├── tool.json
+│   │   ├── plugin.json
 │   │   ├── package.json
 │   │   ├── index.ts
 │   │   ├── mcp-client.ts     # Additional module

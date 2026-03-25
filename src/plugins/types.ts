@@ -47,7 +47,6 @@ export interface PluginManifest {
   /**
    * CLI commands this plugin exposes.
    * Listed in the system prompt so agents know how to call the tool.
-   * Same format as the old tool.json "commands" field.
    */
   commands?: string[];
 }
@@ -71,10 +70,7 @@ export interface PluginTool {
   name: string;
   /** Short description (included in system prompt). */
   description: string;
-  /**
-   * Usage hints shown in the system prompt.
-   * Same format as the old tool.json "commands" field.
-   */
+  /** Usage hints shown in the system prompt. */
   commands?: string[];
   /** The handler function called when the tool is invoked. */
   handler: ToolHandler;
@@ -303,6 +299,9 @@ export interface PluginContext {
   /** Create a new session (discards old history for this key). */
   newSession(sessionKey: string, agentName: string): Promise<void>;
 
+  /** Create a new session file and return the session file path. */
+  createSession(sessionKey: string, agentName: string, metadata?: Record<string, unknown>): string;
+
   // ── Session settings ───────────────────────────────────
   /** Get a session's current settings. */
   getSessionSettings(sessionKey: string): SessionSettings;
@@ -315,6 +314,24 @@ export interface PluginContext {
 
   /** Read plugin metadata from a session. */
   getSessionMetadata(sessionKey: string, key: string): unknown;
+
+  // ── Session data access ─────────────────────────────────
+  /** List sessions for an agent (for session history tools). */
+  listSessions(agentName: string, opts?: { includeToolSessions?: boolean }): Array<{
+    sessionId: string;
+    sessionFile: string;
+    agentName: string;
+    createdAt: string;
+    firstMessage: string;
+  }>;
+
+  /** Get a session entry by key (for session history tools). */
+  getSessionEntry(sessionKey: string): {
+    agentName: string;
+    sessionFile: string;
+    createdAt: string;
+    metadata?: Record<string, unknown>;
+  } | undefined;
 
   // ── Cross-plugin tool invocation ───────────────────────
   /** Invoke a registered tool by name (from any plugin). */

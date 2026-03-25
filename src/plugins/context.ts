@@ -72,6 +72,10 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       await mgr.newSession(sessionKey, agentName);
     },
 
+    createSession(sessionKey, agentName, metadata) {
+      return sessionStore.createSession(sessionKey, agentName, metadata);
+    },
+
     // ── Session settings ───────────────────────────────────
     getSessionSettings(sessionKey) {
       const overrides = settingsStore.getAll(sessionKey);
@@ -112,6 +116,15 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
     getSessionMetadata(sessionKey, key) {
       const entry = sessionStore.getEntry(sessionKey);
       return entry?.metadata?.[`plugin_${key}`];
+    },
+
+    // ── Session data access ─────────────────────────────────
+    listSessions(agentName, opts) {
+      return sessionStore.listSessions(agentName, opts);
+    },
+
+    getSessionEntry(sessionKey) {
+      return sessionStore.getEntry(sessionKey);
     },
 
     // ── Cross-plugin tool invocation ───────────────────────

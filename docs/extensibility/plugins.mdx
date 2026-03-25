@@ -43,7 +43,7 @@ plugins/my-plugin/
 | `configSchema` | No | JSON Schema for plugin config validation |
 
 <Note>
-**Legacy support**: Plugins can also use `tool.json` (the old format). The gateway auto-converts it to a plugin manifest internally. New plugins should use `plugin.json`.
+Every plugin must have a `plugin.json` manifest in its directory.
 </Note>
 
 ## index.ts — Entry Point

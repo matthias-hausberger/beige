@@ -136,7 +136,7 @@ beige plugins install ./path/to/plugin
 beige plugins install npm:@scope/package --force
 ```
 
-The installer discovers plugins by scanning for `plugin.json` or `tool.json` files. After installing, add the plugin's tools to your agent's `tools` array and restart the gateway.
+The installer discovers plugins by scanning for `plugin.json` files. After installing, review your config.json5 to fill in any required values (like API keys), add the plugin's tools to your agent's `tools` array, and restart the gateway.
 
 ### `beige plugins list`
 

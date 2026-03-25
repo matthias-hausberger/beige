@@ -254,7 +254,7 @@ export function parseSource(source: string): ParsedSource {
 // ── Plugin discovery ─────────────────────────────────────────────────────────
 
 /**
- * Recursively scan a directory for plugin.json or tool.json files.
+ * Recursively scan a directory for plugin.json files.
  * Returns discovered plugins with their paths and parsed manifests.
  */
 export function discoverPlugins(rootPath: string): DiscoveredPlugin[] {
@@ -263,7 +263,6 @@ export function discoverPlugins(rootPath: string): DiscoveredPlugin[] {
 
   function scan(dir: string): void {
     const pluginJsonPath = join(dir, "plugin.json");
-    const toolJsonPath = join(dir, "tool.json");
 
     let manifest: PluginManifest | null = null;
 
@@ -273,25 +272,6 @@ export function discoverPlugins(rootPath: string): DiscoveredPlugin[] {
         manifest = JSON.parse(raw) as PluginManifest;
       } catch {
         console.warn(`[PLUGINS] Failed to parse plugin.json at ${dir}, skipping`);
-      }
-    } else if (existsSync(toolJsonPath)) {
-      // Legacy tool.json support
-      try {
-        const raw = readFileSync(toolJsonPath, "utf-8");
-        const toolManifest = JSON.parse(raw) as {
-          name: string;
-          description: string;
-          commands?: string[];
-          target: string;
-        };
-        manifest = {
-          name: toolManifest.name,
-          description: toolManifest.description,
-          commands: toolManifest.commands,
-          provides: { tools: [toolManifest.name] },
-        };
-      } catch {
-        console.warn(`[PLUGINS] Failed to parse tool.json at ${dir}, skipping`);
       }
     }
 
@@ -597,7 +577,7 @@ export async function installPlugins(
   const plugins = discoverPlugins(fetchedPath);
   if (plugins.length === 0) {
     cleanTempDir();
-    return { success: false, error: `No plugins found (no plugin.json or tool.json) at ${sourceStr}` };
+    return { success: false, error: `No plugins found (no plugin.json) at ${sourceStr}` };
   }
 
   // Install files to disk
@@ -607,7 +587,7 @@ export async function installPlugins(
       // The config entry will point to the local path
     } else if (
       plugins.length === 1 &&
-      (existsSync(join(fetchedPath, "plugin.json")) || existsSync(join(fetchedPath, "tool.json")))
+      existsSync(join(fetchedPath, "plugin.json"))
     ) {
       // Single plugin at root of fetched dir
       const installedPath = installSinglePluginToDisk(plugins[0], force);

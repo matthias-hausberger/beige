@@ -44,7 +44,7 @@
     chrome: {
       path: "../../beige-toolkit/plugins/chrome",
       config: {
-        headless: true,
+        headless: false,
       },
     },
     sessions: {

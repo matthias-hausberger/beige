@@ -212,6 +212,22 @@ describe("ToolRunner", () => {
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("Unknown tool");
     });
+
+    it("calls onToolStart callback with tool name and parsed args", async () => {
+      const handler: ToolHandler = async () => ({ output: "test result", exitCode: 0 });
+      runner.registerHandler("test", handler);
+
+      const onToolStart = vi.fn();
+      const result = await runner.run("test", ["arg1", "arg2"], {
+        channel: "test",
+        agentName: "assistant",
+        onToolStart,
+      } as any);
+
+      // Verify callback was invoked with correct args
+      expect(onToolStart).toHaveBeenCalledWith("test", { arg1: "arg1", arg2: "arg2" });
+      expect(result.output).toBe("test result");
+    });
   });
 });
 

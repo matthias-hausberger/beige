@@ -152,7 +152,7 @@ export class AgentManager {
     const agentDir = resolve(this.beigeDir, "agents", agentName);
     const workspaceDir = agentConfig.workspaceDir 
       ?? resolve(agentDir, "workspace");
-    const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir };
+    const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir, onToolStart: toolStartHandlerRef.fn };
     const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
     const toolContext = buildPluginToolContext(agentConfig.tools, this.pluginRegistry);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
@@ -604,7 +604,7 @@ export class AgentManager {
     const agentDir = resolve(this.beigeDir, "agents", agentName);
     const workspaceDir = agentConfig.workspaceDir 
       ?? resolve(agentDir, "workspace");
-    const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir };
+    const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir, onToolStart: toolStartHandlerRef.fn };
     const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
     const toolContext = buildPluginToolContext(agentConfig.tools, this.pluginRegistry);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
@@ -810,6 +810,13 @@ export class AgentManager {
     }
 
     return allowed;
+  }
+
+  /**
+   * Get the onToolStart callback for a session (used for verbose notifications).
+   */
+  getOnToolStartCallback(sessionKey: string): ((toolName: string, params: Record<string, unknown>) => void) | undefined {
+    return this.sessions.get(sessionKey)?.toolStartHandlerRef.fn;
   }
 }
 

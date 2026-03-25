@@ -32,6 +32,8 @@ export interface SessionContext {
   cwd?: string;
   chatId?: string;
   threadId?: string;
+  /** Callback invoked when a tool starts (used for verbose notifications) */
+  onToolStart?: (toolName: string, params: Record<string, unknown>) => void;
 }
 
 /**

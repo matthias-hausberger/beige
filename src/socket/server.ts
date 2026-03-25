@@ -11,6 +11,7 @@ import type { AuditLogger } from "../gateway/audit.js";
 import type { PolicyEngine } from "../gateway/policy.js";
 import type { ToolRunner } from "../tools/runner.js";
 import type { SessionContext } from "../types/session.js";
+import type { AgentManager } from "../gateway/agent-manager.js";
 
 /**
  * Unix domain socket server for a single agent.
@@ -26,7 +27,8 @@ export class AgentSocketServer {
     private policy: PolicyEngine,
     private toolRunner: ToolRunner,
     private agentDir: string,
-    private workspaceDir: string
+    private workspaceDir: string,
+    private agentManager: AgentManager
   ) {}
 
   start(): Promise<void> {
@@ -135,6 +137,7 @@ export class AgentSocketServer {
       agentDir: this.agentDir,
       workspaceDir: this.workspaceDir,
       cwd: req.cwd,  // Pass through relative cwd from sandbox
+      onToolStart: this.agentManager.getOnToolStartCallback(req.sessionContext?.sessionKey ?? `socket:${this.agentName}`),
     };
 
     // Execute tool

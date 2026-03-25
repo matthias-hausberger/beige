@@ -18,6 +18,7 @@ describe("AgentSocketServer", () => {
   let toolRunner: ToolRunner;
   let auditLogger: AuditLogger;
   let auditLogPath: string;
+  let agentManager: any; // Mock AgentManager
 
   beforeEach(async () => {
     tempDir = join(tmpdir(), `beige-socket-test-${Date.now()}`);
@@ -30,12 +31,20 @@ describe("AgentSocketServer", () => {
     toolRunner = new ToolRunner();
     auditLogger = new AuditLogger(auditLogPath);
 
+    // Mock AgentManager with getOnToolStartCallback method
+    agentManager = {
+      getOnToolStartCallback: vi.fn().mockReturnValue(undefined),
+    };
+
     server = new AgentSocketServer(
       "assistant",
       socketPath,
       auditLogger,
       policy,
-      toolRunner
+      toolRunner,
+      join(tempDir, "agents", "assistant"),
+      join(tempDir, "agents", "assistant", "workspace"),
+      agentManager
     );
 
     await server.start();

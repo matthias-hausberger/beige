@@ -100,6 +100,12 @@ export class ToolRunner {
       }
     }
 
+    // Call onToolStart callback for verbose notifications
+    if (sessionContext?.onToolStart) {
+      const params = this.argsToObject(args);
+      sessionContext.onToolStart(toolName, params);
+    }
+
     // Resolve the effective config for this tool call:
     // base plugin config + per-agent pluginConfigs override (if any)
     const config = this.resolveToolConfig(toolName, sessionContext?.agentName);
@@ -154,5 +160,23 @@ export class ToolRunner {
     if (!baseConfig) return agentOverride;
 
     return deepMerge(baseConfig, agentOverride);
+  }
+
+  /**
+   * Convert CLI-style args array to a params object for onToolStart callbacks.
+   * Args like ["key=value", "other=value"] become { key: "value", other: "value" }.
+   */
+  private argsToObject(args: string[]): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const arg of args) {
+      const eqPos = arg.indexOf("=");
+      if (eqPos !== -1) {
+        const key = arg.slice(0, eqPos);
+        const value = arg.slice(eqPos + 1);
+        result[key] = value;
+      }
+      // Args without "=" are ignored (e.g., flags)
+    }
+    return result;
   }
 }

@@ -248,7 +248,7 @@ export class Gateway {
     const agentConfig = this.config.agents[agentName];
     const socketPath = resolve(beigeDir(), "sockets", `${agentName}.sock`);
     const agentDir = resolve(beigeDir(), "agents", agentName);
-    const workspaceDir = agentConfig.workspaceDir 
+    const workspaceDir = agentConfig.workspaceDir
       ?? resolve(agentDir, "workspace");
     const socketServer = new AgentSocketServer(
       agentName,
@@ -257,7 +257,8 @@ export class Gateway {
       this.policy,
       this.toolRunner,
       agentDir,
-      workspaceDir
+      workspaceDir,
+      this.agentManager
     );
     await socketServer.start();
     this.socketServers.set(agentName, socketServer);

@@ -1,20 +1,25 @@
 /**
  * Plugin installer.
  *
- * Installs plugins from various sources into ~/.beige/plugins/.
- * Each plugin is a directory with a plugin.json (or tool.json) manifest and an index.ts entry point.
+ * Installs plugins from various sources into ~/.beige/plugins/ and adds them
+ * to config.json5. The config file is the single source of truth for which
+ * plugins are installed and how they're configured.
  *
  * Sources:
  *   npm:@scope/package@version      — npm package (single plugin or multi-plugin)
  *   github:owner/repo               — GitHub repo (all plugins)
  *   github:owner/repo/path/to/plugin — single plugin from a GitHub repo subfolder
  *   github:owner/repo#ref           — GitHub repo at a specific tag/branch
- *   ./local/path                    — local directory
+ *   ./local/path                    — local directory (symlinked, not copied)
  *
  * On disk:
  *   ~/.beige/plugins/<name>/           — individual plugin dirs (real or symlink)
- *   ~/.beige/plugins/<name>.meta.json  — install metadata (source, timestamp)
  *   ~/.beige/packages/<pkg>/           — intact npm/multi-plugin packages
+ *
+ * In config.json5:
+ *   plugins.<name>.path     — absolute path to the plugin directory
+ *   plugins.<name>.config   — default config from plugin manifest (editable)
+ *   plugins.<name>._source  — install source for updates (do not edit)
  */
 
 import {
@@ -31,16 +36,11 @@ import {
 import { resolve, join, relative, basename } from "path";
 import { execSync } from "child_process";
 import { extract } from "tar";
+import JSON5 from "json5";
 import { beigeDir } from "../paths.js";
 import type { PluginManifest } from "./types.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
-
-export interface PluginInstallMeta {
-  source: string;
-  package?: string;
-  installedAt: string;
-}
 
 export interface DiscoveredPlugin {
   name: string;
@@ -74,6 +74,10 @@ function getTempDir(): string {
   return resolve(beigeDir(), "temp");
 }
 
+function getConfigPath(): string {
+  return resolve(beigeDir(), "config.json5");
+}
+
 function ensureDir(p: string): void {
   if (!existsSync(p)) {
     mkdirSync(p, { recursive: true });
@@ -85,6 +89,95 @@ function cleanTempDir(): void {
   if (existsSync(tempDir)) {
     rmSync(tempDir, { recursive: true, force: true });
   }
+}
+
+// ── Config file operations ───────────────────────────────────────────────────
+
+interface ConfigFile {
+  [key: string]: unknown;
+  plugins?: Record<string, {
+    path?: string;
+    config?: Record<string, unknown>;
+    _source?: string;
+  }>;
+}
+
+function readConfig(): { raw: string; parsed: ConfigFile } {
+  const configPath = getConfigPath();
+  if (!existsSync(configPath)) {
+    throw new Error(`Config file not found at ${configPath}. Run 'beige setup' first.`);
+  }
+  const raw = readFileSync(configPath, "utf-8");
+  const parsed = JSON5.parse(raw) as ConfigFile;
+  return { raw, parsed };
+}
+
+/**
+ * Add or update plugin entries in config.json5.
+ *
+ * Strategy: parse with JSON5, modify the object, serialize back.
+ * This loses comments but is reliable. We add a header comment back.
+ */
+function addPluginsToConfig(
+  plugins: DiscoveredPlugin[],
+  source: string,
+  force: boolean
+): string[] {
+  const { parsed } = readConfig();
+  const conflicts: string[] = [];
+
+  if (!parsed.plugins) {
+    parsed.plugins = {};
+  }
+
+  for (const plugin of plugins) {
+    if (parsed.plugins[plugin.name] && !force) {
+      conflicts.push(
+        `Plugin '${plugin.name}' already in config. Use --force to override.`
+      );
+      continue;
+    }
+
+    const entry: Record<string, unknown> = {
+      path: plugin.path,
+      _source: source,
+    };
+
+    // Add default config from manifest if available
+    if (plugin.manifest.defaultConfig && Object.keys(plugin.manifest.defaultConfig).length > 0) {
+      entry.config = plugin.manifest.defaultConfig;
+    }
+
+    parsed.plugins[plugin.name] = entry;
+  }
+
+  if (conflicts.length > 0 && !force) {
+    return conflicts;
+  }
+
+  writeConfig(parsed);
+  return [];
+}
+
+function removePluginFromConfig(pluginName: string): void {
+  const { parsed } = readConfig();
+  if (parsed.plugins) {
+    delete parsed.plugins[pluginName];
+    writeConfig(parsed);
+  }
+}
+
+function getPluginSource(pluginName: string): string | undefined {
+  const { parsed } = readConfig();
+  return parsed.plugins?.[pluginName]?._source as string | undefined;
+}
+
+function writeConfig(config: ConfigFile): void {
+  const configPath = getConfigPath();
+  // JSON5.stringify doesn't exist as a pretty-printer with comments,
+  // so we use JSON with some post-processing for readability
+  const json = JSON.stringify(config, null, 2);
+  writeFileSync(configPath, json, "utf-8");
 }
 
 // ── Source parsing ───────────────────────────────────────────────────────────
@@ -357,112 +450,66 @@ function installPluginDependencies(pluginPath: string): void {
   }
 }
 
-// ── Meta file management ─────────────────────────────────────────────────────
+// ── Package directory name normalization ─────────────────────────────────────
 
-function writeMetaFile(pluginName: string, meta: PluginInstallMeta): void {
-  const metaPath = join(getPluginsDir(), `${pluginName}.meta.json`);
-  writeFileSync(metaPath, JSON.stringify(meta, null, 2), "utf-8");
-}
-
-export function readMetaFile(pluginName: string): PluginInstallMeta | null {
-  const metaPath = join(getPluginsDir(), `${pluginName}.meta.json`);
-  if (!existsSync(metaPath)) return null;
-  try {
-    return JSON.parse(readFileSync(metaPath, "utf-8"));
-  } catch {
-    return null;
+function normalizePackageName(source: ParsedSource): string {
+  switch (source.type) {
+    case "npm":
+      return source.package.replace(/^@/, "").replace(/\//g, "-");
+    case "github":
+      return `${source.owner}-${source.repo}`;
+    case "local":
+      return basename(source.path);
   }
 }
 
-function removeMetaFile(pluginName: string): void {
-  const metaPath = join(getPluginsDir(), `${pluginName}.meta.json`);
-  if (existsSync(metaPath)) {
-    rmSync(metaPath, { force: true });
-  }
-}
+// ── Install: place files on disk ─────────────────────────────────────────────
 
-// ── Conflict checking ────────────────────────────────────────────────────────
-
-function checkConflicts(plugins: DiscoveredPlugin[], force: boolean): string[] {
-  const pluginsDir = getPluginsDir();
-  const conflicts: string[] = [];
-
-  for (const plugin of plugins) {
-    const targetPath = join(pluginsDir, plugin.name);
-    if (existsSync(targetPath)) {
-      const meta = readMetaFile(plugin.name);
-      const from = meta?.source ?? "unknown source";
-      conflicts.push(`Plugin '${plugin.name}' already installed (from ${from})`);
-    }
-  }
-
-  return force ? [] : conflicts;
-}
-
-// ── Install: single plugin ───────────────────────────────────────────────────
-
-function installSinglePlugin(
+function installSinglePluginToDisk(
   plugin: DiscoveredPlugin,
-  source: string,
   force: boolean
-): InstallResult {
+): string {
   const pluginsDir = getPluginsDir();
   ensureDir(pluginsDir);
-
-  const conflicts = checkConflicts([plugin], force);
-  if (conflicts.length > 0) {
-    return { success: false, conflicts, error: "Plugin name conflicts detected. Use --force to override." };
-  }
 
   const targetPath = join(pluginsDir, plugin.name);
 
   if (existsSync(targetPath)) {
+    if (!force) {
+      throw new Error(`Plugin directory '${plugin.name}' already exists. Use --force to override.`);
+    }
     rmSync(targetPath, { recursive: true, force: true });
-    removeMetaFile(plugin.name);
   }
 
   cpSync(plugin.path, targetPath, { recursive: true });
   installPluginDependencies(targetPath);
 
-  writeMetaFile(plugin.name, {
-    source,
-    installedAt: new Date().toISOString(),
-  });
-
-  return {
-    success: true,
-    plugins: [{ ...plugin, path: targetPath }],
-  };
+  return targetPath;
 }
 
-// ── Install: multi-plugin package ────────────────────────────────────────────
-
-function installMultiPluginPackage(
+function installMultiPluginPackageToDisk(
   plugins: DiscoveredPlugin[],
   packagePath: string,
-  source: string,
   packageDirName: string,
   force: boolean
-): InstallResult {
+): Map<string, string> {
   const pluginsDir = getPluginsDir();
   const packagesDir = getPackagesDir();
   ensureDir(pluginsDir);
   ensureDir(packagesDir);
 
-  const conflicts = checkConflicts(plugins, force);
-  if (conflicts.length > 0) {
-    return { success: false, conflicts, error: "Plugin name conflicts detected. Use --force to override." };
-  }
-
   const targetPackageDir = join(packagesDir, packageDirName);
 
+  // Clean up existing package if force
   if (existsSync(targetPackageDir)) {
+    if (!force) {
+      throw new Error(`Package '${packageDirName}' already exists. Use --force to override.`);
+    }
     for (const plugin of plugins) {
       const symlinkPath = join(pluginsDir, plugin.name);
       if (existsSync(symlinkPath)) {
         rmSync(symlinkPath, { recursive: true, force: true });
       }
-      removeMetaFile(plugin.name);
     }
     rmSync(targetPackageDir, { recursive: true, force: true });
   }
@@ -472,14 +519,13 @@ function installMultiPluginPackage(
       const existing = join(pluginsDir, plugin.name);
       if (existsSync(existing)) {
         rmSync(existing, { recursive: true, force: true });
-        removeMetaFile(plugin.name);
       }
     }
   }
 
   cpSync(packagePath, targetPackageDir, { recursive: true });
 
-  const installedPlugins: DiscoveredPlugin[] = [];
+  const result = new Map<string, string>();
   for (const plugin of plugins) {
     const relPath = relative(packagePath, plugin.path);
     const pluginInPackage = join(targetPackageDir, relPath);
@@ -493,33 +539,10 @@ function installMultiPluginPackage(
       cpSync(pluginInPackage, symlinkPath, { recursive: true });
     }
 
-    writeMetaFile(plugin.name, {
-      source,
-      package: packageDirName,
-      installedAt: new Date().toISOString(),
-    });
-
-    installedPlugins.push({
-      name: plugin.name,
-      path: symlinkPath,
-      manifest: plugin.manifest,
-    });
+    result.set(plugin.name, symlinkPath);
   }
 
-  return { success: true, plugins: installedPlugins };
-}
-
-// ── Package directory name normalization ─────────────────────────────────────
-
-function normalizePackageName(source: ParsedSource): string {
-  switch (source.type) {
-    case "npm":
-      return source.package.replace(/^@/, "").replace(/\//g, "-");
-    case "github":
-      return `${source.owner}-${source.repo}`;
-    case "local":
-      return basename(source.path);
-  }
+  return result;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -570,82 +593,91 @@ export async function installPlugins(
     return { success: false, error: `Failed to fetch: ${err}` };
   }
 
+  // Discover plugins in fetched source
   const plugins = discoverPlugins(fetchedPath);
   if (plugins.length === 0) {
     cleanTempDir();
     return { success: false, error: `No plugins found (no plugin.json or tool.json) at ${sourceStr}` };
   }
 
-  let result: InstallResult;
+  // Install files to disk
+  try {
+    if (source.type === "local") {
+      // Local sources: just use the path directly, don't copy
+      // The config entry will point to the local path
+    } else if (
+      plugins.length === 1 &&
+      (existsSync(join(fetchedPath, "plugin.json")) || existsSync(join(fetchedPath, "tool.json")))
+    ) {
+      // Single plugin at root of fetched dir
+      const installedPath = installSinglePluginToDisk(plugins[0], force);
+      plugins[0].path = installedPath;
+    } else {
+      // Multi-plugin package
+      const packageDirName = normalizePackageName(source);
+      const pathMap = installMultiPluginPackageToDisk(plugins, fetchedPath, packageDirName, force);
+      for (const plugin of plugins) {
+        const newPath = pathMap.get(plugin.name);
+        if (newPath) plugin.path = newPath;
+      }
+    }
+  } catch (err) {
+    cleanTempDir();
+    return { success: false, error: String(err) };
+  }
 
-  if (plugins.length === 1 && (existsSync(join(fetchedPath, "plugin.json")) || existsSync(join(fetchedPath, "tool.json")))) {
-    result = installSinglePlugin(plugins[0], sourceStr, force);
-  } else {
-    const packageDirName = normalizePackageName(source);
-    result = installMultiPluginPackage(plugins, fetchedPath, sourceStr, packageDirName, force);
+  // Add to config.json5
+  const conflicts = addPluginsToConfig(plugins, sourceStr, force);
+  if (conflicts.length > 0) {
+    cleanTempDir();
+    return { success: false, conflicts, error: "Plugin conflicts detected. Use --force to override." };
   }
 
   cleanTempDir();
-  return result;
+  return { success: true, plugins };
 }
 
 export function removePlugin(pluginName: string): { success: boolean; error?: string } {
   const pluginsDir = getPluginsDir();
   const pluginPath = join(pluginsDir, pluginName);
 
-  if (!existsSync(pluginPath)) {
-    return { success: false, error: `Plugin '${pluginName}' is not installed` };
-  }
+  // Remove from config first
+  removePluginFromConfig(pluginName);
 
-  const meta = readMetaFile(pluginName);
-
-  rmSync(pluginPath, { recursive: true, force: true });
-  removeMetaFile(pluginName);
-
-  if (meta?.package) {
-    const packagesDir = getPackagesDir();
-    const packageDir = join(packagesDir, meta.package);
-
-    if (existsSync(packageDir)) {
-      const otherPluginsUsingPackage = listInstalledPlugins().filter(
-        (p) => {
-          const m = readMetaFile(p.name);
-          return m?.package === meta.package;
-        }
-      );
-
-      if (otherPluginsUsingPackage.length === 0) {
-        rmSync(packageDir, { recursive: true, force: true });
-      }
-    }
+  // Remove from disk if it exists in the managed plugins dir
+  if (existsSync(pluginPath)) {
+    rmSync(pluginPath, { recursive: true, force: true });
   }
 
   return { success: true };
 }
 
 export async function updatePlugin(pluginName: string): Promise<InstallResult> {
-  const meta = readMetaFile(pluginName);
-  if (!meta) {
-    return { success: false, error: `Plugin '${pluginName}' has no install metadata — cannot update` };
+  const source = getPluginSource(pluginName);
+  if (!source) {
+    return { success: false, error: `Plugin '${pluginName}' has no _source in config — cannot update` };
   }
-  return installPlugins(meta.source, { force: true });
+  return installPlugins(source, { force: true });
 }
 
 export async function updateAllPlugins(): Promise<{
   updated: string[];
   failed: Array<{ source: string; error: string }>;
 }> {
-  const plugins = listInstalledPlugins();
+  const { parsed } = readConfig();
   const updated: string[] = [];
   const failed: Array<{ source: string; error: string }> = [];
 
+  if (!parsed.plugins) return { updated, failed };
+
+  // Group plugins by source to avoid re-downloading the same package
   const sourceGroups = new Map<string, string[]>();
-  for (const plugin of plugins) {
-    const meta = readMetaFile(plugin.name);
-    if (!meta) continue;
-    const group = sourceGroups.get(meta.source) ?? [];
-    group.push(plugin.name);
-    sourceGroups.set(meta.source, group);
+  for (const [name, entry] of Object.entries(parsed.plugins)) {
+    const source = entry._source;
+    if (!source) continue;
+    const group = sourceGroups.get(source) ?? [];
+    group.push(name);
+    sourceGroups.set(source, group);
   }
 
   for (const [source, pluginNames] of sourceGroups) {
@@ -662,63 +694,25 @@ export async function updateAllPlugins(): Promise<{
 }
 
 /**
- * List all installed plugins by scanning ~/.beige/plugins/.
+ * List plugins from config.json5.
  */
-export function listInstalledPlugins(): DiscoveredPlugin[] {
-  const pluginsDir = getPluginsDir();
-  if (!existsSync(pluginsDir)) return [];
+export function listPluginsFromConfig(): Array<{
+  name: string;
+  path?: string;
+  source?: string;
+  hasConfig: boolean;
+}> {
+  try {
+    const { parsed } = readConfig();
+    if (!parsed.plugins) return [];
 
-  const plugins: DiscoveredPlugin[] = [];
-  const entries = readdirSync(pluginsDir);
-
-  for (const entry of entries) {
-    if (entry.endsWith(".meta.json")) continue;
-
-    const pluginPath = join(pluginsDir, entry);
-    const pluginJsonPath = join(pluginPath, "plugin.json");
-    const toolJsonPath = join(pluginPath, "tool.json");
-
-    try {
-      if (!statSync(pluginPath).isDirectory()) continue;
-    } catch {
-      continue;
-    }
-
-    let manifest: PluginManifest | null = null;
-
-    if (existsSync(pluginJsonPath)) {
-      try {
-        const raw = readFileSync(pluginJsonPath, "utf-8");
-        manifest = JSON.parse(raw) as PluginManifest;
-      } catch {
-        console.warn(`[PLUGINS] Failed to read plugin.json for '${entry}', skipping`);
-        continue;
-      }
-    } else if (existsSync(toolJsonPath)) {
-      try {
-        const raw = readFileSync(toolJsonPath, "utf-8");
-        const toolManifest = JSON.parse(raw) as {
-          name: string;
-          description: string;
-          commands?: string[];
-          target: string;
-        };
-        manifest = {
-          name: toolManifest.name,
-          description: toolManifest.description,
-          commands: toolManifest.commands,
-          provides: { tools: [toolManifest.name] },
-        };
-      } catch {
-        console.warn(`[PLUGINS] Failed to read tool.json for '${entry}', skipping`);
-        continue;
-      }
-    }
-
-    if (manifest) {
-      plugins.push({ name: manifest.name, path: pluginPath, manifest });
-    }
+    return Object.entries(parsed.plugins).map(([name, entry]) => ({
+      name,
+      path: entry.path,
+      source: entry._source,
+      hasConfig: !!entry.config && Object.keys(entry.config).length > 0,
+    }));
+  } catch {
+    return [];
   }
-
-  return plugins;
 }

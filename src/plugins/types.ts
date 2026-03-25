@@ -39,6 +39,12 @@ export interface PluginManifest {
   /** JSON Schema for plugin config validation. */
   configSchema?: Record<string, unknown>;
   /**
+   * Default config template with placeholder values.
+   * Used by `beige plugins install` to populate config.json5 entries.
+   * Placeholder values like "<YOUR_API_KEY>" signal to the user what to fill in.
+   */
+  defaultConfig?: Record<string, unknown>;
+  /**
    * CLI commands this plugin exposes.
    * Listed in the system prompt so agents know how to call the tool.
    * Same format as the old tool.json "commands" field.

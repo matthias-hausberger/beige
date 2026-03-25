@@ -52,7 +52,7 @@ Plugin `path` values are resolved relative to the config file's directory, unles
 
   // ── Plugins ──────────────────────────────────────────────────────────
   // Plugins provide tools, channels, hooks, and skills.
-  // Installed via `beige plugins install` are auto-discovered.
+  // Plugins installed via `beige plugins install` are added here automatically.
   plugins: {
     // Plugin with custom config (path auto-resolved if installed)
     github: {
@@ -252,9 +252,9 @@ This agent has no plugins but can still use the 4 core tools (`read`, `write`, `
 │       └── <id>.jsonl             # pi conversation session files
 ├── sockets/
 │   └── <agent>.sock               # Unix socket per agent
-├── plugins/                       # installed plugins (auto-discovered)
+├── plugins/                       # installed plugin files
 │   ├── github/
-│   ├── github.meta.json
+
 │   └── git/
 ├── packages/                      # intact multi-plugin packages
 │   └── matthias-hausberger-beige-toolkit/

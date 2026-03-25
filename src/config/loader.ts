@@ -3,45 +3,6 @@ import { resolve, dirname } from "path";
 import { beigeDir } from "../paths.js";
 import JSON5 from "json5";
 import { type BeigeConfig, type PluginConfig, type SkillConfig, validateConfig } from "./schema.js";
-import { listInstalledPlugins } from "../plugins/installer.js";
-
-/**
- * Merge installed plugins (from ~/.beige/plugins/) into the config.
- *
- * For each installed plugin:
- * - If the plugin is already in config.plugins with path: skip (user override)
- * - If the plugin is in config.plugins without path: enrich with installed path
- * - If the plugin is not in config.plugins: add it with path from disk
- */
-function mergeInstalledPlugins(config: BeigeConfig): void {
-  const installed = listInstalledPlugins();
-
-  if (!config.plugins) {
-    (config as any).plugins = {};
-  }
-
-  for (const plugin of installed) {
-    const existing = config.plugins![plugin.name];
-
-    if (existing && existing.path) {
-      // User has fully specified this plugin — skip
-      continue;
-    }
-
-    if (existing) {
-      // User defined the plugin (likely for config overrides) but without path.
-      // Enrich from the installed plugin.
-      if (!existing.path) {
-        existing.path = plugin.path;
-      }
-    } else {
-      // Plugin not in config at all — auto-add from installed plugins.
-      config.plugins![plugin.name] = {
-        path: plugin.path,
-      };
-    }
-  }
-}
 
 /**
  * Resolve environment variable references in strings.
@@ -117,13 +78,8 @@ export function loadConfig(configPath: string): BeigeConfig {
   const parsed = JSON5.parse(raw);
   const resolved = resolveEnvVars(parsed) as BeigeConfig;
 
-  // Resolve relative plugin paths BEFORE merging installed plugins.
+  // Resolve relative plugin paths against the config file directory.
   resolvePluginPaths(resolved, configDir);
-
-  // Installed plugins must be merged before validateConfig runs its cross-reference
-  // checks — otherwise agent plugin references that come from installed plugins
-  // are rejected as unknown.
-  mergeInstalledPlugins(resolved);
 
   const config = validateConfig(resolved);
   resolveSkillPaths(config, configDir);

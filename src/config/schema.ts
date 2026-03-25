@@ -137,13 +137,18 @@ const PluginConfig = Type.Object(
     path: Type.Optional(
       Type.String({
         description:
-          "Path to the plugin package directory. Resolved relative to the config file unless absolute. " +
-          "Auto-resolved for plugins installed via 'beige plugins install'.",
+          "Path to the plugin package directory. Resolved relative to the config file unless absolute.",
       })
     ),
     config: Type.Optional(
       Type.Record(Type.String(), Type.Unknown(), {
         description: "Arbitrary config object passed to createPlugin(config, ctx) at startup",
+      })
+    ),
+    _source: Type.Optional(
+      Type.String({
+        description:
+          "Install source (e.g. 'npm:@scope/package'). Written by 'beige plugins install', used by 'beige plugins update'. Do not edit manually.",
       })
     ),
   },

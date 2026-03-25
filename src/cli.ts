@@ -39,8 +39,7 @@ import {
   removePlugin,
   updatePlugin,
   updateAllPlugins,
-  listInstalledPlugins,
-  readMetaFile,
+  listPluginsFromConfig,
 } from "./plugins/installer.js";
 
 // ── Timestamp helpers ────────────────────────────────────────────────
@@ -856,34 +855,31 @@ async function cmdInstall(source: string, force: boolean): Promise<void> {
   }
   
   if (result.plugins && result.plugins.length > 0) {
-    console.log(`[BEIGE] Installed ${result.plugins.length} plugin(s):`);
+    console.log(`[BEIGE] Installed ${result.plugins.length} plugin(s) and added to config.json5:`);
     for (const plugin of result.plugins) {
       console.log(`  - ${plugin.name}: ${plugin.manifest.description}`);
     }
-    console.log(`\n[BEIGE] Add plugin tools to your agent's 'tools' array to enable them.`);
+    console.log(`\n[BEIGE] Add plugin tools to your agent's 'tools' array and restart the gateway.`);
+    console.log(`[BEIGE] Review config.json5 to fill in any required config values (e.g. API keys).`);
   }
 }
 
 function cmdPluginsList(): void {
-  const plugins = listInstalledPlugins();
+  const plugins = listPluginsFromConfig();
   
   if (plugins.length === 0) {
-    console.log("[BEIGE] No plugins installed.");
+    console.log("[BEIGE] No plugins in config.");
     console.log("\n[BEIGE] Install plugins with: beige plugins install <source>");
     return;
   }
   
-  console.log("[BEIGE] Installed plugins:\n");
+  console.log("[BEIGE] Plugins in config.json5:\n");
   
   for (const plugin of plugins) {
-    const meta = readMetaFile(plugin.name);
-    const source = meta?.source ?? "unknown";
     console.log(`  ${plugin.name}`);
-    console.log(`    ${plugin.manifest.description}`);
-    console.log(`    Source: ${source}`);
-    if (meta?.package) {
-      console.log(`    Package: ${meta.package}`);
-    }
+    if (plugin.path) console.log(`    Path: ${plugin.path}`);
+    if (plugin.source) console.log(`    Source: ${plugin.source}`);
+    if (plugin.hasConfig) console.log(`    Config: ✓ (has config values)`);
     console.log();
   }
 }
@@ -896,7 +892,7 @@ function cmdPluginsRemove(name: string): void {
     process.exit(1);
   }
   
-  console.log(`[BEIGE] Removed plugin: ${name}`);
+  console.log(`[BEIGE] Removed plugin '${name}' from config.json5 and disk.`);
 }
 
 async function cmdPluginsUpdate(name?: string): Promise<void> {
@@ -912,13 +908,13 @@ async function cmdPluginsUpdate(name?: string): Promise<void> {
     return;
   }
 
-  const plugins = listInstalledPlugins();
+  const plugins = listPluginsFromConfig();
   if (plugins.length === 0) {
-    console.log("[BEIGE] No plugins installed.");
+    console.log("[BEIGE] No plugins in config.");
     return;
   }
   
-  console.log(`[BEIGE] Updating all installed plugins...\n`);
+  console.log(`[BEIGE] Updating all plugins with _source...\n`);
   const result = await updateAllPlugins();
   
   console.log(`\n[BEIGE] Update complete: ${result.updated.length} updated, ${result.failed.length} failed.`);

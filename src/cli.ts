@@ -53,6 +53,9 @@ function timestampPrefix(): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+// Save original stderr.write before wrapping (for immediate flush on shutdown)
+const originalStderrWrite = process.stderr.write.bind(process.stderr);
+
 /**
  * Wraps process.stdout.write / process.stderr.write so that every line
  * written by the gateway process is prefixed with an HH:MM:SS timestamp.
@@ -363,13 +366,45 @@ async function cmdGatewayStart(configPath: string, foreground: boolean, timeoutM
   const { Gateway } = await import("./gateway/gateway.js");
   const gateway = new Gateway(config, configPath);
 
-  const shutdown = async () => {
-    console.log("\n[BEIGE] Shutting down...");
-    await gateway.stop();
-    process.exit(0);
+  let isShuttingDown = false;
+
+  const shutdown = async (signal: string) => {
+    // Prevent duplicate shutdowns
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    // Use original stderr.write to bypass timestamp buffering for immediate feedback
+    originalStderrWrite(`\n[BEIGE] Received ${signal} - Shutting down...\n`);
+
+    // Force exit after 10 seconds if shutdown hangs
+    const timeout = setTimeout(() => {
+      originalStderrWrite("[BEIGE] Shutdown timed out, forcing exit...\n");
+      process.exit(1);
+    }, 10000);
+
+    try {
+      await gateway.stop();
+      clearTimeout(timeout);
+      originalStderrWrite("[BEIGE] Shutdown complete\n");
+      process.exit(0);
+    } catch (err) {
+      clearTimeout(timeout);
+      originalStderrWrite(`[BEIGE] Shutdown error: ${(err as Error).message}\n`);
+      process.exit(1);
+    }
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+
+  // Log that signal handlers are being registered (helps debug signal issues)
+  originalStderrWrite("[BEIGE] Registering signal handlers...\n");
+
+  // Register handlers with explicit listener count check
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+  // Verify handlers are registered
+  const sigintListeners = process.listenerCount("SIGINT");
+  const sigtermListeners = process.listenerCount("SIGTERM");
+  originalStderrWrite(`[BEIGE] Signal handlers registered (SIGINT: ${sigintListeners}, SIGTERM: ${sigtermListeners})\n`);
 
   // SIGHUP → graceful in-place restart (reload config, recreate sandboxes)
   process.on("SIGHUP", () => {

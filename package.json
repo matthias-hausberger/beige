@@ -23,7 +23,7 @@
     "config.schema.json"
   ],
   "scripts": {
-    "beige": "mkdir -p .beige && cp examples/config.dev.json5 .beige/config.json5 && BEIGE_HOME=./.beige kfl run --project beige-deploy --env dev -- tsx src/cli.ts",
+    "beige": "kfl download --project beige-deploy --env dev --format shell > .beige/.env && mkdir -p .beige && cp examples/config.dev.json5 .beige/config.json5 && export $(cat .beige/.env | xargs) && BEIGE_HOME=./.beige tsx src/cli.ts",
     "build": "tsc && pnpm run build:assets",
     "build:assets": "mkdir -p dist/gateway && cp src/gateway/system-prompt.template.md dist/gateway/ && cp src/gateway/default-agents-md.md dist/gateway/",
     "start": "node dist/cli.js",

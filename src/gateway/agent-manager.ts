@@ -691,12 +691,20 @@ export class AgentManager {
       });
     };
 
+    // Add a timeout to prevent hanging on stuck calls (10 seconds)
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("Drain timeout")), 10000);
+    });
+
     // Iteratively wait until the whole map is quiet (new sessions could be
     // created by concurrent callers while we wait).
     let quiet = false;
     while (!quiet) {
       const pending = [...this.sessions.values()];
-      await Promise.all(pending.map(drainSession));
+      await Promise.race([
+        Promise.all(pending.map(drainSession)),
+        timeoutPromise,
+      ]);
       // Check again — no new calls should have started after drainResolvers fire
       quiet = [...this.sessions.values()].every((s) => s.inflightCount === 0);
     }

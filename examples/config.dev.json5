@@ -1,0 +1,111 @@
+{
+  // Beige Development Configuration
+  //
+  // Mirrors the beige-deploy production config but uses LOCAL plugin paths
+  // from the sibling beige-toolkit repo (../beige-toolkit/).
+  //
+  // Usage:
+  //   pnpm run dev                           # copies this config + starts gateway with kfl secrets
+  //   pnpm run dev:tui                       # starts TUI against the running gateway
+  //
+  // Secrets are injected via Keyflare (kfl) from the beige-deploy project.
+
+  $schema: "https://raw.githubusercontent.com/matthias-hausberger/beige/main/config.schema.json",
+
+  llm: {
+    providers: {
+      zai: {
+        apiKey: "${ZAI_API_KEY}",
+      },
+      anthropic: {
+        // OAuth credentials managed via /login — stored in ~/.beige/auth.json
+      },
+    },
+  },
+
+  // ── Plugins (local paths) ──────────────────────────────────────────────────
+  // All paths are relative to this config file's location (.beige/config.json5).
+  // ../../beige-toolkit/ resolves to the sibling beige-toolkit repo.
+
+  plugins: {
+    git: {
+      path: "../../beige-toolkit/tools/git",
+      config: {
+        "identity.name": "Agent Beige",
+        "identity.email": "${GITHUB_EMAIL}",
+      },
+    },
+    github: {
+      path: "../../beige-toolkit/tools/github",
+      config: {
+        token: "${GITHUB_TOKEN}",
+      },
+    },
+    chrome: {
+      path: "../../beige-toolkit/tools/chrome",
+      config: {
+        headless: true,
+      },
+    },
+    sessions: {
+      path: "../../beige-toolkit/tools/sessions",
+    },
+    spawn: {
+      path: "../../beige-toolkit/tools/spawn",
+      config: {
+        targets: {
+          SELF: {},
+        },
+        maxDepth: 2,
+      },
+    },
+    wrangler: {
+      path: "../../beige-toolkit/tools/wrangler",
+      config: {
+        accountId: "${CLOUDFLARE_ACCOUNT_ID}",
+        apiToken: "${CLOUDFLARE_API_TOKEN}",
+      },
+    },
+    slack: {
+      path: "../../beige-toolkit/tools/slack",
+    },
+    confluence: {
+      path: "../../beige-toolkit/tools/confluence",
+    },
+    telegram: {
+      path: "../../beige-toolkit/plugins/telegram",
+      config: {
+        token: "${TELEGRAM_BOT_TOKEN}",
+        allowedUsers: ["${TELEGRAM_USER_ID}"],
+        agentMapping: {
+          default: "beige",
+        },
+        defaults: {
+          verbose: false,
+          streaming: true,
+        },
+      },
+    },
+  },
+
+  agents: {
+    beige: {
+      model: {
+        provider: "zai",
+        model: "glm-5",
+        thinkingLevel: "off",
+      },
+      fallbackModels: [
+        {
+          provider: "anthropic",
+          model: "claude-sonnet-4.6",
+          thinkingLevel: "off",
+        },
+      ],
+      tools: ["chrome", "sessions", "spawn", "git", "github", "wrangler", "telegram"],
+      sandbox: {
+        image: "beige-sandbox:latest",
+      },
+    },
+  },
+}

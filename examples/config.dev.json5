@@ -92,7 +92,7 @@
     beige: {
       model: {
         provider: "zai",
-        model: "glm-5",
+        model: "glm-4.7",
         thinkingLevel: "off",
       },
       fallbackModels: [

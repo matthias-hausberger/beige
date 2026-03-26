@@ -362,6 +362,20 @@ export interface PluginContext {
   /** Invoke a registered tool by name (from any plugin). */
   invokeTool(toolName: string, args: string[], sessionContext?: SessionContext): Promise<ToolResult>;
 
+  // ── Session compaction ─────────────────────────────────
+  /**
+   * Manually compact the session context.
+   * Aborts any in-flight operation first, then runs an LLM summarisation
+   * pass that replaces old history with a summary, freeing context tokens.
+   *
+   * Throws if no session exists, the session is too small to compact,
+   * or it's already been compacted without new content since.
+   *
+   * Returns the number of tokens the context held before compaction and
+   * the generated summary text.
+   */
+  compactSession(sessionKey: string): Promise<{ tokensBefore: number; summary: string }>;
+
   // ── Session control ────────────────────────────────────
   /**
    * Whether a prompt is currently in flight for this session.

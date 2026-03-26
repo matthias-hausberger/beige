@@ -873,6 +873,40 @@ export class AgentManager {
   }
 
   /**
+   * Manually compact the session context.
+   * Aborts any in-flight operation first, then runs an LLM summarisation pass
+   * and replaces the session history with the compacted version.
+   *
+   * Throws if:
+   *   - No session exists for the key (user hasn't sent a message yet)
+   *   - The session is already compacted / too small to compact
+   *   - No API key is available for the current model
+   */
+  async compactSession(sessionKey: string): Promise<{ tokensBefore: number; summary: string }> {
+    // If no in-memory session exists the gateway may have been restarted after the
+    // session was originally created. The session file is still on disk — restore it
+    // from the session store before compacting.
+    if (!this.sessions.has(sessionKey)) {
+      const agentName = this.sessionStore.getAgentName(sessionKey);
+      if (!agentName) {
+        throw new Error("No session found for this chat. Send a message first to start one.");
+      }
+      console.log(`[AGENT] Restoring session '${sessionKey}' (agent '${agentName}') for compaction`);
+      await this.getOrCreateSession(sessionKey, agentName);
+    }
+
+    const managed = this.sessions.get(sessionKey);
+    if (!managed) {
+      throw new Error("Failed to restore session. Send a message first.");
+    }
+
+    console.log(`[AGENT] Manual compaction requested for session '${sessionKey}'`);
+    const result = await managed.session.compact();
+    console.log(`[AGENT] Compaction complete for '${sessionKey}': ${result.tokensBefore} tokens freed`);
+    return { tokensBefore: result.tokensBefore, summary: result.summary };
+  }
+
+  /**
    * Whether a prompt is currently in flight for a session.
    * Used by channel plugins to decide whether to steer vs. start a new turn.
    */

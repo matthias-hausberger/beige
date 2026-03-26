@@ -141,6 +141,11 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       return tool.handler(args, undefined, sessionContext);
     },
 
+    // ── Session compaction ─────────────────────────────────
+    async compactSession(sessionKey): Promise<{ tokensBefore: number; summary: string }> {
+      return getAgentManager().compactSession(sessionKey);
+    },
+
     // ── Session control ────────────────────────────────────
     isSessionActive(sessionKey): boolean {
       return getAgentManager().isSessionActive(sessionKey);

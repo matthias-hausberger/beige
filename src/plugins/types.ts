@@ -461,6 +461,25 @@ export interface PromptOpts {
    * callback is the final response.
    */
   onAssistantTurnStart?: () => void;
+
+  /**
+   * Called when auto-compaction starts (either threshold or overflow recovery).
+   * Fires after the prompt response has already been delivered, as compaction
+   * runs as a post-response background task.
+   */
+  onAutoCompactionStart?: () => void;
+
+  /**
+   * Called when auto-compaction finishes.
+   * `tokensBefore` is the context size before compaction (undefined on failure).
+   * `willRetry` is true for overflow recovery — the original prompt is being retried.
+   */
+  onAutoCompactionEnd?: (result: {
+    success: boolean;
+    tokensBefore?: number;
+    willRetry: boolean;
+    errorMessage?: string;
+  }) => void;
 }
 
 // ── Plugin Instance ──────────────────────────────────────────────────────────

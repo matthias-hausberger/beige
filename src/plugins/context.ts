@@ -61,6 +61,8 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       const mgr = getAgentManager();
       return mgr.prompt(sessionKey, agentName, message, {
         onToolStart: opts?.onToolStart,
+        onAutoCompactionStart: opts?.onAutoCompactionStart,
+        onAutoCompactionEnd: opts?.onAutoCompactionEnd,
       });
     },
 
@@ -69,6 +71,8 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       return mgr.promptStreaming(sessionKey, agentName, message, onDelta, {
         onToolStart: opts?.onToolStart,
         onAssistantTurnStart: opts?.onAssistantTurnStart,
+        onAutoCompactionStart: opts?.onAutoCompactionStart,
+        onAutoCompactionEnd: opts?.onAutoCompactionEnd,
       });
     },
 

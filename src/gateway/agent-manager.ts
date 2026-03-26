@@ -1,4 +1,4 @@
-import { getModel } from "@mariozechner/pi-ai";
+import { getModel, isContextOverflow } from "@mariozechner/pi-ai";
 import {
   AuthStorage,
   createAgentSession,
@@ -231,7 +231,7 @@ export class AgentManager {
     sessionKey: string,
     agentName: string,
     message: string,
-    opts?: { onToolStart?: OnToolStart; channel?: string }
+    opts?: { onToolStart?: OnToolStart; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void; channel?: string }
   ): Promise<string> {
     const agentConfig = this.config.agents[agentName];
     if (!agentConfig) {
@@ -335,7 +335,7 @@ export class AgentManager {
     agentName: string,
     message: string,
     onDelta: (delta: string) => void,
-    opts?: { onToolStart?: OnToolStart; onAssistantTurnStart?: () => void; channel?: string }
+    opts?: { onToolStart?: OnToolStart; onAssistantTurnStart?: () => void; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void; channel?: string }
   ): Promise<string> {
     const agentConfig = this.config.agents[agentName];
     if (!agentConfig) {
@@ -452,7 +452,7 @@ export class AgentManager {
     agentName: string,
     message: string,
     modelRef: ModelRef,
-    opts?: { onToolStart?: OnToolStart }
+    opts?: { onToolStart?: OnToolStart; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void }
   ): Promise<string> {
     const managed = await this.getOrCreateSessionWithModel(
       sessionKey,
@@ -468,37 +468,23 @@ export class AgentManager {
         // Intermediate text emitted before tool calls (e.g. "I'll check…") is discarded.
         let responseText = "";
 
-        const unsubscribe = managed.session.subscribe((event) => {
-          if (event.type === "message_start" && event.message.role === "assistant") {
-            responseText = "";
-          }
-
-          if (
-            event.type === "message_update" &&
-            event.assistantMessageEvent.type === "text_delta"
-          ) {
-            responseText += event.assistantMessageEvent.delta;
-          }
-
-          if (event.type === "agent_end") {
-            unsubscribe();
-
-            // If we have no text, check whether the session ended with a
-            // non-retryable LLM error (e.g. 401 auth failure, invalid model).
-            // Pi resolves agent_end normally for these — no text_delta is
-            // emitted — so we must surface the error explicitly.
-            if (responseText === "") {
-              const errMsg = extractLLMError(event.messages);
+        const unsubscribe = managed.session.subscribe(
+          makeSessionSubscriber({
+            sessionKey,
+            onTextReset: () => { responseText = ""; },
+            onTextDelta: (delta) => { responseText += delta; },
+            onSettle: (errMsg) => {
               if (errMsg) {
                 console.error(`[AGENT] LLM error for session '${sessionKey}': ${errMsg}`);
                 reject(new Error(errMsg));
-                return;
+              } else {
+                resolve(responseText);
               }
-            }
-
-            resolve(responseText);
-          }
-        });
+            },
+            onCleanup: () => unsubscribe(),
+            opts,
+          })
+        );
 
         managed.session.prompt(message).catch((err) => {
           unsubscribe();
@@ -519,7 +505,7 @@ export class AgentManager {
     message: string,
     onDelta: (delta: string) => void,
     modelRef: ModelRef,
-    opts?: { onToolStart?: OnToolStart; onAssistantTurnStart?: () => void }
+    opts?: { onToolStart?: OnToolStart; onAssistantTurnStart?: () => void; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void }
   ): Promise<string> {
     const managed = await this.getOrCreateSessionWithModel(
       sessionKey,
@@ -536,38 +522,29 @@ export class AgentManager {
         // Telegram plugin) discard/replace any previously rendered partial content.
         let responseText = "";
 
-        const unsubscribe = managed.session.subscribe((event) => {
-          if (event.type === "message_start" && event.message.role === "assistant") {
-            responseText = "";
-            opts?.onAssistantTurnStart?.();
-          }
-
-          if (
-            event.type === "message_update" &&
-            event.assistantMessageEvent.type === "text_delta"
-          ) {
-            const delta = event.assistantMessageEvent.delta;
-            responseText += delta;
-            onDelta(delta);
-          }
-
-          if (event.type === "agent_end") {
-            unsubscribe();
-
-            // Surface non-retryable LLM errors (e.g. 401 auth failure) that pi
-            // resolves as agent_end without any text_delta.
-            if (responseText === "") {
-              const errMsg = extractLLMError(event.messages);
+        const unsubscribe = managed.session.subscribe(
+          makeSessionSubscriber({
+            sessionKey,
+            onTextReset: () => {
+              responseText = "";
+              opts?.onAssistantTurnStart?.();
+            },
+            onTextDelta: (delta) => {
+              responseText += delta;
+              onDelta(delta);
+            },
+            onSettle: (errMsg) => {
               if (errMsg) {
                 console.error(`[AGENT] LLM error for session '${sessionKey}': ${errMsg}`);
                 reject(new Error(errMsg));
-                return;
+              } else {
+                resolve(responseText);
               }
-            }
-
-            resolve(responseText);
-          }
-        });
+            },
+            onCleanup: () => unsubscribe(),
+            opts,
+          })
+        );
 
         managed.session.prompt(message).catch((err) => {
           unsubscribe();
@@ -764,7 +741,7 @@ export class AgentManager {
   async newSession(
     sessionKey: string,
     agentName: string,
-    opts?: { onToolStart?: OnToolStart }
+    opts?: { onToolStart?: OnToolStart; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void }
   ): Promise<ManagedSession> {
     // Carry over onToolStart from the old session if not explicitly provided
     const existingHandler = this.sessions.get(sessionKey)?.toolStartHandlerRef.fn;
@@ -941,15 +918,101 @@ export class AgentManager {
 }
 
 /**
+ * Build a session event subscriber that correctly handles the full lifecycle
+ * of a prompt, including post-response auto-compaction.
+ *
+ * Key behaviour:
+ * - On agent_end: settle the promise (resolve or reject) but keep the
+ *   subscription alive briefly so compaction events can still be received.
+ *   Auto-compaction fires AFTER agent_end inside _processAgentEvent, so if
+ *   we unsubscribed immediately on agent_end we'd never see it.
+ * - If auto_compaction_start fires within 2 s of agent_end: extend the
+ *   subscription until auto_compaction_end arrives.
+ * - Otherwise: unsubscribe after the 2 s safety timeout.
+ */
+function makeSessionSubscriber(params: {
+  sessionKey: string;
+  onTextReset: () => void;
+  onTextDelta: (delta: string) => void;
+  onSettle: (errMsg: string | undefined) => void;
+  onCleanup: () => void;
+  opts?: {
+    onAutoCompactionStart?: () => void;
+    onAutoCompactionEnd?: (result: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void;
+  };
+}) {
+  const { onTextReset, onTextDelta, onSettle, onCleanup, opts } = params;
+
+  let settled = false;
+  let compactionInProgress = false;
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const cleanup = () => {
+    if (cleanupTimer !== undefined) clearTimeout(cleanupTimer);
+    onCleanup();
+  };
+
+  return (event: { type: string; message?: { role: string }; assistantMessageEvent?: { type: string; delta?: string }; messages?: readonly unknown[]; result?: { tokensBefore?: number }; aborted?: boolean; willRetry?: boolean; errorMessage?: string }) => {
+    if (event.type === "message_start" && event.message?.role === "assistant") {
+      onTextReset();
+    }
+
+    if (
+      event.type === "message_update" &&
+      event.assistantMessageEvent?.type === "text_delta" &&
+      event.assistantMessageEvent.delta !== undefined
+    ) {
+      onTextDelta(event.assistantMessageEvent.delta);
+    }
+
+    if (event.type === "agent_end") {
+      const errMsg = extractLLMError((event.messages ?? []) as Parameters<typeof extractLLMError>[0]);
+      settled = true;
+      onSettle(errMsg);
+
+      // Stay subscribed briefly so we can catch any compaction that starts
+      // immediately after (compaction is triggered inside _processAgentEvent
+      // after _emit(agent_end), so it follows in the same async chain).
+      cleanupTimer = setTimeout(() => {
+        if (!compactionInProgress) cleanup();
+      }, 2000);
+    }
+
+    if (event.type === "auto_compaction_start") {
+      compactionInProgress = true;
+      if (cleanupTimer !== undefined) clearTimeout(cleanupTimer);
+      opts?.onAutoCompactionStart?.();
+    }
+
+    if (event.type === "auto_compaction_end") {
+      compactionInProgress = false;
+      opts?.onAutoCompactionEnd?.({
+        success: !event.aborted && event.result !== undefined,
+        tokensBefore: event.result?.tokensBefore,
+        willRetry: event.willRetry ?? false,
+        errorMessage: event.errorMessage,
+      });
+      if (settled) cleanup();
+    }
+  };
+}
+
+/**
  * Inspect the messages from an agent_end event and return the errorMessage
  * from the last assistant message if it ended with stopReason "error".
  * Returns undefined if the session ended normally.
  */
-function extractLLMError(messages: readonly { role: string; stopReason?: string; errorMessage?: string }[]): string | undefined {
+function extractLLMError(messages: readonly { role: string; stopReason?: string; errorMessage?: string; usage?: unknown; provider?: string; model?: string }[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg.role === "assistant") {
       if (msg.stopReason === "error" && msg.errorMessage) {
+        // Skip context overflow errors — pi handles those transparently via
+        // auto-compaction + retry. Surfacing them as rejections would
+        // interfere with that mechanism and double-report the error.
+        if (isContextOverflow(msg as Parameters<typeof isContextOverflow>[0])) {
+          return undefined;
+        }
         return msg.errorMessage;
       }
       // Last assistant message found but not an error — session ended normally

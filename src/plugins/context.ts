@@ -10,6 +10,8 @@ import type { AgentManager, OnToolStart } from "../gateway/agent-manager.js";
 import type { BeigeSessionStore } from "../gateway/sessions.js";
 import type { SessionSettingsStore } from "../gateway/session-settings.js";
 import type { SessionContext } from "../types/session.js";
+import { readFileSync } from "fs";
+import { parseSessionEntries, getLastAssistantUsage } from "@mariozechner/pi-coding-agent";
 import type {
   PluginContext,
   PluginLogger,
@@ -18,6 +20,8 @@ import type {
   SessionSettings,
   ChannelAdapter,
   ReplyTarget,
+  ModelInfo,
+  SessionUsage,
 } from "./types.js";
 import type { PluginRegistry } from "./registry.js";
 
@@ -136,6 +140,49 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       return tool.handler(args, undefined, sessionContext);
     },
 
+    // ── Model info ─────────────────────────────────────────
+    getModel(provider, modelId): ModelInfo | undefined {
+      const registry = getAgentManager().getModelRegistry();
+      const model = registry.find(provider, modelId);
+      if (!model) return undefined;
+      return {
+        provider: model.provider,
+        modelId: model.id,
+        name: model.name,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+      };
+    },
+
+    getSessionUsage(sessionKey): SessionUsage | undefined {
+      const entries = readSessionEntries(sessionKey);
+      if (!entries) return undefined;
+
+      const usage = getLastAssistantUsage(entries);
+      if (!usage) return undefined;
+
+      return {
+        inputTokens: usage.input,
+        outputTokens: usage.output,
+        cacheReadTokens: usage.cacheRead ?? 0,
+        cacheWriteTokens: usage.cacheWrite ?? 0,
+      };
+    },
+
+    getSessionModel(sessionKey): { provider: string; modelId: string } | undefined {
+      const entries = readSessionEntries(sessionKey);
+      if (!entries) return undefined;
+
+      // Walk backwards to find the last model_change entry
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const entry = entries[i];
+        if (entry.type === "model_change") {
+          return { provider: entry.provider, modelId: entry.modelId };
+        }
+      }
+      return undefined;
+    },
+
     // ── Config & info ──────────────────────────────────────
     get config() {
       return config as Readonly<Record<string, unknown>>;
@@ -162,6 +209,30 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
   return ctx;
 
   // ── Internal helpers ─────────────────────────────────────
+
+  /**
+   * Read and parse the session .jsonl file for a given session key.
+   * Returns the SessionEntry array (header filtered out), or undefined if the
+   * session doesn't exist or the file can't be read.
+   */
+  function readSessionEntries(sessionKey: string): Parameters<typeof getLastAssistantUsage>[0] | undefined {
+    const entry = sessionStore.getEntry(sessionKey);
+    if (!entry?.sessionFile) return undefined;
+
+    let content: string;
+    try {
+      content = readFileSync(entry.sessionFile, "utf-8");
+    } catch {
+      return undefined;
+    }
+
+    const fileEntries = parseSessionEntries(content);
+    // parseSessionEntries returns FileEntry[] (SessionHeader | SessionEntry[]).
+    // Filter out the "session" header so we're left with SessionEntry[].
+    return fileEntries.filter(
+      (e) => (e as { type: string }).type !== "session"
+    ) as Parameters<typeof getLastAssistantUsage>[0];
+  }
 
   function getSessionMapSettings(sessionKey: string): Partial<SessionSettings> {
     const entry = sessionStore.getEntry(sessionKey);

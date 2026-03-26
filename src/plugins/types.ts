@@ -276,6 +276,31 @@ export interface SessionSettings {
   metadata?: Record<string, unknown>;
 }
 
+// ── Model info types ─────────────────────────────────────────────────────────
+
+/** Metadata for a registered model, as surfaced to plugins. */
+export interface ModelInfo {
+  provider: string;
+  modelId: string;
+  name: string;
+  /** Total context window size in tokens. */
+  contextWindow: number;
+  /** Maximum output tokens the model can generate in a single response. */
+  maxTokens: number;
+}
+
+/** Most-recent token usage for a session, read from the session file. */
+export interface SessionUsage {
+  /** Total input tokens sent on the last LLM turn (= current context size). */
+  inputTokens: number;
+  /** Output tokens generated on the last LLM turn. */
+  outputTokens: number;
+  /** Cache-read tokens (Anthropic prompt caching). */
+  cacheReadTokens: number;
+  /** Cache-write tokens (Anthropic prompt caching). */
+  cacheWriteTokens: number;
+}
+
 // ── Plugin Context ───────────────────────────────────────────────────────────
 
 /**
@@ -336,6 +361,29 @@ export interface PluginContext {
   // ── Cross-plugin tool invocation ───────────────────────
   /** Invoke a registered tool by name (from any plugin). */
   invokeTool(toolName: string, args: string[], sessionContext?: SessionContext): Promise<ToolResult>;
+
+  // ── Model info ─────────────────────────────────────────
+  /**
+   * Look up a model's metadata (context window, max output tokens, etc.)
+   * by provider and model ID. Returns undefined if the model is not registered.
+   */
+  getModel(provider: string, modelId: string): ModelInfo | undefined;
+
+  /**
+   * Get the most recent token usage for a session by reading the session file.
+   * Returns undefined if the session has no assistant messages yet.
+   *
+   * `inputTokens` reflects the full context sent to the LLM on the last turn —
+   * i.e. the current context size in tokens.
+   */
+  getSessionUsage(sessionKey: string): SessionUsage | undefined;
+
+  /**
+   * Get the currently active model for a session by reading the last
+   * `model_change` entry from the session file.
+   * Returns undefined if no session exists or no model has been set yet.
+   */
+  getSessionModel(sessionKey: string): { provider: string; modelId: string } | undefined;
 
   // ── Config & info ──────────────────────────────────────
   /** The full resolved Beige config (read-only). */

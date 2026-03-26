@@ -826,6 +826,11 @@ export class AgentManager {
   getOnToolStartCallback(sessionKey: string): ((toolName: string, params: Record<string, unknown>) => void) | undefined {
     return this.sessions.get(sessionKey)?.toolStartHandlerRef.fn;
   }
+
+  /** Expose the model registry so plugins can look up model metadata (e.g. context window size). */
+  getModelRegistry(): ModelRegistry {
+    return this.modelRegistry;
+  }
 }
 
 /**

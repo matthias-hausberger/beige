@@ -482,6 +482,20 @@ export class AgentManager {
 
           if (event.type === "agent_end") {
             unsubscribe();
+
+            // If we have no text, check whether the session ended with a
+            // non-retryable LLM error (e.g. 401 auth failure, invalid model).
+            // Pi resolves agent_end normally for these — no text_delta is
+            // emitted — so we must surface the error explicitly.
+            if (responseText === "") {
+              const errMsg = extractLLMError(event.messages);
+              if (errMsg) {
+                console.error(`[AGENT] LLM error for session '${sessionKey}': ${errMsg}`);
+                reject(new Error(errMsg));
+                return;
+              }
+            }
+
             resolve(responseText);
           }
         });
@@ -539,6 +553,18 @@ export class AgentManager {
 
           if (event.type === "agent_end") {
             unsubscribe();
+
+            // Surface non-retryable LLM errors (e.g. 401 auth failure) that pi
+            // resolves as agent_end without any text_delta.
+            if (responseText === "") {
+              const errMsg = extractLLMError(event.messages);
+              if (errMsg) {
+                console.error(`[AGENT] LLM error for session '${sessionKey}': ${errMsg}`);
+                reject(new Error(errMsg));
+                return;
+              }
+            }
+
             resolve(responseText);
           }
         });
@@ -878,6 +904,25 @@ export class AgentManager {
     if (!managed) return;
     await managed.session.steer(text);
   }
+}
+
+/**
+ * Inspect the messages from an agent_end event and return the errorMessage
+ * from the last assistant message if it ended with stopReason "error".
+ * Returns undefined if the session ended normally.
+ */
+function extractLLMError(messages: readonly { role: string; stopReason?: string; errorMessage?: string }[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "assistant") {
+      if (msg.stopReason === "error" && msg.errorMessage) {
+        return msg.errorMessage;
+      }
+      // Last assistant message found but not an error — session ended normally
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 /**

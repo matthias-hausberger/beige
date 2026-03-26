@@ -439,6 +439,14 @@ export interface PromptOpts {
   replyTo?: ReplyTarget;
   /** Tool-start notification callback. */
   onToolStart?: (toolName: string, params: Record<string, unknown>) => void;
+  /**
+   * Called each time a new assistant LLM turn starts.
+   * In streaming mode this signals that a new response is beginning — any
+   * previously streamed content from an earlier turn (emitted before tool calls)
+   * should be discarded. Only the content streamed after the last call to this
+   * callback is the final response.
+   */
+  onAssistantTurnStart?: () => void;
 }
 
 // ── Plugin Instance ──────────────────────────────────────────────────────────

@@ -335,7 +335,7 @@ export class AgentManager {
     agentName: string,
     message: string,
     onDelta: (delta: string) => void,
-    opts?: { onToolStart?: OnToolStart; channel?: string }
+    opts?: { onToolStart?: OnToolStart; onAssistantTurnStart?: () => void; channel?: string }
   ): Promise<string> {
     const agentConfig = this.config.agents[agentName];
     if (!agentConfig) {
@@ -464,9 +464,15 @@ export class AgentManager {
 
     try {
       return await new Promise<string>((resolve, reject) => {
+        // Reset on each new assistant turn so only the final turn's text is returned.
+        // Intermediate text emitted before tool calls (e.g. "I'll check…") is discarded.
         let responseText = "";
 
         const unsubscribe = managed.session.subscribe((event) => {
+          if (event.type === "message_start" && event.message.role === "assistant") {
+            responseText = "";
+          }
+
           if (
             event.type === "message_update" &&
             event.assistantMessageEvent.type === "text_delta"
@@ -499,7 +505,7 @@ export class AgentManager {
     message: string,
     onDelta: (delta: string) => void,
     modelRef: ModelRef,
-    opts?: { onToolStart?: OnToolStart }
+    opts?: { onToolStart?: OnToolStart; onAssistantTurnStart?: () => void }
   ): Promise<string> {
     const managed = await this.getOrCreateSessionWithModel(
       sessionKey,
@@ -511,9 +517,17 @@ export class AgentManager {
 
     try {
       return await new Promise<string>((resolve, reject) => {
+        // Reset on each new assistant turn so only the final turn's text is returned
+        // and streamed. The onAssistantTurnStart callback lets the caller (e.g. the
+        // Telegram plugin) discard/replace any previously rendered partial content.
         let responseText = "";
 
         const unsubscribe = managed.session.subscribe((event) => {
+          if (event.type === "message_start" && event.message.role === "assistant") {
+            responseText = "";
+            opts?.onAssistantTurnStart?.();
+          }
+
           if (
             event.type === "message_update" &&
             event.assistantMessageEvent.type === "text_delta"

@@ -68,6 +68,7 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       const mgr = getAgentManager();
       return mgr.promptStreaming(sessionKey, agentName, message, onDelta, {
         onToolStart: opts?.onToolStart,
+        onAssistantTurnStart: opts?.onAssistantTurnStart,
       });
     },
 

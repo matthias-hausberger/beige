@@ -362,6 +362,28 @@ export interface PluginContext {
   /** Invoke a registered tool by name (from any plugin). */
   invokeTool(toolName: string, args: string[], sessionContext?: SessionContext): Promise<ToolResult>;
 
+  // ── Session control ────────────────────────────────────
+  /**
+   * Whether a prompt is currently in flight for this session.
+   * Use this to decide whether to steer (interrupt) vs. start a new turn.
+   */
+  isSessionActive(sessionKey: string): boolean;
+
+  /**
+   * Abort the current operation and wait until the agent is idle.
+   * The in-flight prompt/promptStreaming call resolves with any partial response
+   * already accumulated. No-op if the session is idle or doesn't exist.
+   */
+  abortSession(sessionKey: string): Promise<void>;
+
+  /**
+   * Steer the currently running session with a new message.
+   * Delivered after the current tool finishes, skipping remaining tool calls —
+   * exactly like pressing ESC and typing a new message in the TUI.
+   * No-op if no session exists for the key.
+   */
+  steerSession(sessionKey: string, text: string): Promise<void>;
+
   // ── Model info ─────────────────────────────────────────
   /**
    * Look up a model's metadata (context window, max output tokens, etc.)

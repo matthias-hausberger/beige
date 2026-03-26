@@ -140,6 +140,19 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       return tool.handler(args, undefined, sessionContext);
     },
 
+    // ── Session control ────────────────────────────────────
+    isSessionActive(sessionKey): boolean {
+      return getAgentManager().isSessionActive(sessionKey);
+    },
+
+    async abortSession(sessionKey): Promise<void> {
+      await getAgentManager().abortSession(sessionKey);
+    },
+
+    async steerSession(sessionKey, text): Promise<void> {
+      await getAgentManager().steerSession(sessionKey, text);
+    },
+
     // ── Model info ─────────────────────────────────────────
     getModel(provider, modelId): ModelInfo | undefined {
       const registry = getAgentManager().getModelRegistry();

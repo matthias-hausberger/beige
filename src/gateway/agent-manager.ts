@@ -831,6 +831,39 @@ export class AgentManager {
   getModelRegistry(): ModelRegistry {
     return this.modelRegistry;
   }
+
+  /**
+   * Whether a prompt is currently in flight for a session.
+   * Used by channel plugins to decide whether to steer vs. start a new turn.
+   */
+  isSessionActive(sessionKey: string): boolean {
+    const managed = this.sessions.get(sessionKey);
+    return managed !== undefined && managed.inflightCount > 0;
+  }
+
+  /**
+   * Abort the current operation for a session and wait until the agent is idle.
+   * The in-flight prompt/promptStreaming call will resolve with whatever
+   * partial response the agent had accumulated.
+   * No-op if no session exists or the session is already idle.
+   */
+  async abortSession(sessionKey: string): Promise<void> {
+    const managed = this.sessions.get(sessionKey);
+    if (!managed) return;
+    await managed.session.abort();
+  }
+
+  /**
+   * Steer the currently running session with a new message.
+   * The message is delivered after the current tool finishes, interrupting
+   * remaining queued tool calls — exactly like pressing ESC and typing in the TUI.
+   * No-op if no session exists for the key.
+   */
+  async steerSession(sessionKey: string, text: string): Promise<void> {
+    const managed = this.sessions.get(sessionKey);
+    if (!managed) return;
+    await managed.session.steer(text);
+  }
 }
 
 /**

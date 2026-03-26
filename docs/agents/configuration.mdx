@@ -89,9 +89,15 @@ Plugin `path` values are resolved relative to the config file's directory, unles
         provider: "anthropic",
         model: "claude-sonnet-4-6",
         thinkingLevel: "off",
+        // Trigger auto-compaction at 100k tokens instead of the default (~184k)
+        compactionThreshold: 100000,
       },
       fallbackModels: [
-        { provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
+        {
+          provider: "anthropic",
+          model: "claude-3-5-sonnet-20241022",
+          compactionThreshold: 80000,  // per-fallback threshold
+        },
       ],
       tools: ["git", "github"],
       skills: ["code-review"],
@@ -162,10 +168,11 @@ Plugin `path` values are resolved relative to the config file's directory, unles
 | `provider` | Yes | Must match a key in `llm.providers` |
 | `model` | Yes | Model ID as the provider expects it |
 | `thinkingLevel` | No | `off` \| `minimal` \| `low` \| `medium` \| `high` — extended thinking budget |
+| `compactionThreshold` | No | Token count at which auto-compaction triggers for this model. Must be less than the model's context window. Defaults to `contextWindow − 16384`. Example: `100000` on a 200k model compacts at 100k tokens. |
 
 ### `agents.<name>.fallbackModels`
 
-Optional array of fallback models tried in order when the primary model fails.
+Optional array of `ModelRef` objects tried in order when the primary model fails or is rate-limited. Each fallback can carry its own `thinkingLevel` and `compactionThreshold`.
 
 ### `agents.<name>.sandbox`
 

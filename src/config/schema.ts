@@ -27,6 +27,17 @@ const ModelRef = Type.Object(
         { description: "Extended thinking budget. Only affects models that support it." }
       )
     ),
+    compactionThreshold: Type.Optional(
+      Type.Number({
+        description:
+          "Context token count at which auto-compaction triggers for this model. " +
+          "Must be less than the model's context window. " +
+          "When set, compaction kicks in earlier than the default " +
+          "(contextWindow − 16384 tokens). " +
+          "Example: set to 100000 on a 200k-window model to compact at 100k tokens.",
+        minimum: 1,
+      })
+    ),
   },
   { title: "ModelRef" }
 );

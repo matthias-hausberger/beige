@@ -174,9 +174,9 @@ The `search` command accepts free-text queries that may contain CQL expressions.
 }
 ```
 
-### Per-Agent Configuration (toolConfigs)
+### Per-Agent Configuration (pluginConfigs)
 
-Use beige's `toolConfigs` to give different agents different Confluence permissions:
+Use beige's `pluginConfigs` to give different agents different Confluence permissions:
 
 ```json5
 tools: {
@@ -195,7 +195,7 @@ agents: {
   // Research agent — read-only, scoped to specific spaces
   researcher: {
     tools: ["confluence"],
-    toolConfigs: {
+    pluginConfigs: {
       confluence: {
         allowReadSpaces: ["DOCS", "TEAM"],
         requireSpaceOnSearch: true,
@@ -206,7 +206,7 @@ agents: {
   // Documentation bot — can also write, but only to DRAFTS
   docbot: {
     tools: ["confluence"],
-    toolConfigs: {
+    pluginConfigs: {
       confluence: {
         denyCommands: [],              // override: remove all command denials
         allowWriteSpaces: ["DRAFTS"],  // added: restrict writes to DRAFTS

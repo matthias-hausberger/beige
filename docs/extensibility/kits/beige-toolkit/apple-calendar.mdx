@@ -120,9 +120,9 @@ To use a pre-compiled binary:
 }
 ```
 
-### Per-Agent Configuration (toolConfigs)
+### Per-Agent Configuration (pluginConfigs)
 
-Use beige's `toolConfigs` to give different agents different calendar permissions:
+Use beige's `pluginConfigs` to give different agents different calendar permissions:
 
 ```json5
 tools: {
@@ -142,7 +142,7 @@ agents: {
   // Summary bot — today and tomorrow only
   summary: {
     tools: ["apple-calendar"],
-    toolConfigs: {
+    pluginConfigs: {
       "apple-calendar": {
         allowedCommands: ["events today", "events tomorrow", "calendars"],
       },

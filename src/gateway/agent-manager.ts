@@ -191,7 +191,7 @@ export class AgentManager {
       customTools: coreTools,
       sessionManager,
       settingsManager: SettingsManager.inMemory({
-        compaction: { enabled: true },
+        compaction: buildCompactionSettings(agentConfig.model, model.contextWindow),
         retry: { enabled: true, maxRetries: 3 },
       }),
       resourceLoader,
@@ -588,7 +588,11 @@ export class AgentManager {
       const { provider, model: modelId } = modelRef;
       const currentRef = existing.currentModel;
 
-      if (currentRef.provider === provider && currentRef.model === modelId) {
+      if (
+        currentRef.provider === provider &&
+        currentRef.model === modelId &&
+        currentRef.compactionThreshold === modelRef.compactionThreshold
+      ) {
         return existing;
       }
 
@@ -659,7 +663,7 @@ export class AgentManager {
       customTools: coreTools,
       sessionManager,
       settingsManager: SettingsManager.inMemory({
-        compaction: { enabled: true },
+        compaction: buildCompactionSettings(modelRef, model.contextWindow),
         retry: { enabled: true, maxRetries: 3 },
       }),
       resourceLoader,
@@ -1002,6 +1006,41 @@ function makeSessionSubscriber(params: {
  * from the last assistant message if it ended with stopReason "error".
  * Returns undefined if the session ended normally.
  */
+/**
+ * Build CompactionSettings for a model session.
+ *
+ * If the ModelRef has a compactionThreshold, convert it to a reserveTokens
+ * value that makes shouldCompact() trigger at exactly that token count:
+ *
+ *   shouldCompact fires when: contextTokens > contextWindow - reserveTokens
+ *   → reserveTokens = contextWindow - compactionThreshold
+ *
+ * Falls back to pi's default (reserveTokens = 16384) when no threshold is set.
+ */
+function buildCompactionSettings(
+  modelRef: ModelRef,
+  contextWindow: number
+): { enabled: boolean; reserveTokens?: number } {
+  if (modelRef.compactionThreshold === undefined) {
+    return { enabled: true };
+  }
+
+  const reserveTokens = contextWindow - modelRef.compactionThreshold;
+  if (reserveTokens <= 0) {
+    console.warn(
+      `[AGENT] compactionThreshold ${modelRef.compactionThreshold} is >= contextWindow ` +
+      `${contextWindow} for ${modelRef.provider}/${modelRef.model} — using default threshold.`
+    );
+    return { enabled: true };
+  }
+
+  console.log(
+    `[AGENT] Custom compaction threshold: ${modelRef.compactionThreshold} tokens ` +
+    `(reserveTokens=${reserveTokens}) for ${modelRef.provider}/${modelRef.model}`
+  );
+  return { enabled: true, reserveTokens };
+}
+
 function extractLLMError(messages: readonly { role: string; stopReason?: string; errorMessage?: string; usage?: unknown; provider?: string; model?: string }[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];

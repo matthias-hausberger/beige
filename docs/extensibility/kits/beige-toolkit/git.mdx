@@ -37,7 +37,7 @@ beige tools install npm:@matthias-hausberger/beige-toolkit
 
 ## Authentication
 
-### Default: per-agent SSH key (`agent-ssh` mode)
+### Default: per-agent SSH key (`ssh` mode)
 
 Generate a dedicated ed25519 key for each agent. Replace `<AGENTNAME>` with the agent's name as defined in `config.json5`:
 
@@ -57,11 +57,11 @@ cat ~/.beige/agents/<AGENTNAME>/ssh/id_ed25519.pub
 # → paste into: GitHub repo → Settings → Deploy keys → Add deploy key
 ```
 
-The tool derives the key path from `sessionContext.agentDir` at call time. No key path appears in `config.json5`.
+No config needed — the tool derives key paths from `sessionContext.agentDir` at call time as defaults.
 
-### Shared SSH key (`ssh` mode)
+### Custom SSH key path
 
-For all agents to share a single deploy key:
+Override the defaults in `config.json5` — useful for shared deploy keys or non-standard locations:
 
 ```json5
 tools: {
@@ -79,7 +79,7 @@ tools: {
 
 ### HTTPS with a Personal Access Token (`https` mode)
 
-Set the token in the gateway process environment — never in `config.json5`:
+Use `${ENV_VAR}` syntax so the token is read from the environment at startup — never hardcoded in `config.json5`:
 
 ```bash
 export BEIGE_GIT_TOKEN="ghp_xxxxxxxxxxxx"
@@ -91,7 +91,8 @@ tools: {
     config: {
       auth: {
         mode: "https",
-        tokenEnv: "BEIGE_GIT_TOKEN",
+        token: "${BEIGE_GIT_TOKEN}",
+        user: "x-access-token",    // optional, this is the default
       },
     },
   },
@@ -110,12 +111,11 @@ The token is injected via a transient `GIT_ASKPASS` helper — no credential sto
 | `allowForcePush` | `false` | Allow `--force` and `--force-with-lease` on push. |
 | `identity.name` | *(git default)* | `GIT_AUTHOR_NAME` / `GIT_COMMITTER_NAME` |
 | `identity.email` | *(git default)* | `GIT_AUTHOR_EMAIL` / `GIT_COMMITTER_EMAIL` |
-| `identity.nameEnv` | — | Gateway env var name whose value is used as author name |
-| `identity.emailEnv` | — | Gateway env var name whose value is used as author email |
-| `auth.mode` | `"agent-ssh"` | `"agent-ssh"` / `"ssh"` / `"https"` |
-| `auth.sshKeyPath` | — | Absolute key path. Only used when `mode` is `"ssh"`. |
-| `auth.sshKnownHostsPath` | `agentDir/ssh/known_hosts` | known_hosts path. Used for `"agent-ssh"` and `"ssh"` modes. |
-| `auth.tokenEnv` | `"GIT_TOKEN"` | Env var name for HTTPS PAT. Only used when `mode` is `"https"`. |
+| `auth.mode` | `"ssh"` | `"ssh"` / `"https"` |
+| `auth.sshKeyPath` | `agentDir/ssh/id_ed25519` | Absolute key path. Overrides the per-agent default. |
+| `auth.sshKnownHostsPath` | `agentDir/ssh/known_hosts` | Absolute known_hosts path. Overrides the per-agent default. |
+| `auth.token` | — | HTTPS PAT. Use `${ENV_VAR}` syntax for env injection. Only used when `mode` is `"https"`. |
+| `auth.user` | `"x-access-token"` | HTTPS username sent alongside the token. Only used when `mode` is `"https"`. |
 
 ### Default allowed subcommands
 
@@ -153,7 +153,7 @@ tools: {
       allowedCommands: ["clone", "pull", "push", "fetch", "add", "commit",
                         "status", "diff", "log", "checkout", "branch"],
       allowedRemotes: ["github.com/myorg/*"],
-      auth: { mode: "agent-ssh" },
+      auth: { mode: "ssh" },
       identity: { name: "Beige Agent", email: "agent@myorg.com" },
     },
   },
@@ -163,10 +163,10 @@ agents: {
   writer: {
     tools: ["git"],
   },
-  // Reviewer can only read, not push — override via toolConfigs
+  // Reviewer can only read, not push — override via pluginConfigs
   reader: {
     tools: ["git"],
-    toolConfigs: {
+    pluginConfigs: {
       git: {
         allowedCommands: ["fetch", "pull", "status", "log", "diff", "checkout"],
       },

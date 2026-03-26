@@ -10,7 +10,7 @@ Telegram channel and messaging tool for Beige agents.
 
 ## What It Provides
 
-- **Channel**: A GrammY-based Telegram bot that routes user messages to agents
+- **Channel**: A GrammY-based Telegram bot that routes user messages to agents and supports concurrent sessions per thread
 - **Tool**: `telegram` command for agents to send proactive messages
 
 ## Configuration
@@ -55,13 +55,76 @@ Users interact with the bot via these commands:
 
 | Command | Description |
 |---------|-------------|
-| `/start` | Show welcome message |
-| `/new` | Start a fresh conversation |
-| `/status` | Show session info and settings |
+| `/start` | Show welcome message and all available commands |
+| `/new` | Start a fresh conversation (old session preserved on disk) |
+| `/stop` | Abort the current operation immediately |
+| `/compact` | Summarise and compress conversation history to free context tokens |
+| `/status` | Show session info: agent, model, context usage, and settings |
 | `/verbose on\|off` | Toggle tool-call notifications |
 | `/v on\|off` | Shorthand for `/verbose` |
 | `/streaming on\|off` | Toggle real-time streaming |
 | `/s on\|off` | Shorthand for `/streaming` |
+
+## Concurrency & Steering
+
+The plugin is fully non-blocking — the grammY handler returns immediately and sessions run as background tasks:
+
+- **Multiple threads run in parallel** — each chat/thread has its own session and they operate independently, simultaneously
+- **Sending a message while the agent is running steers it** — exactly like pressing ESC in the TUI. The new message is injected as a steering interrupt; the agent finishes its current tool call then processes your message
+- **`/stop` for hard abort** — immediately stops the current LLM call and tool loop; the partial response (if any) is sent before the stop confirmation
+
+## `/status` Output
+
+`/status` shows the current model, context window usage, and settings:
+
+```
+Session Status
+
+Agent: `assistant`
+Chat: `123456789 / Thread: 42`
+Model: `claude-sonnet-4-6`
+
+Context
+▓▓▓░░░░░░░ 38.5k / 200k (19.3%)
+
+Settings
+• Verbose: 🔇 off
+• Streaming: ⚡ on
+```
+
+## `/compact` — Manual Compaction
+
+Manually compresses the conversation history using an LLM summarisation pass:
+
+- Aborts any in-flight operation first, then compacts
+- Works after a gateway restart — the session file is reloaded from disk automatically
+- Shows tokens freed and the post-compaction context bar on success
+
+```
+✅ Compacted! Previous context: ~38.5k tokens.
+
+Context now: ▓░░░░░░░░░ 4.2k / 200k (2.1%)
+```
+
+## Auto-Compaction Notifications
+
+When the agent automatically compacts the context (threshold or overflow recovery), the bot sends notifications:
+
+- `🗜️ Auto-compacting context…` when it starts
+- `✅ Context auto-compacted (~Xk tokens).` on success
+- `✅ Context auto-compacted (~Xk tokens). Retrying your request…` for overflow recovery
+
+## Error Handling
+
+LLM errors are forwarded with user-friendly messages:
+
+| Error | Message shown |
+|-------|--------------|
+| Invalid API key / 401 | 🔑 There's an API key issue. Please check the configuration. |
+| Rate limited | ⏳ The AI is a bit busy right now. I've automatically switched to a backup model. |
+| All models failed | ❌ All AI models failed. Last error: … |
+| Context too long | 📏 This conversation is getting too long for the AI's memory. |
+| Network issue | 🌐 Network connection issue. Please try again. |
 
 ## Tool Usage
 
@@ -72,9 +135,12 @@ telegram sendMessage <chatId> <text>
 telegram sendMessage <chatId> --thread <threadId> <text>
 ```
 
+Long messages (>4096 characters) are automatically split into multiple Telegram messages.
+
 ## Session Model
 
 - Each Telegram chat gets a persistent session (survives gateway restarts)
-- Forum topics (threads) each get their own session
-- `/new` starts a fresh session, old conversation is preserved on disk
+- Forum topics (threads) each get their own independent session
+- `/new` starts a fresh session; old conversation is preserved on disk
 - Verbose and streaming settings are persisted per-session
+- `/compact` and `/status` work even after a gateway restart — sessions are lazily restored from disk on demand

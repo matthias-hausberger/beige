@@ -105,9 +105,9 @@ All MCP tools are permitted by default (no allow/deny restrictions). The browser
 }
 ```
 
-### Per-Agent Configuration (toolConfigs)
+### Per-Agent Configuration (pluginConfigs)
 
-Beige supports per-agent `toolConfigs` overrides that are deep-merged with the top-level tool config. This lets you share one Chrome tool definition but give each agent different capabilities:
+Beige supports per-agent `pluginConfigs` overrides that are deep-merged with the top-level tool config. This lets you share one Chrome tool definition but give each agent different capabilities:
 
 ```json5
 tools: {
@@ -124,7 +124,7 @@ agents: {
   // QA agent — full browser access, visible window, longer timeout
   qa: {
     tools: ["chrome"],
-    toolConfigs: {
+    pluginConfigs: {
       chrome: {
         headless: false,        // override: visible browser for debugging
         timeout: 120,           // override: longer timeout for complex tests
@@ -135,7 +135,7 @@ agents: {
   // Scraper agent — headless (inherits baseline), slim mode, restricted tools
   scraper: {
     tools: ["chrome"],
-    toolConfigs: {
+    pluginConfigs: {
       chrome: {
         slim: true,             // added: minimal tool set
         allowTools: ["take_snapshot", "navigate_page", "take_screenshot"],
@@ -146,7 +146,7 @@ agents: {
   // Reporter agent — read-only, no interaction tools
   reporter: {
     tools: ["chrome"],
-    toolConfigs: {
+    pluginConfigs: {
       chrome: {
         allowTools: ["take_snapshot", "take_screenshot", "list_pages",
                      "list_console_messages", "list_network_requests"],
@@ -162,7 +162,7 @@ agents: {
 },
 ```
 
-> **Note:** `toolConfigs` values are deep-merged with the top-level config. In the example above, the QA agent's effective config is `{ headless: false, timeout: 120 }` — the overrides replace the baseline values, while other baseline settings are preserved.
+> **Note:** `pluginConfigs` values are deep-merged with the top-level config. In the example above, the QA agent's effective config is `{ headless: false, timeout: 120 }` — the overrides replace the baseline values, while other baseline settings are preserved.
 
 ## Browser Detection & Chromium Fallback
 

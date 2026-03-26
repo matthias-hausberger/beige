@@ -42,14 +42,14 @@ The tool supports two authentication modes:
 
 **Token in config (recommended for multi-agent setups)**
 
-Set `token` in the agent's `toolConfigs`. The token is forwarded to `gh` via `GH_TOKEN` and takes precedence over any credential stored on the host, so different agents can authenticate as different GitHub identities.
+Set `token` in the agent's `pluginConfigs`. The token is forwarded to `gh` via `GH_TOKEN` and takes precedence over any credential stored on the host, so different agents can authenticate as different GitHub identities.
 
 Both token formats work without any special configuration:
 - Classic personal access tokens: `ghp_…`
 - Fine-grained personal access tokens: `github_pat_…`
 
 ```json5
-toolConfigs: {
+pluginConfigs: {
   github: {
     token: "ghp_yourPersonalAccessToken",
   },
@@ -122,9 +122,9 @@ When no `token` is configured, the tool inherits the gateway process's environme
 }
 ```
 
-### Per-Agent Configuration (toolConfigs)
+### Per-Agent Configuration (pluginConfigs)
 
-Use beige's `toolConfigs` to give different agents different GitHub tokens and permissions:
+Use beige's `pluginConfigs` to give different agents different GitHub tokens and permissions:
 
 ```json5
 tools: {
@@ -140,7 +140,7 @@ agents: {
   // Triage bot — issues only, dedicated read-only PAT
   triage: {
     tools: ["github"],
-    toolConfigs: {
+    pluginConfigs: {
       github: {
         token: "ghp_readOnlyTriageToken",
         allowedCommands: ["issue"],
@@ -151,7 +151,7 @@ agents: {
   // DevOps agent — full access including API, own fine-grained PAT
   devops: {
     tools: ["github"],
-    toolConfigs: {
+    pluginConfigs: {
       github: {
         token: "github_pat_11AABBCC_devopsToken",
         allowedCommands: ["repo", "issue", "pr", "release", "run", "api"],

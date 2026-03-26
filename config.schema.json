@@ -67,7 +67,7 @@
           "type": "object",
           "properties": {
             "path": {
-              "description": "Path to the plugin package directory. Resolved relative to the config file unless absolute. Auto-resolved for plugins installed via 'beige plugins install'.",
+              "description": "Path to the plugin package directory. Resolved relative to the config file unless absolute.",
               "type": "string"
             },
             "config": {
@@ -76,6 +76,10 @@
               "patternProperties": {
                 "^(.*)$": {}
               }
+            },
+            "_source": {
+              "description": "Install source (e.g. 'npm:@scope/package'). Written by 'beige plugins install', used by 'beige plugins update'. Do not edit manually.",
+              "type": "string"
             }
           }
         }
@@ -152,6 +156,11 @@
                       "type": "string"
                     }
                   ]
+                },
+                "compactionThreshold": {
+                  "description": "Context token count at which auto-compaction triggers for this model. Must be less than the model's context window. When set, compaction kicks in earlier than the default (contextWindow − 16384 tokens). Example: set to 100000 on a 200k-window model to compact at 100k tokens.",
+                  "minimum": 1,
+                  "type": "number"
                 }
               }
             },
@@ -198,6 +207,11 @@
                         "type": "string"
                       }
                     ]
+                  },
+                  "compactionThreshold": {
+                    "description": "Context token count at which auto-compaction triggers for this model. Must be less than the model's context window. When set, compaction kicks in earlier than the default (contextWindow − 16384 tokens). Example: set to 100000 on a 200k-window model to compact at 100k tokens.",
+                    "minimum": 1,
+                    "type": "number"
                   }
                 }
               }

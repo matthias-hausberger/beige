@@ -128,6 +128,18 @@ export class Gateway {
     const beigeModelsPath = resolve(beigeDir(), "models.json");
     const modelRegistry = new ModelRegistry(authStorage, beigeModelsPath);
 
+    // Register custom providers (baseUrl, api overrides) so that the LLM proxy
+    // endpoint and all gateway sessions use the correct endpoints.
+    for (const [provider, providerConfig] of Object.entries(this.config.llm.providers)) {
+      if (providerConfig.baseUrl || providerConfig.api) {
+        modelRegistry.registerProvider(provider, {
+          baseUrl: providerConfig.baseUrl,
+          apiKey: providerConfig.apiKey,
+          api: providerConfig.api as any,
+        });
+      }
+    }
+
     // 10. Create sandbox manager
     this.sandboxManager = new SandboxManager(
       this.config,

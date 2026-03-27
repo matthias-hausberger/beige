@@ -14,38 +14,68 @@ import {
   type RegisteredCommand,
   type AgentSession,
 } from "@mariozechner/pi-coding-agent";
-import { getModel } from "@mariozechner/pi-ai";
+import {
+  getModel,
+  createAssistantMessageEventStream,
+  type AssistantMessageEvent,
+  type AssistantMessageEventStream,
+  type Context,
+  type Model,
+  type SimpleStreamOptions,
+} from "@mariozechner/pi-ai";
 import { resolve, basename } from "path";
 import { existsSync, mkdirSync } from "fs";
 import { beigeDir } from "../paths.js";
-import type { BeigeConfig, AgentConfig } from "../config/schema.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
 import { buildSystemPrompt, readWorkspaceAgentsMd } from "../gateway/agent-manager.js";
 import { SessionSettingsStore, resolveSessionSetting } from "../gateway/session-settings.js";
 import { BeigeSessionStore } from "../gateway/sessions.js";
-import { loadSkills, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
 import { RestrictedModelRegistry, buildAllowedModels } from "../config/restricted-model-registry.js";
+
+// ── Types from gateway API ───────────────────────────────────────────────────
 
 /** Shape of an agent entry returned by the gateway's GET /api/agents endpoint. */
 interface GatewayAgentInfo {
   name: string;
+  model: { provider: string; model: string };
+  fallbackModels: Array<{ provider: string; model: string }>;
   tools: string[];
   skills: string[];
   toolContext: string;
   skillContext: string;
+  workspaceDir?: string;
+}
+
+/** Shape of model metadata returned by GET /api/agents/:name/models. */
+interface GatewayModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+  api: string;
+  baseUrl: string;
+  reasoning: boolean;
+  input: ("text" | "image")[];
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  contextWindow: number;
+  maxTokens: number;
+  headers?: Record<string, string>;
+  compat?: unknown;
+  thinkingLevel: string;
 }
 
 /**
  * TUI channel — runs in a separate process and connects to the gateway HTTP API.
  *
  * Architecture:
- * - The LLM session runs locally (pi InteractiveMode — full pi experience)
- * - Core tool execution (read/write/patch/exec) is proxied to the gateway API
- * - The gateway owns the sandboxes, audit, and policy enforcement
+ * - LLM calls are proxied through the gateway (the only process that needs API keys)
+ * - Core tool execution (read/write/patch/exec) is also proxied to the gateway
+ * - The gateway owns auth, sandboxes, audit, and policy enforcement
+ * - The TUI never loads the config file and never needs API keys
  *
- * This gives you the best of both worlds:
+ * This gives you:
  * - Full pi TUI (editor, streaming, model switching, compaction, history)
  * - Sandboxed tool execution managed by the gateway
+ * - LLM calls routed through the gateway's auth + provider setup
  *
  * Commands:
  * - /new                     — Start a fresh session (pi built-in, works correctly)
@@ -54,18 +84,12 @@ interface GatewayAgentInfo {
  * - /beige-agent [name]     — Switch to a different beige agent
  * - /beige-verbose on|off   — Toggle verbose tool-call notifications
  * - /v on|off               — Shorthand for /beige-verbose
- *
- * Note: Beige-specific commands use the "beige-" prefix to avoid conflicts
- * with pi built-ins. /new is pi's built-in command which resets the session
- * in-place — this is the correct approach (creating a new AgentSession would
- * leave InteractiveMode with a stale reference).
  */
 
 const DEFAULT_GATEWAY_URL = "http://127.0.0.1:7433";
 
 export interface TUIOptions {
-  config: BeigeConfig;
-  agentName: string;
+  agentName?: string;
   gatewayUrl?: string;
 }
 
@@ -74,11 +98,13 @@ export interface TUIOptions {
  */
 interface TUIState {
   agentName: string;
-  agentConfig: AgentConfig;
+  /** Minimal agent config fetched from gateway (model refs + workspaceDir) */
+  agentModelRef: { provider: string; model: string };
+  agentFallbackRefs: Array<{ provider: string; model: string }>;
+  workspaceDir: string;
   session: AgentSession | null;
   toolStartHandlerRef: { fn: OnToolStart | undefined };
   gatewayUrl: string;
-  config: BeigeConfig;
   authStorage: AuthStorage;
   /** Restricted registry that only exposes models allowed for this agent */
   modelRegistry: RestrictedModelRegistry;
@@ -86,11 +112,11 @@ interface TUIState {
   underlyingModelRegistry: ModelRegistry;
   settingsStore: SessionSettingsStore;
   sessionStore: BeigeSessionStore;
-  loadedSkills: Map<string, LoadedSkill>;
 }
 
+// ── Entry point ──────────────────────────────────────────────────────────────
+
 export async function launchTUI(opts: TUIOptions): Promise<void> {
-  const { config } = opts;
   const gatewayUrl = opts.gatewayUrl ?? DEFAULT_GATEWAY_URL;
 
   // Verify gateway is reachable
@@ -126,38 +152,70 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
     process.exit(1);
   }
 
-  // ── Auth (LLM keys — session runs locally) ────────────────
-  // Use beige's own auth/models files so credentials are isolated from pi's
-  // ~/.pi/agent/auth.json.  /login and /logout persist to ~/.beige/auth.json.
+  // ── Auth storage (no real keys — LLM calls go through gateway proxy) ──
   const beigeAuthPath = resolve(beigeDir(), "auth.json");
   const beigeModelsPath = resolve(beigeDir(), "models.json");
   const authStorage = AuthStorage.create(beigeAuthPath);
-  for (const [provider, providerConfig] of Object.entries(config.llm.providers)) {
-    if (providerConfig.apiKey) {
-      authStorage.setRuntimeApiKey(provider, providerConfig.apiKey);
-    }
-  }
   const modelRegistry = new ModelRegistry(authStorage, beigeModelsPath);
 
-  // Register custom providers from config (baseUrl, api overrides)
-  for (const [provider, providerConfig] of Object.entries(config.llm.providers)) {
-    if (providerConfig.baseUrl || providerConfig.api) {
-      modelRegistry.registerProvider(provider, {
-        baseUrl: providerConfig.baseUrl,
-        apiKey: providerConfig.apiKey,
-        api: providerConfig.api as any,
-      });
-    }
+  // ── Register proxy providers ─────────────────────────────
+  // For each provider used by this agent, register a provider with a custom
+  // streamSimple that proxies LLM calls through the gateway.  The gateway
+  // resolves the API key and forwards to the real LLM provider.
+  const modelsRes = await fetch(`${gatewayUrl}/api/agents/${encodeURIComponent(agentName)}/models`);
+  const { models: modelInfos } = (await modelsRes.json()) as { models: GatewayModelInfo[] };
+
+  if (modelInfos.length === 0) {
+    console.error(`[TUI] No models found for agent '${agentName}'`);
+    process.exit(1);
   }
 
-  // ── Load skills ────────────────────────────────────────────
-  const loadedSkills = await loadSkills(config);
+  // Group models by provider and register each provider with proxy streamSimple
+  const providerModels = new Map<string, GatewayModelInfo[]>();
+  for (const m of modelInfos) {
+    const list = providerModels.get(m.provider) ?? [];
+    list.push(m);
+    providerModels.set(m.provider, list);
+  }
+
+  for (const [provider, providerModelInfos] of providerModels) {
+    // Set a dummy runtime key so the model appears "available" to pi's registry.
+    // The actual API key is resolved by the gateway proxy.
+    authStorage.setRuntimeApiKey(provider, "beige-gateway-proxy");
+
+    modelRegistry.registerProvider(provider, {
+      // api is required by ModelRegistry when streamSimple is provided.
+      // All models for a given provider share the same API protocol.
+      api: providerModelInfos[0].api as any,
+      // apiKey is required when defining models — the gateway resolves the
+      // real key; this placeholder just satisfies ModelRegistry validation.
+      apiKey: "beige-gateway-proxy",
+      baseUrl: modelInfos[0].baseUrl,
+      streamSimple: createProxyStreamSimple(gatewayUrl),
+      models: providerModelInfos.map((m) => ({
+        id: m.id,
+        name: m.name,
+        api: m.api as any,
+        reasoning: m.reasoning,
+        input: m.input,
+        cost: m.cost,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+        headers: m.headers,
+        compat: m.compat as any,
+      })),
+    });
+  }
 
   // ── Create restricted model registry ──────────────────────
-  // The agent can only use models defined in its config (model + fallbackModels)
-  const agentConfig = config.agents[agentName];
-  const allowedModels = buildAllowedModels(agentConfig.model, agentConfig.fallbackModels);
+  const primaryRef = agentInfo.model;
+  const fallbackRefs = agentInfo.fallbackModels ?? [];
+  const allowedModels = buildAllowedModels(primaryRef, fallbackRefs);
   const restrictedModelRegistry = new RestrictedModelRegistry(modelRegistry, allowedModels);
+
+  // ── Workspace dir ────────────────────────────────────────
+  const agentDir = resolve(beigeDir(), "agents", agentName);
+  const workspaceDir = agentInfo.workspaceDir ?? resolve(agentDir, "workspace");
 
   // ── Shared state ──────────────────────────────────────────
   const settingsStore = new SessionSettingsStore();
@@ -166,17 +224,17 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
 
   const state: TUIState = {
     agentName,
-    agentConfig,
+    agentModelRef: primaryRef,
+    agentFallbackRefs: fallbackRefs,
+    workspaceDir,
     session: null,
     toolStartHandlerRef,
     gatewayUrl,
-    config,
     authStorage,
     modelRegistry: restrictedModelRegistry,
     underlyingModelRegistry: modelRegistry,
     settingsStore,
     sessionStore,
-    loadedSkills,
   };
 
   // Wire initial verbose state
@@ -192,9 +250,6 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
   }
 
   // ── Build extension and create session ───────────────────
-  // systemPromptRef and agentsFilesRef are shared mutable refs read by the
-  // resource loader.  They are updated by /beige-agent (switch agent) and by
-  // the session_switch handler (re-read AGENTS.md after /new).
   const systemPromptRef: { value: string } = { value: "" };
   const agentsFilesRef: { value: Array<{ path: string; content: string }> } = { value: [] };
   const extensionsResult = await buildBeigeExtension(state, agentNames, systemPromptRef, agentsFilesRef);
@@ -206,9 +261,8 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
   }
 
   // ── Launch pi TUI ─────────────────────────────────────────
-  console.log(`[TUI] Agent: ${agentName} (${state.agentConfig.model.provider}/${state.agentConfig.model.model})`);
+  console.log(`[TUI] Agent: ${agentName} (${primaryRef.provider}/${primaryRef.model})`);
 
-  // Show allowed models (for model switching)
   const availableModels = state.modelRegistry.getAvailable();
   if (availableModels.length > 1) {
     const modelList = availableModels.map(m => `${m.provider}/${m.id}`).join(", ");
@@ -216,6 +270,7 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
   }
 
   console.log(`[TUI] Tools: ${agentInfo.tools.join(", ") || "(core only)"}`);
+  console.log(`[TUI] LLM: proxied via gateway (no local API keys needed)`);
   console.log(`[TUI] Verbose: ${initialVerbose ? "on" : "off"} — use /beige-verbose on|off to toggle`);
   console.log(`[TUI] Commands: /new, /beige-resume, /beige-sessions, /beige-agent <name>, /beige-verbose on|off (or /v on|off)`);
 
@@ -224,6 +279,113 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
 
   const mode = new InteractiveMode(state.session, {});
   await mode.run();
+}
+
+// ── LLM proxy ────────────────────────────────────────────────────────────────
+
+/**
+ * Create a streamSimple function that proxies LLM calls through the gateway.
+ *
+ * The gateway resolves the API key, selects the correct stream function based
+ * on the model's api field, and streams AssistantMessageEvent objects back as
+ * newline-delimited JSON.
+ */
+function createProxyStreamSimple(
+  gatewayUrl: string
+): (model: Model<any>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream {
+  return (model: Model<any>, context: Context, options?: SimpleStreamOptions) => {
+    const stream = createAssistantMessageEventStream();
+
+    (async () => {
+      try {
+        const res = await fetch(`${gatewayUrl}/api/chat/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provider: model.provider,
+            modelId: model.id,
+            context,
+            options: {
+              reasoning: options?.reasoning,
+              maxTokens: options?.maxTokens,
+              temperature: options?.temperature,
+            },
+          }),
+          signal: options?.signal,
+        });
+
+        if (!res.ok) {
+          const errorText = await res.text();
+          stream.push({
+            type: "error",
+            reason: "error",
+            error: makeErrorMessage(model, "error", `Gateway ${res.status}: ${errorText}`),
+          });
+          stream.end();
+          return;
+        }
+
+        // Read newline-delimited JSON stream
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (line.trim()) {
+              const event = JSON.parse(line) as AssistantMessageEvent;
+              stream.push(event);
+            }
+          }
+        }
+
+        stream.end();
+      } catch (err) {
+        const isAborted = (err as any).name === "AbortError";
+        stream.push({
+          type: "error",
+          reason: isAborted ? "aborted" : "error",
+          error: makeErrorMessage(
+            model,
+            isAborted ? "aborted" : "error",
+            isAborted ? undefined : (err instanceof Error ? err.message : String(err))
+          ),
+        });
+        stream.end();
+      }
+    })();
+
+    return stream;
+  };
+}
+
+/** Build a minimal AssistantMessage for error/abort events. */
+function makeErrorMessage(
+  model: { api: string; provider: string; id: string },
+  stopReason: "error" | "aborted",
+  errorMessage?: string
+) {
+  return {
+    role: "assistant" as const,
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason,
+    errorMessage,
+    timestamp: Date.now(),
+  };
 }
 
 // ── Session creation ──────────────────────────────────────────────────────────
@@ -243,38 +405,31 @@ async function createSession(
   systemPromptRef: { value: string },
   agentsFilesRef: { value: Array<{ path: string; content: string }> }
 ): Promise<void> {
-  const { agentName, agentConfig, gatewayUrl, authStorage, modelRegistry, underlyingModelRegistry, toolStartHandlerRef, loadedSkills } = state;
+  const { agentName, agentModelRef, gatewayUrl, authStorage, modelRegistry, underlyingModelRegistry, toolStartHandlerRef, workspaceDir } = state;
 
-  // Fetch agent info from gateway
+  // Fetch agent info from gateway (for tool/skill context)
   const agentsRes = await fetch(`${gatewayUrl}/api/agents`);
   const { agents } = (await agentsRes.json()) as { agents: GatewayAgentInfo[] };
   const agentInfo = agents.find((a) => a.name === agentName);
-  const toolNames = agentInfo?.tools ?? [];
-  const skillNames = agentInfo?.skills ?? [];
 
-  // Validate skill dependencies
-  validateSkillDeps(skillNames, toolNames, loadedSkills);
+  // Resolve the model from the proxy registry
+  const model = underlyingModelRegistry.find(agentModelRef.provider, agentModelRef.model);
+  if (!model) {
+    throw new Error(`Model not found: ${agentModelRef.provider}/${agentModelRef.model}`);
+  }
 
-  // Use underlying registry for model lookup (restricted registry delegates find())
-  const model = resolveModel(agentConfig, underlyingModelRegistry);
-  // Pass a getter so tool calls always route to the currently-active agent,
-  // even after /beige-agent switches state.agentName.
+  // Pass a getter so tool calls always route to the currently-active agent
   const coreTools = createProxyTools(() => state.agentName, gatewayUrl, toolStartHandlerRef);
 
-  // Use pre-built tool/skill context from the gateway (which has full tool manifests).
+  // Use pre-built tool/skill context from the gateway
   const toolContext = agentInfo?.toolContext ?? "";
   const skillContext = agentInfo?.skillContext ?? "";
-
-  // Populate the shared mutable ref with the initial system prompt.
   systemPromptRef.value = buildSystemPrompt(agentName, toolContext, skillContext);
 
   // Read workspace AGENTS.md so it's injected into the system prompt context.
-  const agentDir = resolve(beigeDir(), "agents", agentName);
-  const workspaceDir = agentConfig.workspaceDir ?? resolve(agentDir, "workspace");
   agentsFilesRef.value = readWorkspaceAgentsMd(workspaceDir);
 
   const sessionsDir = resolve(beigeDir(), "sessions", agentName);
-  // Always start a fresh session. Users can resume via /beige-resume.
   const sessionManager = SessionManager.create(process.cwd(), sessionsDir);
 
   const resourceLoader: ResourceLoader = {
@@ -283,7 +438,6 @@ async function createSession(
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles: agentsFilesRef.value }),
-    // Read from mutable ref so updates from /beige-agent are reflected.
     getSystemPrompt: () => systemPromptRef.value,
     getAppendSystemPrompt: () => [],
     getPathMetadata: () => new Map(),
@@ -291,9 +445,15 @@ async function createSession(
     reload: async () => {},
   };
 
+  // Find the GatewayModelInfo for the thinking level
+  const modelsRes = await fetch(`${gatewayUrl}/api/agents/${encodeURIComponent(agentName)}/models`);
+  const { models: modelInfos } = (await modelsRes.json()) as { models: GatewayModelInfo[] };
+  const currentModelInfo = modelInfos.find((m) => m.id === agentModelRef.model && m.provider === agentModelRef.provider);
+  const thinkingLevel = (currentModelInfo?.thinkingLevel ?? "off") as any;
+
   const { session } = await createAgentSession({
     model,
-    thinkingLevel: (agentConfig.model.thinkingLevel as any) ?? "off",
+    thinkingLevel,
     tools: [],
     customTools: coreTools,
     sessionManager,
@@ -303,12 +463,10 @@ async function createSession(
     }),
     resourceLoader,
     authStorage,
-    // Pass underlying registry for session creation
     modelRegistry: modelRegistry.getUnderlying(),
   });
 
   // Replace the session's modelRegistry with our restricted version
-  // This ensures the TUI's model switcher only shows allowed models
   (session as any)._modelRegistry = modelRegistry;
 
   state.session = session;
@@ -386,7 +544,6 @@ async function buildBeigeExtension(
     let index = parseInt(arg, 10) - 1;
     if (isNaN(index) || index < 0 || index >= sessions.length) {
       if (arg === "") {
-        // Show list if no arg provided
         ctx.ui.notify(
           `Usage: /beige-resume <number>\n\nSessions:\n${sessions
             .slice(0, 5)
@@ -401,11 +558,6 @@ async function buildBeigeExtension(
     }
 
     const targetSession = sessions[index];
-
-    // Delegate to the pi SDK's switchSession(), which loads the session
-    // file into the existing AgentSession and re-renders the chat UI.
-    // This avoids a stale-session-reference bug where InteractiveMode's
-    // internal this.session would still point to the old disposed session.
     await ctx.switchSession(targetSession.file);
     ctx.ui.notify(`📂 Resumed session: ${basename(targetSession.file)}`, "info");
   };
@@ -435,50 +587,80 @@ async function buildBeigeExtension(
       return;
     }
 
-    // Switch to new agent
-    const newAgentConfig = state.config.agents[arg];
-    if (!newAgentConfig) {
-      ctx.ui.notify(`Agent '${arg}' not found in config.`, "error");
+    // Fetch new agent info from gateway
+    const agentsRes = await fetch(`${state.gatewayUrl}/api/agents`);
+    const { agents } = (await agentsRes.json()) as { agents: GatewayAgentInfo[] };
+    const newAgentInfo = agents.find((a) => a.name === arg);
+    if (!newAgentInfo) {
+      ctx.ui.notify(`Agent '${arg}' not found on gateway.`, "error");
       return;
     }
 
-    // Update state fields — proxy tools and resource loader read these dynamically.
-    state.agentName = arg;
-    state.agentConfig = newAgentConfig;
+    // Fetch model metadata for the new agent
+    const modelsRes = await fetch(`${state.gatewayUrl}/api/agents/${encodeURIComponent(arg)}/models`);
+    const { models: newModelInfos } = (await modelsRes.json()) as { models: GatewayModelInfo[] };
 
-    // Update restricted model registry for new agent's allowed models.
-    const allowedModels = buildAllowedModels(newAgentConfig.model, newAgentConfig.fallbackModels);
+    if (newModelInfos.length === 0) {
+      ctx.ui.notify(`No models configured for agent '${arg}'.`, "error");
+      return;
+    }
+
+    // Register proxy providers for the new agent's models
+    const providerModels = new Map<string, GatewayModelInfo[]>();
+    for (const m of newModelInfos) {
+      const list = providerModels.get(m.provider) ?? [];
+      list.push(m);
+      providerModels.set(m.provider, list);
+    }
+
+    for (const [provider, pModelInfos] of providerModels) {
+      state.authStorage.setRuntimeApiKey(provider, "beige-gateway-proxy");
+      state.underlyingModelRegistry.registerProvider(provider, {
+        api: pModelInfos[0].api as any,
+        apiKey: "beige-gateway-proxy",
+        baseUrl: pModelInfos[0].baseUrl,
+        streamSimple: createProxyStreamSimple(state.gatewayUrl),
+        models: pModelInfos.map((m) => ({
+          id: m.id,
+          name: m.name,
+          api: m.api as any,
+          reasoning: m.reasoning,
+          input: m.input,
+          cost: m.cost,
+          contextWindow: m.contextWindow,
+          maxTokens: m.maxTokens,
+          headers: m.headers,
+          compat: m.compat as any,
+        })),
+      });
+    }
+
+    // Update state
+    state.agentName = arg;
+    state.agentModelRef = newAgentInfo.model;
+    state.agentFallbackRefs = newAgentInfo.fallbackModels ?? [];
+    state.workspaceDir = newAgentInfo.workspaceDir ?? resolve(beigeDir(), "agents", arg, "workspace");
+
+    // Update restricted model registry
+    const allowedModels = buildAllowedModels(state.agentModelRef, state.agentFallbackRefs);
     state.modelRegistry = new RestrictedModelRegistry(state.underlyingModelRegistry, allowedModels);
     if (state.session) {
       (state.session as any)._modelRegistry = state.modelRegistry;
     }
 
-    // Rebuild the system prompt for the new agent and push it into both the
-    // shared ref (read by resourceLoader.getSystemPrompt() on future rebuilds)
-    // and the session's cached _baseSystemPrompt (used before every LLM call).
-    const agentsRes = await fetch(`${state.gatewayUrl}/api/agents`);
-    const { agents } = (await agentsRes.json()) as { agents: GatewayAgentInfo[] };
-    const agentInfo = agents.find((a) => a.name === arg);
-    // Use pre-built tool/skill context from the gateway (which has full tool manifests).
-    const toolContext = agentInfo?.toolContext ?? "";
-    const skillContext = agentInfo?.skillContext ?? "";
-    const newSystemPrompt = buildSystemPrompt(arg, toolContext, skillContext);
-    systemPromptRef.value = newSystemPrompt;
-
-    // Update agents files for the new agent's workspace.
-    const newAgentDir = resolve(beigeDir(), "agents", arg);
-    const newWorkspaceDir = newAgentConfig.workspaceDir ?? resolve(newAgentDir, "workspace");
-    agentsFilesRef.value = readWorkspaceAgentsMd(newWorkspaceDir);
+    // Rebuild system prompt
+    const toolContext = newAgentInfo.toolContext ?? "";
+    const skillContext = newAgentInfo.skillContext ?? "";
+    systemPromptRef.value = buildSystemPrompt(arg, toolContext, skillContext);
+    agentsFilesRef.value = readWorkspaceAgentsMd(state.workspaceDir);
 
     if (state.session) {
-      // Trigger a full rebuild so pi's buildSystemPrompt picks up both the
-      // updated system prompt ref AND the fresh AGENTS.md from getAgentsFiles().
       const toolNames = state.session.getActiveToolNames();
       (state.session as any)._baseSystemPrompt = (state.session as any)._rebuildSystemPrompt(toolNames);
       (state.session as any).agent.setSystemPrompt((state.session as any)._baseSystemPrompt);
     }
 
-    // Update verbose handler for new session key.
+    // Update verbose handler
     const sessionKey = BeigeSessionStore.tuiKey(arg);
     const verbose = resolveSessionSetting(
       "verbose",
@@ -488,27 +670,23 @@ async function buildBeigeExtension(
     );
     state.toolStartHandlerRef.fn = verbose ? makeTUIToolStartHandler() : undefined;
 
-    // Point the SessionManager at the new agent's session directory so that
-    // ctx.newSession() creates the .jsonl file under ~/.beige/sessions/<new-agent>/
-    // instead of the original agent's directory.
+    // Point session manager at new agent's session directory
     if (state.session) {
       const newSessionsDir = resolve(beigeDir(), "sessions", arg);
       mkdirSync(newSessionsDir, { recursive: true });
       (state.session.sessionManager as any).sessionDir = newSessionsDir;
     }
 
-    // Switch to the new agent's configured model so the fresh session doesn't
-    // inherit the previous agent's model.  setModel() validates the API key
-    // via the (already-updated) restricted model registry, records a model
-    // change event in the session journal, and re-clamps the thinking level.
+    // Switch to new agent's model
     if (state.session) {
-      const newModel = resolveModel(newAgentConfig, state.modelRegistry);
-      await state.session.setModel(newModel);
+      const newModel = state.underlyingModelRegistry.find(state.agentModelRef.provider, state.agentModelRef.model);
+      if (newModel) {
+        const newModelInfo = newModelInfos.find((m) => m.id === state.agentModelRef.model && m.provider === state.agentModelRef.provider);
+        await state.session.setModel(newModel);
+      }
     }
 
-    // Start a fresh session in the new agent's session directory.
-    // ctx.newSession() resets the existing AgentSession in-place (no new
-    // instance), so InteractiveMode's internal reference stays valid.
+    // Start a fresh session
     await ctx.newSession();
     ctx.ui.notify(`🔄 Switched to agent '${arg}'.`, "info");
   };
@@ -518,12 +696,8 @@ async function buildBeigeExtension(
     path: "<beige-tui>",
     resolvedPath: "<beige-tui>",
     handlers: new Map<string, Array<(...args: unknown[]) => Promise<unknown>>>([
-      // Re-read AGENTS.md on /new and session switches so that edits the
-      // agent made during the previous session are picked up.
       ["session_switch", [async () => {
-        const dir = resolve(beigeDir(), "agents", state.agentName);
-        const ws = state.agentConfig.workspaceDir ?? resolve(dir, "workspace");
-        agentsFilesRef.value = readWorkspaceAgentsMd(ws);
+        agentsFilesRef.value = readWorkspaceAgentsMd(state.workspaceDir);
         if (state.session) {
           const toolNames = state.session.getActiveToolNames();
           (state.session as any)._baseSystemPrompt = (state.session as any)._rebuildSystemPrompt(toolNames);
@@ -554,14 +728,6 @@ interface SessionEntry {
   timestamp: Date;
 }
 
-/**
- * List human-initiated sessions for an agent, sorted newest-first.
- *
- * Delegates to BeigeSessionStore.listSessions() so that sessions created
- * by toolkit tools (e.g. agent-to-agent sub-agent sessions, which carry
- * metadata.depth > 0) are automatically excluded.  Only sessions the user
- * started directly appear in /beige-sessions and /beige-resume.
- */
 function listSessions(agentName: string): SessionEntry[] {
   const store = new BeigeSessionStore();
   return store.listSessions(agentName).map((info) => ({
@@ -569,7 +735,6 @@ function listSessions(agentName: string): SessionEntry[] {
     timestamp: new Date(info.createdAt),
   }));
 }
-
 
 // ── TUI tool-start handler ────────────────────────────────────────────────────
 
@@ -694,22 +859,4 @@ function createProxyTools(
       },
     },
   ];
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function resolveModel(agentConfig: AgentConfig, modelRegistry: ModelRegistry | RestrictedModelRegistry) {
-  const { provider, model: modelId } = agentConfig.model;
-  // Prefer ModelRegistry.find() over the static getModel() because the registry
-  // applies OAuth provider transformations (e.g. modifyModels) that update baseUrl.
-  // For GitHub Copilot business subscriptions, the OAuth provider rewrites baseUrl
-  // from api.individual.githubcopilot.com → api.business.githubcopilot.com based
-  // on the proxy-ep in the access token. Using the static getModel() would return
-  // the unmodified built-in model with the wrong baseUrl, causing 421 Misdirected
-  // Request errors.
-  const registryModel = modelRegistry.find(provider, modelId);
-  if (registryModel) return registryModel;
-  const model = getModel(provider as any, modelId);
-  if (model) return model;
-  throw new Error(`Model not found: ${provider}/${modelId}`);
 }

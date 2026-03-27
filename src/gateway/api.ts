@@ -7,6 +7,8 @@ import type { AuditLogger } from "./audit.js";
 import type { Gateway } from "./gateway.js";
 import type { PluginRegistry } from "../plugins/registry.js";
 import { buildSkillContext, type LoadedSkill } from "../skills/registry.js";
+import { streamSimple } from "@mariozechner/pi-ai";
+import type { Context, SimpleStreamOptions } from "@mariozechner/pi-ai";
 
 export interface GatewayAPIOptions {
   config: BeigeConfig;
@@ -170,6 +172,7 @@ export class GatewayAPI {
             fallbackModels: agentConfig.fallbackModels ?? [],
             tools: agentConfig.tools,
             skills: agentConfig.skills ?? [],
+            workspaceDir: agentConfig.workspaceDir,
           };
         }
 
@@ -184,6 +187,57 @@ export class GatewayAPI {
             ),
           },
         });
+      }
+
+      // ── GET /api/agents/:name/models ──────────────────────
+      // Returns model metadata for the agent's allowed models (primary + fallbacks).
+      // The TUI uses this to create proxy models without needing API keys.
+      const modelsMatch = path.match(/^\/api\/agents\/([^/]+)\/models$/);
+      if (method === "GET" && modelsMatch) {
+        const agentName = decodeURIComponent(modelsMatch[1]);
+        const agentConfig = this.opts.config.agents[agentName];
+        if (!agentConfig) {
+          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
+        }
+
+        const modelRegistry = this.opts.agentManager.getModelRegistry();
+        const models: Array<Record<string, unknown>> = [];
+
+        const addModel = (modelRef: { provider: string; model: string; thinkingLevel?: string }) => {
+          const m = modelRegistry.find(modelRef.provider, modelRef.model);
+          if (m) {
+            models.push({
+              id: m.id,
+              name: m.name,
+              provider: m.provider,
+              api: m.api,
+              baseUrl: m.baseUrl,
+              reasoning: m.reasoning,
+              input: m.input,
+              cost: m.cost,
+              contextWindow: m.contextWindow,
+              maxTokens: m.maxTokens,
+              headers: m.headers,
+              compat: m.compat,
+              thinkingLevel: modelRef.thinkingLevel ?? "off",
+            });
+          }
+        };
+
+        addModel(agentConfig.model);
+        for (const fb of agentConfig.fallbackModels ?? []) {
+          addModel(fb);
+        }
+
+        return this.json(res, 200, { models });
+      }
+
+      // ── POST /api/chat/stream ────────────────────────────
+      // LLM proxy: accepts a chat request, resolves auth server-side,
+      // forwards to the real LLM provider, and streams events back.
+      // This allows the TUI to make LLM calls without having API keys.
+      if (method === "POST" && path === "/api/chat/stream") {
+        return this.handleChatStream(req, res);
       }
 
       // ── 404 ───────────────────────────────────────────────
@@ -321,6 +375,95 @@ export class GatewayAPI {
           isError: true,
         };
     }
+  }
+
+  /**
+   * LLM proxy endpoint: resolves auth server-side, forwards to the real
+   * LLM provider, and streams AssistantMessageEvent objects back as
+   * newline-delimited JSON.
+   */
+  private async handleChatStream(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req);
+    let reqData: { provider: string; modelId: string; context: Context; options?: SimpleStreamOptions };
+    try {
+      reqData = JSON.parse(body);
+    } catch {
+      return this.json(res, 400, { error: "Invalid JSON" });
+    }
+
+    const { provider, modelId, context, options } = reqData;
+    if (!provider || !modelId || !context) {
+      return this.json(res, 400, { error: "Missing provider, modelId, or context" });
+    }
+
+    const modelRegistry = this.opts.agentManager.getModelRegistry();
+    const model = modelRegistry.find(provider, modelId);
+    if (!model) {
+      return this.json(res, 404, { error: `Model not found: ${provider}/${modelId}` });
+    }
+
+    // Resolve API key server-side
+    const apiKey = await modelRegistry.getApiKey(model);
+    if (!apiKey) {
+      return this.json(res, 401, { error: `No API key configured for ${provider}/${modelId}` });
+    }
+
+    // Stream response — newline-delimited JSON
+    res.writeHead(200, {
+      "Content-Type": "application/x-ndjson",
+      "Transfer-Encoding": "chunked",
+      "Cache-Control": "no-cache",
+    });
+
+    // Detect client disconnect to abort the LLM call
+    const abortController = new AbortController();
+    let closed = false;
+    const onClose = () => {
+      if (!closed) {
+        closed = true;
+        abortController.abort();
+      }
+    };
+    req.on("close", onClose);
+    res.on("close", onClose);
+
+    try {
+      const stream = streamSimple(model, context, {
+        ...options,
+        apiKey,
+        signal: abortController.signal,
+      });
+
+      for await (const event of stream) {
+        if (closed) break;
+        res.write(JSON.stringify(event) + "\n");
+      }
+    } catch (err) {
+      if (!closed) {
+        const isAborted = (err as any).name === "AbortError";
+        const errorEvent = {
+          type: "error",
+          reason: isAborted ? "aborted" : "error",
+          error: {
+            role: "assistant",
+            content: [],
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            usage: {
+              input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            },
+            stopReason: isAborted ? "aborted" : "error",
+            errorMessage: isAborted ? undefined : (err instanceof Error ? err.message : String(err)),
+            timestamp: Date.now(),
+          },
+        };
+        res.write(JSON.stringify(errorEvent) + "\n");
+      }
+    }
+
+    res.end();
   }
 
   private json(res: ServerResponse, status: number, data: any): void {

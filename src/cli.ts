@@ -774,41 +774,17 @@ if (mode.kind === "setup") {
 } else if (mode.kind === "tui") {
   // ── Mode: TUI ─────────────────────────────────────────────────────
 
-  const { loadConfig } = await import("./config/loader.js");
-  console.log(`[BEIGE] Loading config from: ${resolve(configPath)}`);
-  const config = loadConfig(configPath);
-
-  const agentNames = Object.keys(config.agents);
-  if (agentNames.length === 0) {
-    console.error("[BEIGE] No agents defined in config");
-    process.exit(1);
-  }
-
-  let agentName = mode.agentName;
-  if (!agentName) {
-    agentName = agentNames[0];
-    if (agentNames.length > 1) {
-      console.log(
-        `[BEIGE] No agent specified, using '${agentName}'. Available: ${agentNames.join(", ")}`
-      );
-    }
-  }
-
-  if (!config.agents[agentName]) {
-    console.error(
-      `[BEIGE] Unknown agent '${agentName}'. Available: ${agentNames.join(", ")}`
-    );
-    process.exit(1);
-  }
-
+  // The TUI does NOT load the config file.  All LLM calls and tool
+  // execution are proxied through the gateway, which is the only
+  // process that needs API keys and provider configuration.
   const url =
     gatewayUrl ??
-    `http://${config.gateway?.host ?? "127.0.0.1"}:${config.gateway?.port ?? 7433}`;
+    `http://127.0.0.1:7433`;
 
   const { launchTUI } = await import("./channels/tui.js");
 
   try {
-    await launchTUI({ config, agentName, gatewayUrl: url });
+    await launchTUI({ agentName: mode.agentName, gatewayUrl: url });
   } catch (err) {
     console.error("[BEIGE] TUI error:", err);
     process.exit(1);

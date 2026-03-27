@@ -6,14 +6,30 @@ import { type BeigeConfig, type PluginConfig, type SkillConfig, validateConfig }
 
 /**
  * Resolve environment variable references in strings.
- * Supports ${VAR_NAME} syntax. Throws if a referenced var is not set.
+ * Supports ${VAR_NAME} and ${VAR_NAME:-default} syntax.
+ * Missing variables resolve to empty string (validation happens at runtime
+ * when a provider is actually used, so a config can define providers whose
+ * keys are only available on certain devices).
  */
 function resolveEnvVars(value: unknown): unknown {
   if (typeof value === "string") {
-    return value.replace(/\$\{([^}]+)\}/g, (match, varName) => {
+    return value.replace(/\$\{([^}]+)\}/g, (match, expr) => {
+      // Support ${VAR:-default} syntax
+      const defaultSep = ":-";
+      const defaultIdx = expr.indexOf(defaultSep);
+      let varName: string;
+      let defaultValue: string | undefined;
+
+      if (defaultIdx !== -1) {
+        varName = expr.substring(0, defaultIdx);
+        defaultValue = expr.substring(defaultIdx + defaultSep.length);
+      } else {
+        varName = expr;
+      }
+
       const envValue = process.env[varName];
       if (envValue === undefined) {
-        throw new Error(`Environment variable '${varName}' is not set (referenced in config)`);
+        return defaultValue ?? "";
       }
       return envValue;
     });

@@ -28,6 +28,7 @@ import {
   existsSync,
   openSync,
   unlinkSync,
+  statSync,
 } from "fs";
 import { spawn } from "child_process";
 import { watch } from "fs";
@@ -168,7 +169,14 @@ async function waitForGatewayReady(
   const healthUrl = `http://${host}:${port}/api/health`;
   const pollIntervalMs = 500;
 
+  // Start at current file size so we only stream logs from this startup,
+  // not the entire history of previous gateway runs.
   let lastLogPosition = 0;
+  try {
+    lastLogPosition = statSync(logFile).size;
+  } catch {
+    // File doesn't exist yet — start from 0
+  }
   let childExited = false;
 
   const flushLogs = () => {

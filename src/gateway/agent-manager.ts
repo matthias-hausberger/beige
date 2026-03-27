@@ -1,4 +1,5 @@
 import { getModel, isContextOverflow } from "@mariozechner/pi-ai";
+import { logErrorAuto } from "./error-logger.js";
 import {
   AuthStorage,
   createAgentSession,
@@ -40,6 +41,14 @@ function loadSystemPromptTemplate(): string {
 }
 
 const SYSTEM_PROMPT_TEMPLATE = loadSystemPromptTemplate();
+
+/**
+ * Maximum time to wait for a single prompt call to settle (agent_end).
+ * If pi swallows an error internally and never emits agent_end, we reject
+ * after this delay so the fallback model loop can proceed.
+ * Set to 10 minutes — well above any realistic agent run.
+ */
+const PROMPT_TIMEOUT_MS = 10 * 60 * 1000;
 import { ProviderHealthTracker, extractRateLimitInfo } from "./provider-health.js";
 import { parseSessionKey, type SessionContext } from "../types/session.js";
 import { beigeDir } from "../paths.js";
@@ -316,8 +325,10 @@ export class AgentManager {
         // Non-rate-limit error — mark as failed but try next
         this.providerHealth.markFailed(provider, modelId, error.message);
         console.error(
-          `[AGENT] ${provider}/${modelId} failed: ${error.message}, trying next model`
+          `[AGENT] ${provider}/${modelId} failed: ${error.message}`,
+          error.stack ?? "(no stack trace)"
         );
+        logErrorAuto(error, { operation: "prompt", agent: agentName, session: sessionKey, model: `${provider}/${modelId}` });
       }
     }
 
@@ -423,8 +434,10 @@ export class AgentManager {
         // Non-rate-limit error — mark as failed but try next
         this.providerHealth.markFailed(provider, modelId, error.message);
         console.error(
-          `[AGENT] ${provider}/${modelId} failed: ${error.message}, trying next model`
+          `[AGENT] ${provider}/${modelId} failed: ${error.message}`,
+          error.stack ?? "(no stack trace)"
         );
+        logErrorAuto(error, { operation: "promptStreaming", agent: agentName, session: sessionKey, model: `${provider}/${modelId}` });
       }
     }
 
@@ -471,6 +484,19 @@ export class AgentManager {
         // Reset on each new assistant turn so only the final turn's text is returned.
         // Intermediate text emitted before tool calls (e.g. "I'll check…") is discarded.
         let responseText = "";
+        let settled = false;
+
+        // Watchdog: if the session never emits agent_end (e.g. pi swallows the
+        // error internally), reject after a generous timeout so the caller's
+        // catch block can log and try the next model instead of hanging forever.
+        const watchdog = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            const msg = `[AGENT] Prompt timed out for session '${sessionKey}' (${modelRef.provider}/${modelRef.model}) — no agent_end received`;
+            console.error(msg);
+            reject(new Error(msg));
+          }
+        }, PROMPT_TIMEOUT_MS);
 
         const unsubscribe = managed.session.subscribe(
           makeSessionSubscriber({
@@ -478,11 +504,15 @@ export class AgentManager {
             onTextReset: () => { responseText = ""; },
             onTextDelta: (delta) => { responseText += delta; },
             onSettle: (errMsg) => {
-              if (errMsg) {
-                console.error(`[AGENT] LLM error for session '${sessionKey}': ${errMsg}`);
-                reject(new Error(errMsg));
-              } else {
-                resolve(responseText);
+              if (!settled) {
+                settled = true;
+                clearTimeout(watchdog);
+                if (errMsg) {
+                  console.error(`[AGENT] LLM error for session '${sessionKey}': ${errMsg}`);
+                  reject(new Error(errMsg));
+                } else {
+                  resolve(responseText);
+                }
               }
             },
             onCleanup: () => unsubscribe(),
@@ -491,8 +521,14 @@ export class AgentManager {
         );
 
         managed.session.prompt(message).catch((err) => {
-          unsubscribe();
-          reject(err);
+          if (!settled) {
+            settled = true;
+            clearTimeout(watchdog);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            console.error(`[AGENT] session.prompt() rejected for session '${sessionKey}': ${errMsg}`, err instanceof Error ? err.stack : "");
+            unsubscribe();
+            reject(err);
+          }
         });
       });
     } finally {
@@ -525,6 +561,18 @@ export class AgentManager {
         // and streamed. The onAssistantTurnStart callback lets the caller (e.g. the
         // Telegram plugin) discard/replace any previously rendered partial content.
         let responseText = "";
+        let settled = false;
+
+        // Watchdog: if pi never emits agent_end, reject after the timeout so the
+        // caller's catch block can log and try the next model instead of hanging.
+        const watchdog = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            const msg = `[AGENT] Streaming prompt timed out for session '${sessionKey}' (${modelRef.provider}/${modelRef.model}) — no agent_end received`;
+            console.error(msg);
+            reject(new Error(msg));
+          }
+        }, PROMPT_TIMEOUT_MS);
 
         const unsubscribe = managed.session.subscribe(
           makeSessionSubscriber({
@@ -538,11 +586,15 @@ export class AgentManager {
               onDelta(delta);
             },
             onSettle: (errMsg) => {
-              if (errMsg) {
-                console.error(`[AGENT] LLM error for session '${sessionKey}': ${errMsg}`);
-                reject(new Error(errMsg));
-              } else {
-                resolve(responseText);
+              if (!settled) {
+                settled = true;
+                clearTimeout(watchdog);
+                if (errMsg) {
+                  console.error(`[AGENT] LLM error for session '${sessionKey}': ${errMsg}`);
+                  reject(new Error(errMsg));
+                } else {
+                  resolve(responseText);
+                }
               }
             },
             onCleanup: () => unsubscribe(),
@@ -551,8 +603,14 @@ export class AgentManager {
         );
 
         managed.session.prompt(message).catch((err) => {
-          unsubscribe();
-          reject(err);
+          if (!settled) {
+            settled = true;
+            clearTimeout(watchdog);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            console.error(`[AGENT] session.prompt() rejected for session '${sessionKey}': ${errMsg}`, err instanceof Error ? err.stack : "");
+            unsubscribe();
+            reject(err);
+          }
         });
       });
     } finally {

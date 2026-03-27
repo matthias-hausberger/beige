@@ -64,11 +64,19 @@ export class Gateway {
   async start(): Promise<void> {
     console.log("[GATEWAY] Starting Beige gateway...");
 
-    // 0. Set up unhandled rejection handler
+    // 0. Set up global error handlers so no error ever disappears silently.
+    //    unhandledRejection catches async errors that weren't .catch()-ed.
+    //    uncaughtException catches synchronous throws that escape all try/catch.
     const rejectionHandler = (reason: unknown, promise: Promise<unknown>) => {
       logUnhandledRejection(reason, promise);
     };
     process.on("unhandledRejection", rejectionHandler);
+
+    const exceptionHandler = (err: Error) => {
+      console.error("[GATEWAY] Uncaught exception:", err.message, err.stack ?? "");
+      logUnhandledRejection(err, Promise.resolve());
+    };
+    process.on("uncaughtException", exceptionHandler);
 
     // 1. Wire config into tool runner for per-agent plugin config resolution
     this.toolRunner.setConfig(this.config);

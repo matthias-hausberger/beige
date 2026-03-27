@@ -117,6 +117,11 @@ function readConfig(): { raw: string; parsed: ConfigFile } {
  *
  * Strategy: parse with JSON5, modify the object, serialize back.
  * This loses comments but is reliable. We add a header comment back.
+ *
+ * Safety rule: if a plugin entry already exists in config, only `path` and
+ * `_source` are ever updated. The user's `config` block (API keys, tokens,
+ * any other settings) is never touched. Default config from the manifest is
+ * only written when creating a brand-new entry.
  */
 function addPluginsToConfig(
   plugins: DiscoveredPlugin[],
@@ -131,24 +136,34 @@ function addPluginsToConfig(
   }
 
   for (const plugin of plugins) {
-    if (parsed.plugins[plugin.name] && !force) {
-      conflicts.push(
-        `Plugin '${plugin.name}' already in config. Use --force to override.`
-      );
-      continue;
+    const existing = parsed.plugins[plugin.name];
+
+    if (existing) {
+      if (!force) {
+        conflicts.push(
+          `Plugin '${plugin.name}' already in config. Use --force to override.`
+        );
+        continue;
+      }
+
+      // Plugin already exists — only update path and _source.
+      // Never overwrite config: the user may have filled in API keys, tokens,
+      // or other settings that would be silently destroyed otherwise.
+      existing.path = plugin.path;
+      existing._source = source;
+    } else {
+      // Brand-new entry — write path, _source, and default config from manifest.
+      const entry: Record<string, unknown> = {
+        path: plugin.path,
+        _source: source,
+      };
+
+      if (plugin.manifest.defaultConfig && Object.keys(plugin.manifest.defaultConfig).length > 0) {
+        entry.config = plugin.manifest.defaultConfig;
+      }
+
+      parsed.plugins[plugin.name] = entry;
     }
-
-    const entry: Record<string, unknown> = {
-      path: plugin.path,
-      _source: source,
-    };
-
-    // Add default config from manifest if available
-    if (plugin.manifest.defaultConfig && Object.keys(plugin.manifest.defaultConfig).length > 0) {
-      entry.config = plugin.manifest.defaultConfig;
-    }
-
-    parsed.plugins[plugin.name] = entry;
   }
 
   if (conflicts.length > 0 && !force) {

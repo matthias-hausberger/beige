@@ -20,6 +20,7 @@ import {
   startPlugins,
   stopPlugins,
   createPluginContext,
+  ensurePluginsInstalled,
   type AgentManagerRef,
   type LoadedPlugin,
 } from "../plugins/index.js";
@@ -95,24 +96,54 @@ export class Gateway {
       registry: this.pluginRegistry,
     });
 
-    // 4. Load plugins — this calls createPlugin() and register() for each
+    // 4. Auto-install any plugins defined in config but not yet on disk.
+    //    This makes "copy-paste a config and start the gateway" work out of the
+    //    box: if a plugin entry has a _source but its path is missing or gone,
+    //    we fetch and install it now (equivalent to `beige plugins install`).
+    //    The installer writes the resolved path back to config.json5, so we
+    //    reload the config from disk afterward to pick up the updated paths.
+    const { installed: autoInstalled, failed: autoInstallFailed } =
+      await ensurePluginsInstalled(this.config);
+
+    if (autoInstallFailed.length > 0) {
+      for (const f of autoInstallFailed) {
+        console.error(`[GATEWAY] Plugin auto-install failed for '${f.name}': ${f.error}`);
+      }
+      throw new Error(
+        `Cannot start gateway: failed to auto-install plugin(s): ` +
+        autoInstallFailed.map((f) => f.name).join(", ")
+      );
+    }
+
+    if (autoInstalled.length > 0) {
+      console.log(
+        `[GATEWAY] Auto-installed ${autoInstalled.length} plugin(s) ` +
+        `(${autoInstalled.join(", ")}). Reloading config...`
+      );
+      this.config = loadConfig(this.configPath);
+      // Refresh policy with the updated config (paths are now resolved)
+      this.policy = new PolicyEngine(this.config);
+      this.toolRunner.setConfig(this.config);
+    }
+
+    // 5. Load plugins — this calls createPlugin() and register() for each
     this.loadedPlugins = await loadPlugins(this.config, this.pluginRegistry, pluginCtx);
     console.log(`[GATEWAY] Loaded ${this.loadedPlugins.length} plugin(s)`);
 
-    // 5. Register plugin tools with the ToolRunner (for sandbox tool calls)
+    // 6. Register plugin tools with the ToolRunner (for sandbox tool calls)
     for (const [toolName, pluginTool] of this.pluginRegistry.getAllTools()) {
       this.toolRunner.registerHandler(toolName, pluginTool.handler);
     }
 
-    // 6. Validate that all agent tool references resolve to registered tools
+    // 7. Validate that all agent tool references resolve to registered tools
     const registeredToolNames = new Set(this.pluginRegistry.getRegisteredToolNames());
     validateAgentToolReferences(this.config, registeredToolNames);
 
-    // 7. Load standalone skill packages
+    // 8. Load standalone skill packages
     this.loadedSkills = await loadSkills(this.config);
     console.log(`[GATEWAY] Loaded ${this.loadedSkills.size} standalone skill(s)`);
 
-    // 8. Merge plugin-registered skills into loadedSkills
+    // 9. Merge plugin-registered skills into loadedSkills
     for (const [name, pluginSkill] of this.pluginRegistry.getAllSkills()) {
       if (!this.loadedSkills.has(name)) {
         this.loadedSkills.set(name, {
@@ -123,7 +154,7 @@ export class Gateway {
       }
     }
 
-    // 9. Set up auth and model registry for pi SDK
+    // 10. Set up auth and model registry for pi SDK
     const authStorage = this.setupAuth();
     const beigeModelsPath = resolve(beigeDir(), "models.json");
     const modelRegistry = new ModelRegistry(authStorage, beigeModelsPath);
@@ -140,14 +171,14 @@ export class Gateway {
       }
     }
 
-    // 10. Create sandbox manager
+    // 11. Create sandbox manager
     this.sandboxManager = new SandboxManager(
       this.config,
       this.pluginRegistry,
       this.loadedSkills
     );
 
-    // 11. Create agent manager and resolve the ref so plugins can use it
+    // 12. Create agent manager and resolve the ref so plugins can use it
     this.agentManager = new AgentManager(
       this.config,
       this.sandboxManager,
@@ -160,7 +191,7 @@ export class Gateway {
     );
     this.agentManagerRef.current = this.agentManager;
 
-    // 12. Build beige-sandbox image if any agent needs it
+    // 13. Build beige-sandbox image if any agent needs it
     await this.sandboxManager.ensureSandboxImage();
 
     // 13. Start sandboxes and socket servers for each agent

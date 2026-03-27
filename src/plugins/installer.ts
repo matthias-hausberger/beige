@@ -674,6 +674,65 @@ export async function updateAllPlugins(): Promise<{
 }
 
 /**
+ * Ensure all plugins defined in config are installed on disk.
+ *
+ * For each plugin entry that has a `_source` but whose `path` is missing or
+ * points to a directory that doesn't exist, the plugin is automatically
+ * fetched and installed (equivalent to running `beige plugins install`).
+ *
+ * After installation the installer writes the resolved `path` back to
+ * config.json5, so the caller should reload the config from disk to pick up
+ * the updated paths.
+ *
+ * Plugins that have neither a valid `path` nor a `_source` are reported as
+ * failures — the gateway cannot start without them.
+ */
+export async function ensurePluginsInstalled(
+  config: import("../config/schema.js").BeigeConfig,
+  options: { force?: boolean } = {}
+): Promise<{
+  installed: string[];
+  failed: Array<{ name: string; error: string }>;
+}> {
+  const installed: string[] = [];
+  const failed: Array<{ name: string; error: string }> = [];
+
+  if (!config.plugins) return { installed, failed };
+
+  for (const [pluginName, pluginConfig] of Object.entries(config.plugins)) {
+    const pathMissing = !pluginConfig.path || !existsSync(pluginConfig.path);
+    if (!pathMissing) continue; // already on disk — nothing to do
+
+    if (!pluginConfig._source) {
+      failed.push({
+        name: pluginName,
+        error:
+          `Plugin '${pluginName}' has no 'path' on disk and no '_source' to install from. ` +
+          `Specify a 'path' or install it with 'beige plugins install <source>'.`,
+      });
+      continue;
+    }
+
+    console.log(
+      `[PLUGINS] Auto-installing '${pluginName}' from ${pluginConfig._source}...`
+    );
+
+    const result = await installPlugins(pluginConfig._source, { force: options.force ?? true });
+
+    if (result.success) {
+      installed.push(pluginName);
+      console.log(`[PLUGINS] Auto-installed '${pluginName}' ✓`);
+    } else {
+      const msg = result.error ?? "Unknown error";
+      failed.push({ name: pluginName, error: msg });
+      console.error(`[PLUGINS] Failed to auto-install '${pluginName}': ${msg}`);
+    }
+  }
+
+  return { installed, failed };
+}
+
+/**
  * List plugins from config.json5.
  */
 export function listPluginsFromConfig(): Array<{

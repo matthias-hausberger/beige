@@ -72,6 +72,12 @@
     confluence: {
       path: "../../beige-toolkit/plugins/confluence",
     },
+    schedule: {
+      path: "../../beige-toolkit/plugins/schedule",
+      config: {
+        tickInterval: 15,
+      },
+    },
     telegram: {
       path: "../../beige-toolkit/plugins/telegram",
       config: {
@@ -102,7 +108,7 @@
           thinkingLevel: "off",
         },
       ],
-      tools: ["chrome", "sessions", "spawn", "git", "github", "wrangler", "telegram"],
+      tools: ["chrome", "sessions", "spawn", "git", "github", "wrangler", "telegram", "schedule"],
       sandbox: {
         image: "beige-sandbox:latest",
       },

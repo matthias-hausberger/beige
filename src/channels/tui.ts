@@ -342,10 +342,38 @@ function createProxyStreamSimple(
           buffer = lines.pop() ?? "";
 
           for (const line of lines) {
-            if (line.trim()) {
-              const event = JSON.parse(line) as AssistantMessageEvent;
-              stream.push(event);
+            if (!line.trim()) continue;
+
+            const event = JSON.parse(line) as any;
+
+            // ── Gateway-specific event types ─────────────────────────
+            if (event.type === "blocked") {
+              // The gateway's prePrompt hook blocked this message.
+              // Write to stderr so the user sees why nothing happened,
+              // then treat it as an abort so the agent loop stops cleanly.
+              process.stderr.write(
+                `\r❌ ${event.reason ?? "Message blocked by plugin hook."}\n`
+              );
+              stream.push({
+                type: "error",
+                reason: "aborted" as const,
+                error: makeErrorMessage(model, "aborted"),
+              });
+              stream.end();
+              return;
             }
+
+            if (event.type === "model_fallback") {
+              // Gateway transparently switched to a fallback model due to a
+              // rate limit — no action required, subsequent events will come
+              // from the new model and its metadata will be in the done event.
+              console.log(
+                `[TUI] Gateway switched to fallback model: ${event.provider}/${event.modelId}`
+              );
+              continue;
+            }
+
+            stream.push(event as AssistantMessageEvent);
           }
         }
 
@@ -708,64 +736,11 @@ async function buildBeigeExtension(
         }
       }]],
 
-      // prePrompt hook: fires before the agent loop starts.
-      ["before_agent_start", [async (event: any, ctx: any) => {
-        try {
-          const res = await fetch(
-            `${state.gatewayUrl}/api/agents/${encodeURIComponent(state.agentName)}/hooks/pre-prompt`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                message: event.prompt,
-                sessionKey: `tui:${state.agentName}:default`,
-                channel: "tui",
-              }),
-            }
-          );
-          const data = await res.json();
-          if (data.block) {
-            const reason = data.reason ?? "Message blocked by plugin hook.";
-            ctx.ui.notify(`\u{1f6ab} ${reason}`, "warning");
-            ctx.abort();
-            return;
-          }
-        } catch {
-          // Non-fatal: hook failures should not block the TUI
-        }
-      }]],
-
-      // postResponse hook: fires after the agent loop ends.
-      ["agent_end", [async (event: any) => {
-        try {
-          const messages = event.messages as Array<{ role: string; content: any }>;
-          const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
-          if (!lastAssistant) return;
-          const textContent = lastAssistant.content
-            ?.filter((c: any) => c.type === "text")
-            ?.map((c: any) => c.text)
-            ?.join("") ?? "";
-          if (!textContent) return;
-          const res = await fetch(
-            `${state.gatewayUrl}/api/agents/${encodeURIComponent(state.agentName)}/hooks/post-response`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                response: textContent,
-                sessionKey: `tui:${state.agentName}:default`,
-                channel: "tui",
-              }),
-            }
-          );
-          const data = await res.json();
-          if (data.block) {
-            console.log(`[TUI] Response suppressed by postResponse hook for agent '${state.agentName}'`);
-          }
-        } catch {
-          // Non-fatal: hook failures should not block the TUI
-        }
-      }]],
+      // prePrompt and postResponse hooks are now executed server-side inside
+      // the gateway's /api/chat/stream handler before/after the LLM call.
+      // This eliminates the extra HTTP round-trips and ensures hooks run in
+      // the same process as the gateway regardless of which channel triggered
+      // the call.  The `blocked` stream event handles the abort case.
 
       // sessionCreated hook: fires on initial session load and /new.
       ["session_start", [async () => {

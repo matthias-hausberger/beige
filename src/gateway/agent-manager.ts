@@ -97,6 +97,14 @@ export class AgentManager {
   private providerHealth = new ProviderHealthTracker();
   /** Beige home directory */
   private beigeDir = beigeDir();
+  /**
+   * Number of active direct LLM stream calls proxied via /api/chat/stream.
+   * These are TUI sessions whose AgentSession lives in the TUI process —
+   * they aren't tracked in `sessions`, so we count them separately so
+   * drainAll() can wait for them to finish before a gateway restart.
+   */
+  private activeStreamCount = 0;
+  private streamDrainResolvers: Array<() => void> = [];
 
   constructor(
     private config: BeigeConfig,
@@ -779,6 +787,15 @@ export class AgentManager {
       });
     };
 
+    // Also wait for active direct LLM streams proxied via /api/chat/stream
+    // (TUI sessions whose AgentSession lives in the TUI process, not here).
+    const drainDirectStreams = (): Promise<void> => {
+      if (this.activeStreamCount === 0) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        this.streamDrainResolvers.push(resolve);
+      });
+    };
+
     // Add a timeout to prevent hanging on stuck calls (10 seconds)
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error("Drain timeout")), 10000);
@@ -790,11 +807,13 @@ export class AgentManager {
     while (!quiet) {
       const pending = [...this.sessions.values()];
       await Promise.race([
-        Promise.all(pending.map(drainSession)),
+        Promise.all([...pending.map(drainSession), drainDirectStreams()]),
         timeoutPromise,
       ]);
       // Check again — no new calls should have started after drainResolvers fire
-      quiet = [...this.sessions.values()].every((s) => s.inflightCount === 0);
+      quiet =
+        [...this.sessions.values()].every((s) => s.inflightCount === 0) &&
+        this.activeStreamCount === 0;
     }
 
     console.log("[AGENT] All in-flight calls finished. Disposing sessions...");
@@ -862,6 +881,83 @@ export class AgentManager {
       managed.session.dispose();
     }
     this.sessions.clear();
+  }
+
+  // ── Gateway API helpers (used by handleChatStream) ─────────────────
+
+  /**
+   * Get the ordered list of models to try for a direct LLM stream call
+   * (used by GatewayAPI.handleChatStream).
+   *
+   * Returns the requested model followed by any subsequent fallback models
+   * so the endpoint can transparently retry on rate-limit errors using the
+   * same ProviderHealthTracker that AgentManager uses for session prompts.
+   */
+  getModelsToTryForStream(
+    agentName: string,
+    requestedProvider: string,
+    requestedModelId: string
+  ): ModelRef[] {
+    const agentConfig = this.config.agents[agentName];
+    if (!agentConfig) {
+      // Unknown agent — just try what was requested
+      return [{ provider: requestedProvider, model: requestedModelId }];
+    }
+
+    const allModels = this.getModelsToTry(agentConfig);
+    const startIdx = allModels.findIndex(
+      (m) => m.provider === requestedProvider && m.model === requestedModelId
+    );
+
+    // If the requested model isn't in the agent's configured list, try only it
+    if (startIdx === -1) {
+      return [{ provider: requestedProvider, model: requestedModelId }];
+    }
+
+    // Return from the requested model onward (skip models earlier in the list
+    // that the TUI may have already tried in a previous request)
+    return allModels.slice(startIdx);
+  }
+
+  /** True if the given model is currently in rate-limit cooldown. */
+  isModelCoolingDown(provider: string, modelId: string): boolean {
+    return this.providerHealth.isCoolingDown(provider, modelId);
+  }
+
+  /** Mark a model as healthy after a successful LLM call. */
+  markModelHealthy(provider: string, modelId: string): void {
+    this.providerHealth.markHealthy(provider, modelId);
+  }
+
+  /** Mark a model as rate-limited so it is skipped for the cooldown period. */
+  markModelRateLimited(provider: string, modelId: string, retryAfterMs?: number, message?: string): void {
+    this.providerHealth.markRateLimited(provider, modelId, retryAfterMs, message);
+  }
+
+  /** Mark a model as failed (non-rate-limit error) for health tracking purposes. */
+  markModelFailed(provider: string, modelId: string, message?: string): void {
+    this.providerHealth.markFailed(provider, modelId, message);
+  }
+
+  /**
+   * Increment the count of active direct LLM streams (TUI proxy calls).
+   * Call this when /api/chat/stream begins; pair with decrementActiveStream.
+   * drainAll() waits for this count to reach zero before disposing sessions.
+   */
+  incrementActiveStream(): void {
+    this.activeStreamCount++;
+  }
+
+  /**
+   * Decrement the active stream count and wake any drainAll() waiters
+   * if the count reaches zero.
+   */
+  decrementActiveStream(): void {
+    this.activeStreamCount = Math.max(0, this.activeStreamCount - 1);
+    if (this.activeStreamCount === 0 && this.streamDrainResolvers.length > 0) {
+      const resolvers = this.streamDrainResolvers.splice(0);
+      for (const resolve of resolvers) resolve();
+    }
   }
 
   // ── Private helpers ────────────────────────────────────────────────

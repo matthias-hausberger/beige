@@ -10,6 +10,7 @@ import { buildSkillContext, type LoadedSkill } from "../skills/registry.js";
 import { streamSimple } from "@mariozechner/pi-ai";
 import type { Context, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { extractRateLimitInfo } from "./provider-health.js";
+import { parseSessionKey } from "../types/session.js";
 
 export interface GatewayAPIOptions {
   config: BeigeConfig;
@@ -453,12 +454,16 @@ export class GatewayAPI {
   }
 
   /**
-   * LLM proxy endpoint: resolves auth server-side, forwards to the real
-   * LLM provider, audit-logs the call, and streams AssistantMessageEvent
-   * objects back as newline-delimited JSON.
+   * LLM proxy endpoint: resolves auth server-side, executes pre/post hooks,
+   * applies the agent's fallback model chain on rate-limit errors, audit-logs
+   * every attempt, and streams AssistantMessageEvent objects back as
+   * newline-delimited JSON.
    *
-   * Includes rate-limit metadata in error responses so the TUI can do
-   * cross-model fallback when a provider is throttled.
+   * The TUI process has no API keys and no fallback logic — both now live here.
+   *
+   * Special stream events emitted beyond the pi AssistantMessageEvent set:
+   *   { type: "blocked",        reason: string }  — prePrompt hook blocked the message
+   *   { type: "model_fallback", provider, modelId } — gateway switched to a fallback model
    */
   private async handleChatStream(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await readBody(req);
@@ -482,36 +487,50 @@ export class GatewayAPI {
     }
 
     const modelRegistry = this.opts.agentManager.getModelRegistry();
-    const model = modelRegistry.find(provider, modelId);
-    if (!model) {
-      return this.json(res, 404, { error: `Model not found: ${provider}/${modelId}` });
+
+    // ── Execute prePrompt hooks server-side ──────────────────────────
+    // Hooks can transform or block messages before the LLM sees them.
+    // This replaces the TUI's explicit HTTP call to /hooks/pre-prompt and
+    // ensures all channels — TUI and plugin channels alike — go through the
+    // same hook chain without an extra network round-trip.
+    if (agentName && this.opts.config.agents[agentName]) {
+      const resolvedSessionKey = sessionKey ?? `tui:${agentName}:default`;
+      const channel = parseSessionKey(resolvedSessionKey).channel;
+      const userMessage = extractLastUserMessage(context);
+
+      const preResult = await this.opts.pluginRegistry.executePrePrompt({
+        message: userMessage,
+        sessionKey: resolvedSessionKey,
+        agentName,
+        channel,
+      });
+
+      if (preResult.block) {
+        // Signal the TUI to stop the agent loop cleanly (treated as abort)
+        res.writeHead(200, {
+          "Content-Type": "application/x-ndjson",
+          "Transfer-Encoding": "chunked",
+          "Cache-Control": "no-cache",
+        });
+        res.write(JSON.stringify({
+          type: "blocked",
+          reason: preResult.reason ?? "Message blocked by plugin hook.",
+        }) + "\n");
+        res.end();
+        return;
+      }
     }
 
-    // Resolve API key server-side
-    const apiKey = await modelRegistry.getApiKey(model);
-    if (!apiKey) {
-      return this.json(res, 401, { error: `No API key configured for ${provider}/${modelId}` });
-    }
+    // ── Build fallback model list ─────────────────────────────────────
+    // Start from the model the TUI requested, then continue with the
+    // agent's configured fallback models.  This mirrors the logic in
+    // AgentManager.prompt() / promptStreaming() so rate-limit handling is
+    // consistent regardless of which path triggered the LLM call.
+    const modelsToTry = agentName
+      ? this.opts.agentManager.getModelsToTryForStream(agentName, provider, modelId)
+      : [{ provider, model: modelId }];
 
-    // Audit: log the start of the LLM call
-    const auditLabel = agentName ? `${agentName}/${provider}/${modelId}` : `${provider}/${modelId}`;
-    const auditTimer = this.opts.audit.start(
-      agentName ?? "unknown",
-      "core_tool",
-      `llm:${provider}/${modelId}`,
-      sessionKey ? [sessionKey] : [],
-      "allowed",
-      "gateway"
-    );
-
-    // Stream response — newline-delimited JSON
-    res.writeHead(200, {
-      "Content-Type": "application/x-ndjson",
-      "Transfer-Encoding": "chunked",
-      "Cache-Control": "no-cache",
-    });
-
-    // Detect client disconnect to abort the LLM call
+    // ── Detect client disconnect ──────────────────────────────────────
     const abortController = new AbortController();
     let closed = false;
     const onClose = () => {
@@ -523,76 +542,167 @@ export class GatewayAPI {
     req.on("close", onClose);
     res.on("close", onClose);
 
-    try {
-      const stream = streamSimple(model, context, {
-        ...options,
-        apiKey,
-        signal: abortController.signal,
-      });
+    // Track this stream so drainAll() waits for it during a gateway restart.
+    this.opts.agentManager.incrementActiveStream();
 
-      let totalOutputTokens = 0;
-      for await (const event of stream) {
-        if (closed) break;
-        // Track output tokens for audit
-        if (event.type === "done" && event.message?.usage) {
-          totalOutputTokens = event.message.usage.output;
-        }
-        res.write(JSON.stringify(event) + "\n");
-      }
+    // Headers are written on the first model attempt that doesn't immediately
+    // throw — this lets us try the next model before committing to a response.
+    let headersWritten = false;
+    let fullResponseText = "";
 
-      auditTimer.finish({ exitCode: 0, outputBytes: totalOutputTokens });
-    } catch (err) {
-      if (!closed) {
-        const isAborted = (err as any).name === "AbortError";
-        const errorMessage = isAborted ? undefined : (err instanceof Error ? err.message : String(err));
-
-        // Extract rate-limit info for the TUI to do fallback
-        const rateLimitInfo = extractRateLimitInfo(err);
-        const rateLimitHeaders: Record<string, string> = {};
-        if (rateLimitInfo.isRateLimit) {
-          rateLimitHeaders["X-Rate-Limited"] = "true";
-          if (rateLimitInfo.retryAfterMs) {
-            rateLimitHeaders["X-Rate-Limit-Retry-After-Ms"] = String(rateLimitInfo.retryAfterMs);
-          }
-        }
-
-        const errorEvent = {
-          type: "error",
-          reason: isAborted ? "aborted" : "error",
-          error: {
-            role: "assistant" as const,
-            content: [],
-            api: model.api,
-            provider: model.provider,
-            model: model.id,
-            usage: {
-              input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-            },
-            stopReason: isAborted ? "aborted" : "error",
-            errorMessage,
-            timestamp: Date.now(),
-          },
-        };
-        // Write rate-limit headers on first write
-        if (Object.keys(rateLimitHeaders).length > 0 && !res.headersSent) {
-          res.writeHead(200, {
-            "Content-Type": "application/x-ndjson",
-            "Transfer-Encoding": "chunked",
-            "Cache-Control": "no-cache",
-            ...rateLimitHeaders,
-          });
-        }
-        res.write(JSON.stringify(errorEvent) + "\n");
-
-        auditTimer.finish({
-          exitCode: 1,
-          error: errorMessage,
+    const writeHeaders = () => {
+      if (!headersWritten) {
+        res.writeHead(200, {
+          "Content-Type": "application/x-ndjson",
+          "Transfer-Encoding": "chunked",
+          "Cache-Control": "no-cache",
         });
+        headersWritten = true;
       }
-    }
+    };
 
-    res.end();
+    try {
+      for (const modelRef of modelsToTry) {
+        if (closed) break;
+
+        if (this.opts.agentManager.isModelCoolingDown(modelRef.provider, modelRef.model)) {
+          console.log(`[API] Skipping ${modelRef.provider}/${modelRef.model} — in cooldown`);
+          continue;
+        }
+
+        const model = modelRegistry.find(modelRef.provider, modelRef.model);
+        if (!model) {
+          console.warn(`[API] Model not found in registry: ${modelRef.provider}/${modelRef.model} — skipping`);
+          continue;
+        }
+
+        const apiKey = await modelRegistry.getApiKey(model);
+        if (!apiKey) {
+          console.warn(`[API] No API key for ${modelRef.provider}/${modelRef.model} — skipping`);
+          continue;
+        }
+
+        // Audit: log each attempt individually so we can trace which model
+        // actually served the response.
+        const auditTimer = this.opts.audit.start(
+          agentName ?? "unknown",
+          "core_tool",
+          `llm:${modelRef.provider}/${modelRef.model}`,
+          sessionKey ? [sessionKey] : [],
+          "allowed",
+          "gateway"
+        );
+
+        // If this is a fallback attempt (headers already written), notify
+        // the client so it can update its model display if desired.
+        if (headersWritten) {
+          res.write(JSON.stringify({
+            type: "model_fallback",
+            provider: modelRef.provider,
+            modelId: modelRef.model,
+          }) + "\n");
+        }
+
+        try {
+          const stream = streamSimple(model, context, {
+            ...options,
+            apiKey,
+            signal: abortController.signal,
+          });
+
+          // Write headers before the first event arrives so the client can
+          // start processing immediately.
+          writeHeaders();
+
+          let totalOutputTokens = 0;
+          fullResponseText = "";
+
+          for await (const event of stream) {
+            if (closed) break;
+
+            // Accumulate full text for postResponse hooks (fired after stream ends)
+            if (
+              (event as any).type === "text_delta" &&
+              typeof (event as any).delta === "string"
+            ) {
+              fullResponseText += (event as any).delta;
+            }
+
+            // Track output tokens for the audit log
+            if ((event as any).type === "done" && (event as any).message?.usage) {
+              totalOutputTokens = (event as any).message.usage.output ?? 0;
+            }
+
+            res.write(JSON.stringify(event) + "\n");
+          }
+
+          this.opts.agentManager.markModelHealthy(modelRef.provider, modelRef.model);
+          auditTimer.finish({ exitCode: 0, outputBytes: totalOutputTokens });
+          break; // Stream succeeded — stop trying fallbacks
+
+        } catch (err) {
+          if (closed) {
+            auditTimer.finish({ exitCode: 0 });
+            break;
+          }
+
+          const isAborted = (err as any)?.name === "AbortError";
+          if (isAborted) {
+            auditTimer.finish({ exitCode: 0 });
+            break;
+          }
+
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          const rateLimitInfo = extractRateLimitInfo(err);
+
+          if (rateLimitInfo.isRateLimit) {
+            // Rate-limited — record it and try the next fallback model
+            this.opts.agentManager.markModelRateLimited(
+              modelRef.provider, modelRef.model, rateLimitInfo.retryAfterMs, errorMsg
+            );
+            auditTimer.finish({ exitCode: 1, error: "rate limited" });
+            console.log(`[API] ${modelRef.provider}/${modelRef.model} rate limited — trying next fallback model`);
+            continue;
+          }
+
+          // Non-rate-limit error — record it, write an error event, and stop
+          this.opts.agentManager.markModelFailed(modelRef.provider, modelRef.model, errorMsg);
+          auditTimer.finish({ exitCode: 1, error: errorMsg });
+          console.error(`[API] ${modelRef.provider}/${modelRef.model} stream error: ${errorMsg}`);
+
+          writeHeaders();
+          res.write(JSON.stringify(buildStreamErrorEvent(model, errorMsg)) + "\n");
+          break;
+        }
+      }
+
+      // All models were skipped (all cooling down) and nothing was written
+      if (!headersWritten) {
+        writeHeaders();
+        res.write(JSON.stringify(buildStreamErrorEvent(
+          { api: "unknown", provider, id: modelId },
+          "All models are currently rate-limited. Please try again later."
+        )) + "\n");
+      }
+
+    } finally {
+      // ── Execute postResponse hooks server-side ─────────────────────
+      // Fire-and-forget: the response is already streamed so a `block` result
+      // can't suppress it, but hooks can still do logging, forwarding, etc.
+      if (agentName && fullResponseText) {
+        const resolvedSessionKey = sessionKey ?? `tui:${agentName}:default`;
+        const channel = parseSessionKey(resolvedSessionKey).channel;
+        this.opts.pluginRegistry.executePostResponse({
+          response: fullResponseText,
+          sessionKey: resolvedSessionKey,
+          agentName,
+          channel,
+        }).catch((err) => console.error("[API] postResponse hook error:", err));
+      }
+
+      this.opts.agentManager.decrementActiveStream();
+      res.end();
+    }
   }
 
   private json(res: ServerResponse, status: number, data: any): void {
@@ -608,6 +718,55 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on("end", () => resolve(Buffer.concat(chunks).toString()));
     req.on("error", reject);
   });
+}
+
+/**
+ * Build a minimal AssistantMessage error event for the ndjson stream.
+ */
+function buildStreamErrorEvent(
+  model: { api: unknown; provider: string; id: string },
+  errorMessage: string
+) {
+  return {
+    type: "error",
+    reason: "error",
+    error: {
+      role: "assistant" as const,
+      content: [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: {
+        input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "error" as const,
+      errorMessage,
+      timestamp: Date.now(),
+    },
+  };
+}
+
+/**
+ * Extract the text of the last user message from a conversation Context.
+ * Used to pass the triggering message to prePrompt hooks.
+ */
+function extractLastUserMessage(context: Context): string {
+  const messages: Array<{ role: string; content: unknown }> =
+    (context as any).messages ?? [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "user") {
+      if (typeof msg.content === "string") return msg.content;
+      if (Array.isArray(msg.content)) {
+        return (msg.content as Array<{ type: string; text?: string }>)
+          .filter((c) => c.type === "text")
+          .map((c) => c.text ?? "")
+          .join("");
+      }
+    }
+  }
+  return "";
 }
 
 /**

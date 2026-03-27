@@ -444,94 +444,46 @@ function cmdGatewayStop(): void {
 async function cmdGatewayRestart(configPath: string, timeoutMs: number): Promise<void> {
   const pid = readPid();
 
-  // If not running, just start it
-  if (pid === null || !isRunning(pid)) {
-    console.log("[BEIGE] Gateway is not running — starting it...");
-    await cmdGatewayStart(configPath, false, timeoutMs);
-    return;
-  }
-
-  // Gateway is running — perform graceful restart
-  console.log(`[BEIGE] Restarting gateway (PID ${pid})...`);
-
-  const { loadConfig } = await import("./config/loader.js");
-  const config = loadConfig(configPath);
-  const port = config.gateway?.port ?? 7433;
-  const host = config.gateway?.host ?? "127.0.0.1";
-  const healthUrl = `http://${host}:${port}/api/health`;
-
-  // Send SIGHUP to trigger restart
-  try {
-    process.kill(pid, "SIGHUP");
-  } catch (err) {
-    console.error(`[BEIGE] Failed to signal gateway (PID ${pid}):`, err);
-    process.exit(1);
-  }
-
-  // Wait for restart to complete
-  const success = await waitForGatewayRestart(pid, healthUrl, timeoutMs);
-
-  if (success) {
-    console.log(`[BEIGE] Gateway restarted successfully`);
-  } else {
-    console.error(`[BEIGE] Gateway restart timed out after ${timeoutMs / 1000}s`);
-    console.error(`[BEIGE] Check logs: ${getLogFile()}`);
-    process.exit(1);
-  }
-}
-
-/**
- * Wait for gateway restart to complete.
- *
- * The restart cycle is: healthy → unhealthy (teardown) → healthy (startup)
- * We need to see it go from healthy to unhealthy and back to healthy.
- */
-async function waitForGatewayRestart(
-  childPid: number,
-  healthUrl: string,
-  timeoutMs: number
-): Promise<boolean> {
-  const startTime = Date.now();
-  const pollIntervalMs = 500;
-  let seenHealthy = false;
-  let seenUnhealthy = false;
-
-  const checkHealth = async (): Promise<boolean> => {
+  // If running, stop it first
+  if (pid !== null && isRunning(pid)) {
+    console.log(`[BEIGE] Stopping gateway (PID ${pid})...`);
     try {
-      const res = await fetch(healthUrl, { method: "GET", signal: AbortSignal.timeout(2000) });
-      return res.ok;
-    } catch {
-      return false;
-    }
-  };
-
-  while (Date.now() - startTime < timeoutMs) {
-    // Check if child process exited unexpectedly
-    if (!isRunning(childPid)) {
-      console.log("[BEIGE] Gateway process exited during restart");
-      return false;
+      process.kill(pid, "SIGTERM");
+    } catch (err) {
+      console.error(`[BEIGE] Failed to stop gateway (PID ${pid}):`, err);
+      process.exit(1);
     }
 
-    const healthy = await checkHealth();
-
-    if (healthy) {
-      if (seenUnhealthy) {
-        // We saw it go down and come back up - restart complete!
-        return true;
+    // Wait for the process to actually exit (up to 30s)
+    const stopTimeout = 30_000;
+    const stopStart = Date.now();
+    while (isRunning(pid) && Date.now() - stopStart < stopTimeout) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    if (isRunning(pid)) {
+      console.error("[BEIGE] Gateway did not stop gracefully — force killing...");
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Ignore
       }
-      seenHealthy = true;
-    } else {
-      if (seenHealthy) {
-        // We saw it go down after being up - restart in progress
-        seenUnhealthy = true;
-        console.log("[BEIGE] Gateway tearing down...");
-      }
+      // Give SIGKILL a moment
+      await new Promise((r) => setTimeout(r, 1000));
     }
-
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
+    console.log("[BEIGE] Gateway stopped");
+  } else {
+    console.log("[BEIGE] Gateway is not running");
   }
 
-  return false;
+  // Clean up stale PID file before starting fresh
+  const pidFile = getPidFile();
+  if (existsSync(pidFile)) {
+    unlinkSync(pidFile);
+  }
+
+  // Start a fresh gateway process
+  console.log("[BEIGE] Starting gateway...");
+  await cmdGatewayStart(configPath, false, timeoutMs);
 }
 
 function cmdGatewayStatus(): void {

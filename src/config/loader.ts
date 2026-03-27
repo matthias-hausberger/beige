@@ -7,9 +7,7 @@ import { type BeigeConfig, type PluginConfig, type SkillConfig, validateConfig }
 /**
  * Resolve environment variable references in strings.
  * Supports ${VAR_NAME} and ${VAR_NAME:-default} syntax.
- * Missing variables resolve to empty string (validation happens at runtime
- * when a provider is actually used, so a config can define providers whose
- * keys are only available on certain devices).
+ * Throws if a variable has no default and is not set in the environment.
  */
 function resolveEnvVars(value: unknown): unknown {
   if (typeof value === "string") {
@@ -29,7 +27,13 @@ function resolveEnvVars(value: unknown): unknown {
 
       const envValue = process.env[varName];
       if (envValue === undefined) {
-        return defaultValue ?? "";
+        if (defaultValue !== undefined) {
+          return defaultValue;
+        }
+        throw new Error(
+          `Environment variable '${varName}' is not set and has no default. ` +
+          `Set the variable or use \${${varName}:-default_value} syntax.`
+        );
       }
       return envValue;
     });

@@ -163,6 +163,10 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       await getAgentManager().steerSession(sessionKey, text);
     },
 
+    async disposeSession(sessionKey): Promise<void> {
+      await getAgentManager().disposeSession(sessionKey);
+    },
+
     // ── Model info ─────────────────────────────────────────
     getModel(provider, modelId): ModelInfo | undefined {
       const registry = getAgentManager().getModelRegistry();

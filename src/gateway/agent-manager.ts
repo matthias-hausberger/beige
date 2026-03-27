@@ -231,7 +231,7 @@ export class AgentManager {
     sessionKey: string,
     agentName: string,
     message: string,
-    opts?: { onToolStart?: OnToolStart; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void; channel?: string }
+    opts?: { onToolStart?: OnToolStart; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void; channel?: string; modelOverride?: { provider: string; model: string } }
   ): Promise<string> {
     const agentConfig = this.config.agents[agentName];
     if (!agentConfig) {
@@ -250,8 +250,10 @@ export class AgentManager {
     }
     const effectiveMessage = preResult.message;
 
-    // Build list of models to try: primary + fallbacks
-    const modelsToTry = this.getModelsToTry(agentConfig);
+    // Build list of models to try: override (if set) or primary + fallbacks
+    const modelsToTry = opts?.modelOverride
+      ? [opts.modelOverride]
+      : this.getModelsToTry(agentConfig);
 
     let lastError: Error | undefined;
 
@@ -335,7 +337,7 @@ export class AgentManager {
     agentName: string,
     message: string,
     onDelta: (delta: string) => void,
-    opts?: { onToolStart?: OnToolStart; onAssistantTurnStart?: () => void; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void; channel?: string }
+    opts?: { onToolStart?: OnToolStart; onAssistantTurnStart?: () => void; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void; channel?: string; modelOverride?: { provider: string; model: string } }
   ): Promise<string> {
     const agentConfig = this.config.agents[agentName];
     if (!agentConfig) {
@@ -356,8 +358,10 @@ export class AgentManager {
     }
     const effectiveMessage = preResult.message;
 
-    // Build list of models to try: primary + fallbacks
-    const modelsToTry = this.getModelsToTry(agentConfig);
+    // Build list of models to try: override (if set) or primary + fallbacks
+    const modelsToTry = opts?.modelOverride
+      ? [opts.modelOverride]
+      : this.getModelsToTry(agentConfig);
 
     let lastError: Error | undefined;
 

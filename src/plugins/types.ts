@@ -398,6 +398,19 @@ export interface PluginContext {
    */
   steerSession(sessionKey: string, text: string): Promise<void>;
 
+  /**
+   * Dispose the in-memory pi session for a session key, without touching the
+   * `.jsonl` session file on disk. History is preserved — the next prompt call
+   * will reload the session from disk under whatever agentName is passed.
+   *
+   * Use this when you want to switch agents or models on an existing session:
+   * abort the session, dispose it, then call prompt() with the new agentName
+   * (which calls getOrCreateSession and finds the existing file).
+   *
+   * No-op if no in-memory session exists for this key.
+   */
+  disposeSession(sessionKey: string): Promise<void>;
+
   // ── Model info ─────────────────────────────────────────
   /**
    * Look up a model's metadata (context window, max output tokens, etc.)
@@ -461,6 +474,17 @@ export interface PromptOpts {
    * callback is the final response.
    */
   onAssistantTurnStart?: () => void;
+
+  /**
+   * Override the model for this specific prompt call, bypassing the agent's
+   * default model and fallback list. The model must still be in the agent's
+   * allowed list (primary or one of its fallbackModels).
+   *
+   * The in-memory session is disposed and recreated with this model if the
+   * current session is using a different one — history (the .jsonl file) is
+   * always preserved.
+   */
+  modelOverride?: { provider: string; model: string };
 
   /**
    * Called when auto-compaction starts (either threshold or overflow recovery).

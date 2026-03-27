@@ -94,6 +94,7 @@ export class GatewayAPI {
           fallbackModels: config.fallbackModels ?? [],
           tools: config.tools,
           skills: config.skills ?? [],
+          workspaceDir: config.workspaceDir,
           toolContext: buildPluginToolContext(config.tools, this.opts.pluginRegistry),
           skillContext: buildSkillContext(config.skills ?? [], this.opts.loadedSkills),
         }));

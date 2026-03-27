@@ -233,7 +233,7 @@ export class AgentManager {
     this.pluginRegistry.executeSessionCreated({
       sessionKey,
       agentName,
-      channel: "unknown",
+      channel: parseSessionKey(sessionKey).channel,
     }).catch((err) => console.error(`[AGENT] sessionCreated hook error:`, err));
 
     return managed;
@@ -763,7 +763,7 @@ export class AgentManager {
     this.pluginRegistry.executeSessionCreated({
       sessionKey,
       agentName,
-      channel: "unknown",
+      channel: parseSessionKey(sessionKey).channel,
     }).catch((err) => console.error(`[AGENT] sessionCreated hook error:`, err));
 
     return managed;
@@ -868,7 +868,7 @@ export class AgentManager {
       this.pluginRegistry.executeSessionDisposed({
         sessionKey,
         agentName: existing.agentName,
-        channel: "unknown",
+        channel: parseSessionKey(sessionKey).channel,
       }).catch((err) => console.error(`[AGENT] sessionDisposed hook error:`, err));
     }
   }

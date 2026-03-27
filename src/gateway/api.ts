@@ -110,13 +110,13 @@ export class GatewayAPI {
         }
 
         const body = await readBody(req);
-        const { tool, params } = JSON.parse(body);
+        const { tool, params, sessionKey } = JSON.parse(body);
 
         if (!tool || !params) {
           return this.json(res, 400, { error: "Missing tool or params" });
         }
 
-        const result = await this.executeTool(agentName, tool, params);
+        const result = await this.executeTool(agentName, tool, params, sessionKey);
         return this.json(res, 200, result);
       }
 
@@ -333,7 +333,8 @@ export class GatewayAPI {
   private async executeTool(
     agentName: string,
     tool: string,
-    params: Record<string, any>
+    params: Record<string, any>,
+    sessionKey?: string
   ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
     const sandbox = this.opts.sandbox;
     const audit = this.opts.audit;
@@ -427,14 +428,14 @@ export class GatewayAPI {
         const timer = audit.start(agentName, "core_tool", "exec", [params.command], "allowed");
         const timeout = (params.timeout ?? 120) * 1000;
         // Inject session context env vars so gateway tools (e.g. agent-to-agent)
-        // can identify the calling agent. agentName is always known from the route.
-        // BEIGE_CHANNEL is "tui" since the HTTP exec endpoint is only used by the TUI.
-        // BEIGE_SESSION_KEY uses the standard TUI key format so the session store
-        // lookup works for depth metadata retrieval.
+        // can identify the calling agent. Derive channel and session key from the
+        // caller-provided sessionKey (falls back to tui defaults for backward compat).
+        const resolvedSessionKey = sessionKey ?? `tui:${agentName}:default`;
+        const resolvedChannel = parseSessionKey(resolvedSessionKey).channel;
         const env: Record<string, string> = {
           BEIGE_AGENT_NAME: agentName,
-          BEIGE_CHANNEL: "tui",
-          BEIGE_SESSION_KEY: `tui:${agentName}:default`,
+          BEIGE_CHANNEL: resolvedChannel,
+          BEIGE_SESSION_KEY: resolvedSessionKey,
         };
         const result = await sandbox.exec(agentName, ["sh", "-c", params.command], undefined, timeout, env);
         const output = [result.stdout, result.stderr].filter(Boolean).join("\n");

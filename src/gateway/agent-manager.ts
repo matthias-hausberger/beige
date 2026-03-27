@@ -645,7 +645,9 @@ export class AgentManager {
     // Check if we need to recreate the session with a different model
     const existing = this.sessions.get(sessionKey);
 
-    // If session exists with the same model, return it
+    // If session exists with the same model, return it (but update onToolStart
+    // if the caller provided a new one — this is needed for runtime verbose
+    // toggles and other callback changes without recreating the session).
     if (existing) {
       const { provider, model: modelId } = modelRef;
       const currentRef = existing.currentModel;
@@ -655,6 +657,9 @@ export class AgentManager {
         currentRef.model === modelId &&
         currentRef.compactionThreshold === modelRef.compactionThreshold
       ) {
+        if (opts?.onToolStart !== undefined) {
+          existing.toolStartHandlerRef.fn = opts.onToolStart;
+        }
         return existing;
       }
 

@@ -202,3 +202,20 @@ beige plugins remove my-plugin
 ```
 
 `beige plugins install` downloads the plugin and adds it to your config.json5 with its path and default config values. Review the config to fill in any required values (like API keys).
+
+## Auto-installation on Gateway Start
+
+The gateway automatically installs any plugin that has a `_source` in config but whose `path` doesn't exist on disk. This means you can copy a `config.json5` from another machine and just run `beige gateway start` — all plugins will be fetched and installed before the gateway comes up.
+
+```json5
+// config.json5 copied from another machine — no manual install needed
+plugins: {
+  telegram: {
+    _source: "npm:@matthias-hausberger/beige-toolkit",
+    // path is missing or points to the other machine — gateway will install it
+    config: { token: "${TELEGRAM_BOT_TOKEN}" },
+  },
+}
+```
+
+If a plugin is already installed (its `path` exists), the gateway skips it. To upgrade to a newer version after changing `_source`, run `beige plugins update` explicitly — the gateway will not reinstall a plugin that is already present on disk.

@@ -218,14 +218,15 @@ describe("ToolRunner", () => {
       runner.registerHandler("test", handler);
 
       const onToolStart = vi.fn();
-      const result = await runner.run("test", ["arg1", "arg2"], {
+      const result = await runner.run("test", ["key1=val1", "key2=val2"], {
         channel: "test",
         agentName: "assistant",
         onToolStart,
       } as any);
 
       // Verify callback was invoked with correct args
-      expect(onToolStart).toHaveBeenCalledWith("test", { arg1: "arg1", arg2: "arg2" });
+      // argsToObject only maps "key=value" style args; positional args without "=" are ignored.
+      expect(onToolStart).toHaveBeenCalledWith("test", { key1: "val1", key2: "val2" });
       expect(result.output).toBe("test result");
     });
   });

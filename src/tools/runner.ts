@@ -89,7 +89,7 @@ export class ToolRunner {
       const preResult = await this.pluginRegistry.executePreToolExec({
         toolName,
         args,
-        sessionKey: sessionContext?.agentName ? `${sessionContext.channel ?? "unknown"}:${sessionContext.agentName}` : "",
+        sessionKey: sessionContext?.sessionKey ?? "",
         agentName: sessionContext?.agentName ?? "",
       });
       if (!preResult.allow) {
@@ -118,7 +118,7 @@ export class ToolRunner {
         toolName,
         args,
         result,
-        sessionKey: sessionContext?.agentName ? `${sessionContext.channel ?? "unknown"}:${sessionContext.agentName}` : "",
+        sessionKey: sessionContext?.sessionKey ?? "",
         agentName: sessionContext?.agentName ?? "",
       });
       if (postResult.result) {

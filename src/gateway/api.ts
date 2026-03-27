@@ -9,6 +9,7 @@ import type { PluginRegistry } from "../plugins/registry.js";
 import { buildSkillContext, type LoadedSkill } from "../skills/registry.js";
 import { streamSimple } from "@mariozechner/pi-ai";
 import type { Context, SimpleStreamOptions } from "@mariozechner/pi-ai";
+import { extractRateLimitInfo } from "./provider-health.js";
 
 export interface GatewayAPIOptions {
   config: BeigeConfig;
@@ -233,11 +234,85 @@ export class GatewayAPI {
       }
 
       // ── POST /api/chat/stream ────────────────────────────
-      // LLM proxy: accepts a chat request, resolves auth server-side,
-      // forwards to the real LLM provider, and streams events back.
-      // This allows the TUI to make LLM calls without having API keys.
+      // LLM proxy: resolves auth server-side, runs hooks, forwards to
+      // the real LLM provider, audit-logs the call, and streams events
+      // back as newline-delimited JSON.
       if (method === "POST" && path === "/api/chat/stream") {
         return this.handleChatStream(req, res);
+      }
+
+      // ── POST /api/agents/:name/hooks/pre-prompt ──────────
+      // Run prePrompt hooks.  Used by the TUI before prompting the LLM.
+      const prePromptMatch = path.match(/^\/api\/agents\/([^/]+)\/hooks\/pre-prompt$/);
+      if (method === "POST" && prePromptMatch) {
+        const agentName = decodeURIComponent(prePromptMatch[1]);
+        if (!this.opts.config.agents[agentName]) {
+          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
+        }
+        const body = await readBody(req);
+        const { message, sessionKey, channel } = JSON.parse(body);
+        const result = await this.opts.pluginRegistry.executePrePrompt({
+          message,
+          sessionKey: sessionKey ?? `tui:${agentName}:default`,
+          agentName,
+          channel: channel ?? "tui",
+        });
+        return this.json(res, 200, result);
+      }
+
+      // ── POST /api/agents/:name/hooks/post-response ───────
+      // Run postResponse hooks.  Used by the TUI after the LLM responds.
+      const postResponseMatch = path.match(/^\/api\/agents\/([^/]+)\/hooks\/post-response$/);
+      if (method === "POST" && postResponseMatch) {
+        const agentName = decodeURIComponent(postResponseMatch[1]);
+        if (!this.opts.config.agents[agentName]) {
+          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
+        }
+        const body = await readBody(req);
+        const { response, sessionKey, channel } = JSON.parse(body);
+        const result = await this.opts.pluginRegistry.executePostResponse({
+          response,
+          sessionKey: sessionKey ?? `tui:${agentName}:default`,
+          agentName,
+          channel: channel ?? "tui",
+        });
+        return this.json(res, 200, result);
+      }
+
+      // ── POST /api/agents/:name/hooks/session-created ─────
+      // Fire sessionCreated hook.  Used by the TUI when a new session starts.
+      const sessionCreatedMatch = path.match(/^\/api\/agents\/([^/]+)\/hooks\/session-created$/);
+      if (method === "POST" && sessionCreatedMatch) {
+        const agentName = decodeURIComponent(sessionCreatedMatch[1]);
+        if (!this.opts.config.agents[agentName]) {
+          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
+        }
+        const body = await readBody(req);
+        const { sessionKey, channel } = JSON.parse(body);
+        await this.opts.pluginRegistry.executeSessionCreated({
+          sessionKey: sessionKey ?? `tui:${agentName}:default`,
+          agentName,
+          channel: channel ?? "tui",
+        });
+        return this.json(res, 200, { ok: true });
+      }
+
+      // ── POST /api/agents/:name/hooks/session-disposed ─────
+      // Fire sessionDisposed hook.  Used by the TUI when a session is disposed.
+      const sessionDisposedMatch = path.match(/^\/api\/agents\/([^/]+)\/hooks\/session-disposed$/);
+      if (method === "POST" && sessionDisposedMatch) {
+        const agentName = decodeURIComponent(sessionDisposedMatch[1]);
+        if (!this.opts.config.agents[agentName]) {
+          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
+        }
+        const body = await readBody(req);
+        const { sessionKey, channel } = JSON.parse(body);
+        await this.opts.pluginRegistry.executeSessionDisposed({
+          sessionKey: sessionKey ?? `tui:${agentName}:default`,
+          agentName,
+          channel: channel ?? "tui",
+        });
+        return this.json(res, 200, { ok: true });
       }
 
       // ── 404 ───────────────────────────────────────────────
@@ -379,19 +454,29 @@ export class GatewayAPI {
 
   /**
    * LLM proxy endpoint: resolves auth server-side, forwards to the real
-   * LLM provider, and streams AssistantMessageEvent objects back as
-   * newline-delimited JSON.
+   * LLM provider, audit-logs the call, and streams AssistantMessageEvent
+   * objects back as newline-delimited JSON.
+   *
+   * Includes rate-limit metadata in error responses so the TUI can do
+   * cross-model fallback when a provider is throttled.
    */
   private async handleChatStream(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await readBody(req);
-    let reqData: { provider: string; modelId: string; context: Context; options?: SimpleStreamOptions };
+    let reqData: {
+      provider: string;
+      modelId: string;
+      context: Context;
+      options?: SimpleStreamOptions;
+      agentName?: string;
+      sessionKey?: string;
+    };
     try {
       reqData = JSON.parse(body);
     } catch {
       return this.json(res, 400, { error: "Invalid JSON" });
     }
 
-    const { provider, modelId, context, options } = reqData;
+    const { provider, modelId, context, options, agentName, sessionKey } = reqData;
     if (!provider || !modelId || !context) {
       return this.json(res, 400, { error: "Missing provider, modelId, or context" });
     }
@@ -407,6 +492,17 @@ export class GatewayAPI {
     if (!apiKey) {
       return this.json(res, 401, { error: `No API key configured for ${provider}/${modelId}` });
     }
+
+    // Audit: log the start of the LLM call
+    const auditLabel = agentName ? `${agentName}/${provider}/${modelId}` : `${provider}/${modelId}`;
+    const auditTimer = this.opts.audit.start(
+      agentName ?? "unknown",
+      "core_tool",
+      `llm:${provider}/${modelId}`,
+      sessionKey ? [sessionKey] : [],
+      "allowed",
+      "gateway"
+    );
 
     // Stream response — newline-delimited JSON
     res.writeHead(200, {
@@ -434,18 +530,37 @@ export class GatewayAPI {
         signal: abortController.signal,
       });
 
+      let totalOutputTokens = 0;
       for await (const event of stream) {
         if (closed) break;
+        // Track output tokens for audit
+        if (event.type === "done" && event.message?.usage) {
+          totalOutputTokens = event.message.usage.output;
+        }
         res.write(JSON.stringify(event) + "\n");
       }
+
+      auditTimer.finish({ exitCode: 0, outputBytes: totalOutputTokens });
     } catch (err) {
       if (!closed) {
         const isAborted = (err as any).name === "AbortError";
+        const errorMessage = isAborted ? undefined : (err instanceof Error ? err.message : String(err));
+
+        // Extract rate-limit info for the TUI to do fallback
+        const rateLimitInfo = extractRateLimitInfo(err);
+        const rateLimitHeaders: Record<string, string> = {};
+        if (rateLimitInfo.isRateLimit) {
+          rateLimitHeaders["X-Rate-Limited"] = "true";
+          if (rateLimitInfo.retryAfterMs) {
+            rateLimitHeaders["X-Rate-Limit-Retry-After-Ms"] = String(rateLimitInfo.retryAfterMs);
+          }
+        }
+
         const errorEvent = {
           type: "error",
           reason: isAborted ? "aborted" : "error",
           error: {
-            role: "assistant",
+            role: "assistant" as const,
             content: [],
             api: model.api,
             provider: model.provider,
@@ -455,11 +570,25 @@ export class GatewayAPI {
               cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
             },
             stopReason: isAborted ? "aborted" : "error",
-            errorMessage: isAborted ? undefined : (err instanceof Error ? err.message : String(err)),
+            errorMessage,
             timestamp: Date.now(),
           },
         };
+        // Write rate-limit headers on first write
+        if (Object.keys(rateLimitHeaders).length > 0 && !res.headersSent) {
+          res.writeHead(200, {
+            "Content-Type": "application/x-ndjson",
+            "Transfer-Encoding": "chunked",
+            "Cache-Control": "no-cache",
+            ...rateLimitHeaders,
+          });
+        }
         res.write(JSON.stringify(errorEvent) + "\n");
+
+        auditTimer.finish({
+          exitCode: 1,
+          error: errorMessage,
+        });
       }
     }
 

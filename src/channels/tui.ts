@@ -191,7 +191,7 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
       // real key; this placeholder just satisfies ModelRegistry validation.
       apiKey: "beige-gateway-proxy",
       baseUrl: modelInfos[0].baseUrl,
-      streamSimple: createProxyStreamSimple(gatewayUrl),
+      streamSimple: createProxyStreamSimple(gatewayUrl, () => agentName),
       models: providerModelInfos.map((m) => ({
         id: m.id,
         name: m.name,
@@ -291,7 +291,8 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
  * newline-delimited JSON.
  */
 function createProxyStreamSimple(
-  gatewayUrl: string
+  gatewayUrl: string,
+  getAgentName: () => string
 ): (model: Model<any>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream {
   return (model: Model<any>, context: Context, options?: SimpleStreamOptions) => {
     const stream = createAssistantMessageEventStream();
@@ -305,6 +306,8 @@ function createProxyStreamSimple(
             provider: model.provider,
             modelId: model.id,
             context,
+            agentName: getAgentName(),
+            sessionKey: `tui:${getAgentName()}:default`,
             options: {
               reasoning: options?.reasoning,
               maxTokens: options?.maxTokens,
@@ -619,7 +622,7 @@ async function buildBeigeExtension(
         api: pModelInfos[0].api as any,
         apiKey: "beige-gateway-proxy",
         baseUrl: pModelInfos[0].baseUrl,
-        streamSimple: createProxyStreamSimple(state.gatewayUrl),
+        streamSimple: createProxyStreamSimple(state.gatewayUrl, () => state.agentName),
         models: pModelInfos.map((m) => ({
           id: m.id,
           name: m.name,
@@ -702,6 +705,103 @@ async function buildBeigeExtension(
           const toolNames = state.session.getActiveToolNames();
           (state.session as any)._baseSystemPrompt = (state.session as any)._rebuildSystemPrompt(toolNames);
           (state.session as any).agent.setSystemPrompt((state.session as any)._baseSystemPrompt);
+        }
+      }]],
+
+      // prePrompt hook: fires before the agent loop starts.
+      ["before_agent_start", [async (event: any, ctx: any) => {
+        try {
+          const res = await fetch(
+            `${state.gatewayUrl}/api/agents/${encodeURIComponent(state.agentName)}/hooks/pre-prompt`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: event.prompt,
+                sessionKey: `tui:${state.agentName}:default`,
+                channel: "tui",
+              }),
+            }
+          );
+          const data = await res.json();
+          if (data.block) {
+            const reason = data.reason ?? "Message blocked by plugin hook.";
+            ctx.ui.notify(`\u{1f6ab} ${reason}`, "warning");
+            ctx.abort();
+            return;
+          }
+        } catch {
+          // Non-fatal: hook failures should not block the TUI
+        }
+      }]],
+
+      // postResponse hook: fires after the agent loop ends.
+      ["agent_end", [async (event: any) => {
+        try {
+          const messages = event.messages as Array<{ role: string; content: any }>;
+          const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
+          if (!lastAssistant) return;
+          const textContent = lastAssistant.content
+            ?.filter((c: any) => c.type === "text")
+            ?.map((c: any) => c.text)
+            ?.join("") ?? "";
+          if (!textContent) return;
+          const res = await fetch(
+            `${state.gatewayUrl}/api/agents/${encodeURIComponent(state.agentName)}/hooks/post-response`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                response: textContent,
+                sessionKey: `tui:${state.agentName}:default`,
+                channel: "tui",
+              }),
+            }
+          );
+          const data = await res.json();
+          if (data.block) {
+            console.log(`[TUI] Response suppressed by postResponse hook for agent '${state.agentName}'`);
+          }
+        } catch {
+          // Non-fatal: hook failures should not block the TUI
+        }
+      }]],
+
+      // sessionCreated hook: fires on initial session load and /new.
+      ["session_start", [async () => {
+        try {
+          await fetch(
+            `${state.gatewayUrl}/api/agents/${encodeURIComponent(state.agentName)}/hooks/session-created`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sessionKey: `tui:${state.agentName}:default`,
+                channel: "tui",
+              }),
+            }
+          );
+        } catch {
+          // Non-fatal: hook failures should not block the TUI
+        }
+      }]],
+
+      // sessionDisposed hook: fires on process exit.
+      ["session_shutdown", [async () => {
+        try {
+          await fetch(
+            `${state.gatewayUrl}/api/agents/${encodeURIComponent(state.agentName)}/hooks/session-disposed`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sessionKey: `tui:${state.agentName}:default`,
+                channel: "tui",
+              }),
+            }
+          );
+        } catch {
+          // Non-fatal: gateway may already be shutting down
         }
       }]],
     ]),

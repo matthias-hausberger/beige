@@ -8,11 +8,14 @@ Beige is configured with a single `~/.beige/config.json5` file. JSON5 is JSON wi
 
 ## Environment Variables
 
-Any string value can reference environment variables using `${VAR_NAME}`. Variables are resolved at startup — if a referenced variable is not set, the gateway exits with an error.
+Any string value can reference environment variables using `${VAR_NAME}`. Variables are resolved at startup — if a referenced variable is not set and has no default, the gateway exits with an error.
 
 ```json5
-apiKey: "${ANTHROPIC_API_KEY}",  // resolved from env at startup
+apiKey: "${ANTHROPIC_API_KEY}",            // resolved from env at startup
+apiKey: "${ANTHROPIC_API_KEY:-fallback}",  // uses "fallback" if env var is not set
 ```
+
+The `${VAR_NAME:-default}` syntax provides a fallback value when the variable is not set. Without a default, missing variables cause a startup error.
 
 ## Plugin Path Resolution
 

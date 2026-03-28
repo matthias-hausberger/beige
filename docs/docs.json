@@ -70,6 +70,7 @@
                 "root": "extensibility/kits/beige-toolkit/index",
                 "pages": [
                   "extensibility/kits/beige-toolkit/apple-calendar",
+                  "extensibility/kits/beige-toolkit/brave-search",
                   "extensibility/kits/beige-toolkit/chrome",
                   "extensibility/kits/beige-toolkit/confluence",
                   "extensibility/kits/beige-toolkit/git",

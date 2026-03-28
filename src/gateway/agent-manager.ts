@@ -131,112 +131,17 @@ export class AgentManager {
     agentName: string,
     opts?: { forceNew?: boolean; sessionFile?: string; onToolStart?: OnToolStart }
   ): Promise<ManagedSession> {
-    // If forceNew, dispose old session and create fresh
-    if (opts?.forceNew) {
-      await this.disposeSession(sessionKey);
-    }
-
-    // Return cached session if it exists
-    const existing = this.sessions.get(sessionKey);
-    if (existing) return existing;
-
     const agentConfig = this.config.agents[agentName];
     if (!agentConfig) {
       throw new Error(`Unknown agent: ${agentName}`);
     }
 
-    // Determine session file
-    let sessionFile: string | undefined;
-    if (opts?.sessionFile) {
-      sessionFile = opts.sessionFile;
-    } else if (!opts?.forceNew) {
-      sessionFile = this.sessionStore.getSessionFile(sessionKey);
-    }
-
-    // Create new session file if none exists
-    if (!sessionFile) {
-      sessionFile = this.sessionStore.createSession(sessionKey, agentName);
-    }
-
-    console.log(`[AGENT] Creating session for '${agentName}' (key: ${sessionKey})`);
-
-    // Validate skill dependencies
-    validateSkillDeps(agentConfig.skills ?? [], agentConfig.tools, this.loadedSkills);
-
-    // Build pi session — wire onToolStart so channels get notified on tool calls.
-    // Store the ref on the ManagedSession so it can be mutated at runtime (verbose toggle).
-    const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
-    const agentDir = resolve(this.beigeDir, "agents", agentName);
-    const workspaceDir = agentConfig.workspaceDir 
-      ?? resolve(agentDir, "workspace");
-    const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir, onToolStart: toolStartHandlerRef.fn };
-    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
-    const toolContext = buildPluginToolContext(agentConfig.tools, this.pluginRegistry);
-    const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
-    const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
-    const agentsFiles = readWorkspaceAgentsMd(workspaceDir);
-
-    const model = this.resolveModel(agentConfig);
-
-    const resourceLoader: ResourceLoader = {
-      getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
-      getSkills: () => ({ skills: [], diagnostics: [] }),
-      getPrompts: () => ({ prompts: [], diagnostics: [] }),
-      getThemes: () => ({ themes: [], diagnostics: [] }),
-      getAgentsFiles: () => ({ agentsFiles }),
-      getSystemPrompt: () => systemPrompt,
-      getAppendSystemPrompt: () => [],
-      getPathMetadata: () => new Map(),
-      extendResources: () => {},
-      reload: async () => {},
-    };
-
-    // Use file-based session manager for persistence
-    let sessionManager: ReturnType<typeof SessionManager.create>;
-    try {
-      sessionManager = SessionManager.open(sessionFile);
-    } catch {
-      // File doesn't exist yet or is empty — create new
-      const { dir } = await import("path").then((p) => ({ dir: p.dirname(sessionFile!) }));
-      sessionManager = SessionManager.create(process.cwd(), dir);
-    }
-
-    const { session } = await createAgentSession({
-      model,
-      thinkingLevel: (agentConfig.model.thinkingLevel as any) ?? "off",
-      tools: [],
-      customTools: coreTools,
-      sessionManager,
-      settingsManager: SettingsManager.inMemory({
-        compaction: buildCompactionSettings(agentConfig.model, model.contextWindow),
-        retry: { enabled: true, maxRetries: 3 },
-      }),
-      resourceLoader,
-      authStorage: this.authStorage,
-      modelRegistry: this.modelRegistry,
-    });
-
-    const managed: ManagedSession = {
-      agentName,
-      sessionKey,
-      session,
-      currentModel: agentConfig.model,
-      inflightCount: 0,
-      drainResolvers: [],
-      toolStartHandlerRef,
-    };
-
-    this.sessions.set(sessionKey, managed);
-    console.log(`[AGENT] Session ready for '${agentName}' (key: ${sessionKey})`);
-
-    // Fire sessionCreated hook (fire-and-forget — don't block session return)
-    this.pluginRegistry.executeSessionCreated({
+    return this.getOrCreateSessionWithModel(
       sessionKey,
       agentName,
-      channel: parseSessionKey(sessionKey).channel,
-    }).catch((err) => console.error(`[AGENT] sessionCreated hook error:`, err));
-
-    return managed;
+      agentConfig.model,
+      opts
+    );
   }
 
   /**

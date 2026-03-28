@@ -78,6 +78,12 @@
         tickInterval: 15,
       },
     },
+    "brave-search": {
+      path: "../../beige-toolkit/plugins/brave-search",
+      config: {
+        apiKey: "${BRAVE_SEARCH_API_KEY}",
+      },
+    },
     telegram: {
       path: "../../beige-toolkit/plugins/telegram",
       config: {
@@ -108,7 +114,7 @@
           thinkingLevel: "off",
         },
       ],
-      tools: ["chrome", "sessions", "spawn", "git", "github", "wrangler", "telegram", "schedule"],
+      tools: ["chrome", "sessions", "spawn", "git", "github", "wrangler", "telegram", "schedule", "brave-search"],
       sandbox: {
         image: "beige-sandbox:latest",
       },

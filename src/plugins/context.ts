@@ -11,7 +11,7 @@ import type { BeigeSessionStore } from "../gateway/sessions.js";
 import type { SessionSettingsStore } from "../gateway/session-settings.js";
 import type { SessionContext } from "../types/session.js";
 import { readFileSync } from "fs";
-import { parseSessionEntries, getLastAssistantUsage } from "@mariozechner/pi-coding-agent";
+import { parseSessionEntries, getLastAssistantUsage, calculateContextTokens } from "@mariozechner/pi-coding-agent";
 import type {
   PluginContext,
   PluginLogger,
@@ -189,7 +189,7 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       if (!usage) return undefined;
 
       return {
-        inputTokens: usage.input,
+        inputTokens: calculateContextTokens(usage),
         outputTokens: usage.output,
         cacheReadTokens: usage.cacheRead ?? 0,
         cacheWriteTokens: usage.cacheWrite ?? 0,

@@ -1,0 +1,131 @@
+---
+title: "Schedule Tool"
+---
+
+{/* Auto-generated from beige-toolkit — do not edit manually. */}
+{/* Run: pnpm run docs:sync-toolkit */}
+
+
+Create and manage scheduled tasks. Agents can schedule one-off or recurring (cron) tasks that trigger a prompt back to themselves or run a shell command on the gateway host. The agent that creates a schedule is always the one that receives the trigger — cross-agent scheduling is not supported.
+
+## Installation
+
+Install this tool individually:
+
+```bash
+beige tools install github:matthias-hausberger/beige-toolkit/tools/schedule
+```
+
+Or install all tools from the toolkit:
+
+```bash
+# From npm
+beige tools install npm:@matthias-hausberger/beige-toolkit
+
+# From GitHub
+beige tools install github:matthias-hausberger/beige-toolkit
+```
+
+## Configuration
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `storagePath` | No | `<BEIGE_HOME>/plugins/schedule` | Directory where schedule and history files are stored. Defaults to the active beige home directory (respects `BEIGE_HOME` env var, falls back to `~/.beige`). Tilde is expanded if set explicitly. |
+| `tickInterval` | No | `15` | How often (in seconds) the background loop checks for due schedules. Lower values give more precise timing at the cost of slightly more CPU. |
+| `allowExec` | No | `true` | Allow agents to create `exec`-type schedules that run shell commands on the gateway host. Enabled by default — agents are sandboxed so exec runs on the gateway side of that boundary. Set to `false` to disable if needed. |
+| `maxSchedulesPerAgent` | No | `20` | Maximum number of active (non-completed, non-cancelled) schedules per agent. Prevents runaway schedule creation. |
+
+## Prerequisites
+
+No external dependencies beyond `cron-parser` (bundled). Requires beige ≥ 0.1.3 for agent identity injection (`BEIGE_AGENT_NAME`).
+
+## Action Types
+
+| Flag | Description |
+|---|---|
+| `--prompt <message>` | Start a new session and send an inline message to the scheduling agent. |
+| `--message-file <path>` | Read message from a file at trigger time and send it to the scheduling agent. Useful for long or frequently updated prompts. |
+| `--exec <command>` | Run a shell command on the gateway host. Requires `allowExec: true`. |
+
+## Trigger Types
+
+| Flag | Description |
+|---|---|
+| `--once <ISO8601>` | Fire once at the given UTC datetime (e.g. `2026-03-28T09:00:00Z`). |
+| `--cron <expr>` | Fire on a recurring schedule using a standard 5-field cron expression. |
+| `--tz <tz>` | IANA timezone name for cron schedules (e.g. `Europe/Vienna`). Default: `UTC`. |
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `create --once <ISO8601> --prompt <message...>` | One-off prompt at a specific time. |
+| `create --once <ISO8601> --message-file <path>` | One-off prompt from file. |
+| `create --once <ISO8601> --exec <command>` | One-off shell command. |
+| `create --cron <expr> [--tz <tz>] --prompt <message...>` | Recurring prompt. |
+| `create --cron <expr> [--tz <tz>] --message-file <path>` | Recurring prompt from file. |
+| `create --cron <expr> [--tz <tz>] --exec <command>` | Recurring shell command. |
+| `list [--status active\|paused\|completed\|all] [--format json]` | List schedules for the calling agent. |
+| `get <id>` | Show full details for a schedule. |
+| `cancel <id>` | Cancel an active or paused schedule. |
+| `pause <id>` | Pause an active cron schedule without cancelling it. |
+| `resume <id>` | Resume a paused schedule, re-computing the next run time. |
+| `history <id> [--limit <n>] [--format json]` | Show run history for a schedule. |
+| `test <id>` | Trigger a schedule immediately without affecting its state (runCount, status, nextRun are preserved). |
+
+Optional flags for `create`:
+
+| Flag | Description |
+|---|---|
+| `--label <text>` | Human-readable label shown in `list` output. |
+| `--max-runs <n>` | Stop a cron schedule after N runs. |
+| `--expires <ISO8601>` | Stop a cron schedule after this datetime. |
+
+## How It Works
+
+Schedule files are stored as individual JSON files at `storagePath/schedules/<id>.json`. A background tick loop starts with the gateway (`start()`) and wakes up every `tickInterval` seconds to scan active schedules. Any schedule whose `nextRun` is in the past is executed immediately.
+
+- **prompt / message-file**: a fresh session is created for each run and `ctx.prompt()` is called with the scheduling agent as the target. Each run produces an independent conversation.
+- **exec**: the command is run via `child_process.execFile` with `shell: true` on the gateway host.
+
+A run history record is written to `storagePath/history/` after every execution, regardless of success or failure. The tick loop also fires once at gateway startup to catch any schedules that became due while the gateway was offline.
+
+## Storage Layout
+
+```
+~/.beige/plugins/schedule/
+  schedules/
+    sched_<id>.json      one file per schedule
+  history/
+    sched_<id>-<ts>.json one file per run
+```
+
+## Security Model
+
+| Concern | How it is handled |
+|---|---|
+| **Self-only targeting** | The `createdBy` field is always taken from the verified session context (`BEIGE_AGENT_NAME`), never from caller-supplied arguments. An agent cannot schedule tasks for other agents. |
+| **Exec opt-out** | Shell commands on the gateway host are enabled by default (`allowExec: true`) since agents are sandboxed. Set `allowExec: false` explicitly to disable. |
+| **Access control** | Tool access is governed by the standard beige `tools:` list per agent. Removing `schedule` from an agent's tool list prevents it from creating or managing schedules entirely. |
+| **Ownership checks** | `get`, `cancel`, `pause`, `resume`, `history`, and `test` all verify the schedule belongs to the calling agent before proceeding. |
+| **Quota** | `maxSchedulesPerAgent` prevents unbounded schedule creation. |
+
+## Error Reference
+
+| Error | Cause |
+|---|---|
+| `agent identity unknown` | `BEIGE_AGENT_NAME` not set — requires beige ≥ 0.1.3 |
+| `--once and --cron are mutually exclusive` | Both trigger flags supplied |
+| `--prompt, --message-file, and --exec are mutually exclusive` | More than one action flag supplied |
+| `exec actions are disabled` | `--exec` used but `allowExec` is explicitly set to `false` |
+| `datetime is in the past` | `--once` datetime has already passed |
+| `invalid cron expression` | Cron expression failed to parse |
+| `maximum of N active schedules` | `maxSchedulesPerAgent` quota reached |
+| `schedule 'X' not found` | ID does not exist in storage |
+| `schedule 'X' does not belong to you` | Schedule was created by a different agent |
+
+## Implementation Details
+
+- **Target**: Gateway (runs on the host, not in the sandbox)
+- **Storage**: One JSON file per schedule; atomic rename-writes to prevent partial reads
+- **Dependency**: `cron-parser` for cron expression parsing and timezone-aware next-run computation

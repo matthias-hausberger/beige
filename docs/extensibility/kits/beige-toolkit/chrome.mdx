@@ -31,7 +31,7 @@ beige tools install github:matthias-hausberger/beige-toolkit
 | Key | Default | Description |
 |-----|---------|-------------|
 | `slim` | `false` | Launch in slim mode — only navigate, evaluate, and screenshot tools are available. Much lower token usage. |
-| `headless` | `false` | Launch Chrome headlessly (no visible window). |
+| `headless` | `"fallback"` | Headless mode. `true` = always headless; `false` = always use a display; `"fallback"` = use a display if one is available (X11 socket present — works with physical screens and virtual VNC displays), otherwise start headless automatically. |
 | `viewport` | unset (Chrome default) | Browser viewport size as `WxH`, e.g. `"1280x720"`. |
 | `idleTimeoutMinutes` | `30` | Automatically close the browser process after this many minutes of inactivity. Next call respawns it. |
 | `version` | `"latest"` | `chrome-devtools-mcp` npm version to use via npx. |
@@ -85,7 +85,20 @@ All MCP tools are permitted by default (no allow/deny restrictions). The browser
     chrome: {
       config: {
         slim: true,
-        headless: true,
+        headless: true,   // force headless regardless of display availability
+      },
+    },
+  },
+}
+```
+
+**Fallback mode** (display if available, headless otherwise — the default):
+```json5
+{
+  tools: {
+    chrome: {
+      config: {
+        headless: "fallback",
       },
     },
   },
@@ -209,7 +222,7 @@ On Linux you can route the browser window to a specific TigerVNC (or other X11) 
 
 **Requirements:**
 - A running VNC server for the target display (e.g. `tigervncserver :1` already started).
-- `headless: false` — headless mode renders entirely in memory and ignores `DISPLAY`.
+- `headless` must not be `true` — headless mode renders entirely in memory and ignores `DISPLAY`.
 
 **Config:**
 
@@ -218,8 +231,25 @@ On Linux you can route the browser window to a specific TigerVNC (or other X11) 
   tools: {
     chrome: {
       config: {
-        headless: false,
+        // "fallback" (the default) automatically uses :1 when tigervncserver is
+        // running, and falls back to headless if it is not.
+        headless: "fallback",
         display: ":1",   // open on TigerVNC virtual screen 1
+      },
+    },
+  },
+}
+```
+
+Or pin to always use the display (will error if the VNC server is not running):
+
+```json5
+{
+  tools: {
+    chrome: {
+      config: {
+        headless: false,
+        display: ":1",
       },
     },
   },

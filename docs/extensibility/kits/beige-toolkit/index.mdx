@@ -109,7 +109,7 @@ tools: {
 
 ### Per-Agent Overrides
 
-Use per-agent `pluginConfigs` to deep-merge overrides with the base tool config:
+Use per-agent `toolConfigs` to deep-merge overrides with the base tool config:
 
 ```json5
 tools: {
@@ -120,7 +120,7 @@ tools: {
 agents: {
   qa: {
     tools: ["chrome"],
-    pluginConfigs: {
+    toolConfigs: {
       chrome: { headless: false, timeout: 120 },
     },
   },
@@ -167,6 +167,37 @@ pnpm install
 ```
 
 ### Working Locally Against Beige
+
+`devDependencies` references the published `@matthias-hausberger/beige` npm package so the project builds on any machine without extra setup. When you also have the `beige` repository checked out **as a sibling directory** (`../beige`), pnpm's `overrides` block in `package.json` automatically redirects the dependency to that local copy, letting you test against unreleased changes.
+
+```
+parent/
+  beige/          ← local beige repo (optional)
+  beige-toolkit/  ← this repo
+```
+
+```bash
+# With sibling beige repo — uses local beige automatically via pnpm overrides
+cd beige-toolkit
+pnpm install
+
+# Without sibling beige repo — installs the published npm version, no extra steps needed
+cd beige-toolkit
+pnpm install
+```
+
+If you are on a machine that does **not** have a sibling `beige` directory, remove or comment out the `pnpm.overrides` entry in `package.json` before running `pnpm install`, or pnpm will error because the `file:../beige` path does not exist:
+
+```json5
+// package.json — comment out when ../beige is not present
+"pnpm": {
+  "overrides": {
+    // "@matthias-hausberger/beige": "file:../beige"
+  }
+}
+```
+
+To start the gateway and install the toolkit for local development:
 
 ```bash
 # Start the beige gateway

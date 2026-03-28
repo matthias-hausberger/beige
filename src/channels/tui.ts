@@ -541,7 +541,7 @@ async function buildBeigeExtension(
 
   // ── /sessions ─────────────────────────────────────────────
   const handleSessions = async (_args: string, ctx: any) => {
-    const sessions = listSessions(state.agentName);
+    const sessions = listSessions(state.agentName, state.sessionStore);
     if (sessions.length === 0) {
       ctx.ui.notify("No saved sessions for this agent.", "info");
       return;
@@ -565,7 +565,7 @@ async function buildBeigeExtension(
 
   // ── /resume ───────────────────────────────────────────────
   const handleResume = async (args: string, ctx: any) => {
-    const sessions = listSessions(state.agentName);
+    const sessions = listSessions(state.agentName, state.sessionStore);
     if (sessions.length === 0) {
       ctx.ui.notify("No saved sessions to resume.", "info");
       return;
@@ -803,8 +803,7 @@ interface SessionEntry {
   timestamp: Date;
 }
 
-function listSessions(agentName: string): SessionEntry[] {
-  const store = new BeigeSessionStore();
+function listSessions(agentName: string, store: BeigeSessionStore): SessionEntry[] {
   return store.listSessions(agentName).map((info) => ({
     file: info.sessionFile,
     timestamp: new Date(info.createdAt),

@@ -29,7 +29,7 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          git add docs/tools/beige-toolkit/ docs/docs.json
+          git add docs/extensibility/kits/beige-toolkit/ docs/docs.json
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No changes detected."

@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { imageExtension, buildVisionUnsupportedError } from "./image.js";
 import type { AuditLogger } from "../gateway/audit.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
@@ -46,14 +47,7 @@ export function createCoreTools(
 
 type HandlerRef = ToolStartHandlerRef;
 
-/** Image extensions the read tool handles as multimodal image content. */
-const IMAGE_EXTENSIONS: Record<string, string> = {
-  ".png":  "image/png",
-  ".jpg":  "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif":  "image/gif",
-  ".webp": "image/webp",
-};
+
 
 function createReadTool(
   agentName: string,
@@ -83,8 +77,7 @@ function createReadTool(
       handler.fn?.("read", { path: p.path });
 
       // ── Image handling ──────────────────────────────────────────────
-      const ext = p.path.slice(p.path.lastIndexOf(".")).toLowerCase();
-      const mimeType = IMAGE_EXTENSIONS[ext];
+      const mimeType = imageExtension(p.path);
 
       if (mimeType) {
         // Check whether the current model supports image input before attempting
@@ -96,15 +89,7 @@ function createReadTool(
           const ref = modelRef.current;
           const modelLabel = ref ? `${ref.provider}/${ref.id}` : "the current model";
           return {
-            content: [{
-              type: "text",
-              text:
-                `Cannot read image: ${p.path}\n\n` +
-                `${modelLabel} does not support image (vision) input. ` +
-                `You cannot view or analyse image files with this model. ` +
-                `If you need to inspect an image, ask the user to switch to a vision-capable model ` +
-                `(e.g. claude-sonnet, gpt-4o, gemini-1.5-pro) and try again.`,
-            }],
+            content: [{ type: "text", text: buildVisionUnsupportedError(p.path, modelLabel) }],
             details: {},
             isError: true,
           };

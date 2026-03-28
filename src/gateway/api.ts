@@ -12,6 +12,7 @@ import { streamSimple } from "@mariozechner/pi-ai";
 import type { Context, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { extractRateLimitInfo } from "./provider-health.js";
 import { parseSessionKey } from "../types/session.js";
+import { imageExtension, buildVisionUnsupportedError } from "../tools/image.js";
 
 export interface GatewayAPIOptions {
   config: BeigeConfig;
@@ -35,6 +36,7 @@ export interface GatewayAPIOptions {
  *   POST /api/agents/:name/exec               — execute core tool (read/write/patch/exec)
  *   POST /api/agents/:name/sessions/new       — start a new session (returns session key)
  *   GET  /api/agents/:name/sessions           — list sessions for agent
+ *   PATCH /api/agents/:name/sessions/:key/model — persist the active model for a session
  *
  * The TUI process connects here to proxy tool execution through the gateway,
  * which owns the sandboxes, audit logging, and policy enforcement.
@@ -133,6 +135,15 @@ export class GatewayAPI {
         if (method === "POST" && subPath === "hooks/session-disposed") {
           return await this.handleHookSessionDisposed(req, res, agentName);
         }
+
+        // PATCH /api/agents/:name/sessions/:key/model
+        // Persists the user's active model choice for a session so it survives
+        // restarts and is honoured by all channels.
+        const sessionModelMatch = subPath.match(/^sessions\/(.+)\/model$/);
+        if (method === "PATCH" && sessionModelMatch) {
+          const sessionKey = decodeURIComponent(sessionModelMatch[1]);
+          return await this.handlePersistSessionModel(req, res, agentName, sessionKey);
+        }
       }
 
       // ── 404 ───────────────────────────────────────────────
@@ -199,13 +210,13 @@ export class GatewayAPI {
 
   private async handleExec(req: IncomingMessage, res: ServerResponse, agentName: string): Promise<void> {
     const body = await readBody(req);
-    const { tool, params, sessionKey } = JSON.parse(body);
+    const { tool, params, sessionKey, activeModel } = JSON.parse(body);
 
     if (!tool || !params) {
       return this.json(res, 400, { error: "Missing tool or params" });
     }
 
-    const result = await this.executeTool(agentName, tool, params, sessionKey);
+    const result = await this.executeTool(agentName, tool, params, sessionKey, activeModel);
     this.json(res, 200, result);
   }
 
@@ -236,23 +247,33 @@ export class GatewayAPI {
 
     const addModel = (modelRef: { provider: string; model: string; thinkingLevel?: string }) => {
       const m = modelRegistry.find(modelRef.provider, modelRef.model);
-      if (m) {
-        models.push({
-          id: m.id,
-          name: m.name,
-          provider: m.provider,
-          api: m.api,
-          baseUrl: m.baseUrl,
-          reasoning: m.reasoning,
-          input: m.input,
-          cost: m.cost,
-          contextWindow: m.contextWindow,
-          maxTokens: m.maxTokens,
-          headers: m.headers,
-          compat: m.compat,
-          thinkingLevel: modelRef.thinkingLevel ?? "off",
-        });
+      if (!m) {
+        // A model in the agent config wasn't found in the registry.
+        // This is usually a misconfigured model ID (e.g. dots instead of hyphens).
+        // Warn loudly so it shows up in gateway logs and is easy to diagnose.
+        console.warn(
+          `[API] handleListModels: model '${modelRef.provider}/${modelRef.model}' ` +
+          `configured for agent '${agentName}' was not found in the model registry. ` +
+          `It will be unavailable in the TUI and channel plugins. ` +
+          `Check the model ID — common mistake: dots vs hyphens (e.g. "claude-sonnet-4.6" should be "claude-sonnet-4-6").`
+        );
+        return;
       }
+      models.push({
+        id: m.id,
+        name: m.name,
+        provider: m.provider,
+        api: m.api,
+        baseUrl: m.baseUrl,
+        reasoning: m.reasoning,
+        input: m.input,
+        cost: m.cost,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+        headers: m.headers,
+        compat: m.compat,
+        thinkingLevel: modelRef.thinkingLevel ?? "off",
+      });
     };
 
     addModel(agentConfig.model);
@@ -310,13 +331,59 @@ export class GatewayAPI {
   }
 
   /**
+   * Persist the user's active model choice for a session.
+   *
+   * Called by the TUI (and channel plugins) whenever the user explicitly
+   * switches models.  Stores { provider, modelId } in the session's beige
+   * metadata so it can be restored on the next session open — across TUI
+   * restarts, gateway restarts, and channel switches.
+   *
+   * The model is validated against the agent's allowed models (primary +
+   * fallbacks) before being stored.  Unknown session keys are silently
+   * ignored (the session may have been created by a different instance).
+   */
+  private async handlePersistSessionModel(
+    req: IncomingMessage,
+    res: ServerResponse,
+    agentName: string,
+    sessionKey: string
+  ): Promise<void> {
+    const body = await readBody(req);
+    const { provider, modelId } = JSON.parse(body) as { provider?: string; modelId?: string };
+
+    if (!provider || !modelId) {
+      return this.json(res, 400, { error: "Missing provider or modelId" });
+    }
+
+    // Validate the model is in the agent's allowed list
+    const agentConfig = this.opts.config.agents[agentName];
+    const allowedProviders = [
+      agentConfig.model,
+      ...(agentConfig.fallbackModels ?? []),
+    ];
+    const isAllowed = allowedProviders.some(
+      (m) => m.provider === provider && m.model === modelId
+    );
+    if (!isAllowed) {
+      return this.json(res, 403, {
+        error: `Model ${provider}/${modelId} is not in the allowed list for agent '${agentName}'`,
+      });
+    }
+
+    this.opts.sessionStore.updateMetadata(sessionKey, { activeModel: { provider, modelId } });
+    console.log(`[API] Persisted model ${provider}/${modelId} for session '${sessionKey}'`);
+    this.json(res, 200, { ok: true });
+  }
+
+  /**
    * Execute a core tool in the agent's sandbox.
    */
   private async executeTool(
     agentName: string,
     tool: string,
     params: Record<string, any>,
-    sessionKey?: string
+    sessionKey?: string,
+    activeModel?: { provider: string; modelId: string }
   ): Promise<{ content: Array<{ type: string; [key: string]: unknown }>; isError?: boolean }> {
     const sandbox = this.opts.sandbox;
     const audit = this.opts.audit;
@@ -324,21 +391,20 @@ export class GatewayAPI {
     switch (tool) {
       case "read": {
         // ── Image detection ───────────────────────────────────────────────
-        const IMAGE_MIME: Record<string, string> = {
-          ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-          ".gif": "image/gif", ".webp": "image/webp",
-        };
-        const ext = params.path.slice(params.path.lastIndexOf(".")).toLowerCase();
-        const mimeType = IMAGE_MIME[ext];
+        const mimeType = imageExtension(params.path);
 
         if (mimeType) {
-          // Resolve the current model for this agent to check vision capability.
-          // Use the session's active model if one exists, otherwise fall back to
-          // the agent's configured primary model.
+          // Resolve the current model to check vision capability.
+          // Prefer the caller-supplied activeModel (the model the TUI/channel
+          // actually has selected) over the agent's primary configured model —
+          // they differ whenever the user has switched models mid-session.
+          const modelRegistry = this.opts.agentManager.getModelRegistry();
           const agentConfig = this.opts.config.agents[agentName];
-          const modelRef = agentConfig?.model;
-          const resolvedModel = modelRef
-            ? this.opts.agentManager.getModelRegistry().find(modelRef.provider, modelRef.model)
+          const modelLookup = activeModel
+            ? { provider: activeModel.provider, model: activeModel.modelId }
+            : agentConfig?.model;
+          const resolvedModel = modelLookup
+            ? modelRegistry.find(modelLookup.provider, modelLookup.model)
             : undefined;
           const modelInput: string[] = (resolvedModel?.input as string[] | undefined) ?? [];
 
@@ -347,16 +413,7 @@ export class GatewayAPI {
               ? `${resolvedModel.provider}/${resolvedModel.id}`
               : "the current model";
             return {
-              content: [{
-                type: "text",
-                text:
-                  `Cannot read image: ${params.path}\n\n` +
-                  `${modelLabel} does not support image (vision) input. ` +
-                  `You cannot view or analyse image files with this model. ` +
-                  `If you need to inspect an image, ask the user to switch to a ` +
-                  `vision-capable model (e.g. claude-sonnet, gpt-4o, gemini-1.5-pro) ` +
-                  `and try again.`,
-              }],
+              content: [{ type: "text", text: buildVisionUnsupportedError(params.path, modelLabel) }],
               isError: true,
             };
           }

@@ -193,7 +193,7 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
       // apiKey is required when defining models — the gateway resolves the
       // real key; this placeholder just satisfies ModelRegistry validation.
       apiKey: "beige-gateway-proxy",
-      baseUrl: modelInfos[0].baseUrl,
+      baseUrl: providerModelInfos[0].baseUrl,
       streamSimple: createProxyStreamSimple(gatewayUrl, () => agentName),
       models: providerModelInfos.map((m) => ({
         id: m.id,
@@ -450,7 +450,17 @@ async function createSession(
   }
 
   // Pass a getter so tool calls always route to the currently-active agent
-  const coreTools = createProxyTools(() => state.agentName, gatewayUrl, toolStartHandlerRef);
+  const coreTools = createProxyTools(
+    () => state.agentName,
+    gatewayUrl,
+    toolStartHandlerRef,
+    // Getter for the currently active model — used by the gateway to check
+    // per-tool capabilities (e.g. vision) against the model the user actually
+    // has selected, not just the primary configured model.
+    () => state.session?.model
+      ? { provider: (state.session.model as any).provider, modelId: (state.session.model as any).id }
+      : undefined
+  );
 
   // Use pre-built tool/skill context from state (populated on agent load/switch)
   systemPromptRef.value = buildSystemPrompt(agentName, toolContext, skillContext);
@@ -458,8 +468,32 @@ async function createSession(
   // Read workspace AGENTS.md so it's injected into the system prompt context.
   agentsFilesRef.value = readWorkspaceAgentsMd(workspaceDir);
 
+  // Reuse the existing default session file if one exists for this agent,
+  // so model preferences and history survive TUI restarts.
+  //
+  // IMPORTANT: we let the beige session store own the canonical file path
+  // (via createSession) and then tell pi's SessionManager to open that path.
+  // The reverse — letting pi generate a path and then registering it in the
+  // store — would produce two mismatched files because each generates its own
+  // random session ID.
   const sessionsDir = resolve(beigeDir(), "sessions", agentName);
-  const sessionManager = SessionManager.create(process.cwd(), sessionsDir);
+  const defaultSessionKey = BeigeSessionStore.tuiKey(agentName);
+  const existingSessionFile = state.sessionStore.getSessionFile(defaultSessionKey);
+  let sessionManager: ReturnType<typeof SessionManager.create>;
+  if (existingSessionFile) {
+    try {
+      sessionManager = SessionManager.open(existingSessionFile);
+    } catch {
+      // File corrupt or missing — create a fresh beige entry and open that
+      const newFile = state.sessionStore.createSession(defaultSessionKey, agentName);
+      sessionManager = SessionManager.open(newFile);
+    }
+  } else {
+    // First run: let the session store generate the canonical path, then open it.
+    // SessionManager.open() handles a not-yet-existing file (starts with empty state).
+    const newFile = state.sessionStore.createSession(defaultSessionKey, agentName);
+    sessionManager = SessionManager.open(newFile);
+  }
 
   const resourceLoader: ResourceLoader = {
     getExtensions: () => extensionsResult,
@@ -740,6 +774,31 @@ async function buildBeigeExtension(
       // the call.  The `blocked` stream event handles the abort case.
 
       // sessionCreated hook: fires on initial session load and /new.
+      // model_select: fired by pi whenever the user switches models (Ctrl+P,
+      // /model command, or programmatic setModel).  Persist the choice to the
+      // gateway so it survives TUI restarts and is honoured by all channels.
+      ["model_select", [async (event: unknown) => {
+        const e = event as { model?: { provider?: string; id?: string } };
+        const provider = e?.model?.provider;
+        const modelId = e?.model?.id;
+        if (!provider || !modelId) return;
+
+        const sessionKey = BeigeSessionStore.tuiKey(state.agentName);
+        try {
+          await fetch(
+            `${state.gatewayUrl}/api/agents/${encodeURIComponent(state.agentName)}/sessions/${encodeURIComponent(sessionKey)}/model`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ provider, modelId }),
+            }
+          );
+        } catch {
+          // Non-fatal: model preference will revert to default on next restart,
+          // but the current session continues to work correctly.
+        }
+      }]],
+
       ["session_start", [async () => {
         try {
           await fetch(
@@ -842,16 +901,25 @@ function formatToolCall(toolName: string, params: Record<string, unknown>): stri
 function createProxyTools(
   getAgentName: () => string,
   gatewayUrl: string,
-  handlerRef: { fn: OnToolStart | undefined }
+  handlerRef: { fn: OnToolStart | undefined },
+  getCurrentModel?: () => { provider: string; modelId: string } | undefined
 ): ToolDefinition[] {
   async function callGateway(
     tool: string,
     params: Record<string, any>
-  ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  ): Promise<{ content: Array<{ type: string; [key: string]: unknown }>; isError?: boolean }> {
+    const activeModel = getCurrentModel?.();
     const res = await fetch(`${gatewayUrl}/api/agents/${encodeURIComponent(getAgentName())}/exec`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tool, params }),
+      body: JSON.stringify({
+        tool,
+        params,
+        // Forward the currently active model so the gateway can apply
+        // per-tool capability checks (e.g. vision) against the real live
+        // model rather than always the agent's primary configured model.
+        ...(activeModel ? { activeModel } : {}),
+      }),
     });
 
     if (!res.ok) {
@@ -879,7 +947,7 @@ function createProxyTools(
       execute: async (_toolCallId, params) => {
         const p = params as { path: string; offset?: number; limit?: number };
         handlerRef.fn?.("read", { path: p.path });
-        const result = await callGateway("read", p as Record<string, any>);
+        const result = await callGateway("read", p as Record<string, unknown>);
         return { content: result.content as any, details: {}, isError: result.isError };
       },
     },

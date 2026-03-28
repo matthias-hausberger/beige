@@ -340,6 +340,19 @@ export interface PluginContext {
   /** Read plugin metadata from a session. */
   getSessionMetadata(sessionKey: string, key: string): unknown;
 
+  /**
+   * Persist the user's active model choice for a session.
+   *
+   * Writes `{ provider, modelId }` to the canonical `activeModel` field in the
+   * session metadata so it survives gateway restarts and is honoured by all
+   * channels.  The model must be in the agent's allowed list (primary + fallbacks).
+   *
+   * Call this whenever the user explicitly switches models via a channel command
+   * (e.g. Telegram's `/model`).  The TUI calls this automatically via the
+   * `model_select` extension event.
+   */
+  persistSessionModel(sessionKey: string, agentName: string, provider: string, modelId: string): void;
+
   // ── Session data access ─────────────────────────────────
   /** List sessions for an agent (for session history tools). */
   listSessions(agentName: string, opts?: { includeToolSessions?: boolean }): Array<{

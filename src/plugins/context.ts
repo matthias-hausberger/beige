@@ -129,6 +129,22 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       return entry?.metadata?.[`plugin_${key}`];
     },
 
+    persistSessionModel(sessionKey, agentName, provider, modelId) {
+      // Validate the model is in the agent's allowed list before persisting.
+      const agentConfig = config.agents[agentName];
+      if (!agentConfig) return;
+      const allowed = [agentConfig.model, ...(agentConfig.fallbackModels ?? [])];
+      const isAllowed = allowed.some((m) => m.provider === provider && m.model === modelId);
+      if (!isAllowed) {
+        console.warn(
+          `[PLUGIN_CTX] persistSessionModel: ${provider}/${modelId} is not in the ` +
+          `allowed list for agent '${agentName}' — ignoring.`
+        );
+        return;
+      }
+      sessionStore.updateMetadata(sessionKey, { activeModel: { provider, modelId } });
+    },
+
     // ── Session data access ─────────────────────────────────
     listSessions(agentName, opts) {
       return sessionStore.listSessions(agentName, opts);

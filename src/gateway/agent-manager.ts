@@ -483,6 +483,37 @@ export class AgentManager {
       }
     }
 
+    // Check whether the session has a stored model preference (set when the
+    // user explicitly switched models).  If it is in the agent's allowed list,
+    // honour it instead of always starting with the caller's modelRef.
+    // This makes model selection persist across restarts and channels.
+    if (!opts?.forceNew && !opts?.sessionFile) {
+      const storedModel = this.sessionStore.getEntry(sessionKey)?.metadata?.activeModel as
+        | { provider: string; modelId: string }
+        | undefined;
+      if (storedModel) {
+        const allowedModels = buildAllowedModels(agentConfig.model, agentConfig.fallbackModels);
+        const isAllowed = allowedModels.some(
+          (m) => m.provider === storedModel.provider && m.modelId === storedModel.modelId
+        );
+        if (isAllowed) {
+          // Find the full ModelRef (with thinkingLevel etc.) from the agent config
+          const allRefs: ModelRef[] = [agentConfig.model, ...(agentConfig.fallbackModels ?? [])];
+          const storedRef = allRefs.find(
+            (m) => m.provider === storedModel.provider && m.model === storedModel.modelId
+          );
+          if (storedRef && (storedRef.provider !== modelRef.provider || storedRef.model !== modelRef.model)) {
+            sessionLogger.log(
+              "[AGENT]",
+              `Restoring stored model preference ${storedRef.provider}/${storedRef.model} ` +
+              `(overrides default ${modelRef.provider}/${modelRef.model})`
+            );
+            modelRef = storedRef;
+          }
+        }
+      }
+    }
+
     sessionLogger.log("[AGENT]", `Creating session with model ${modelRef.provider}/${modelRef.model}`);
 
     // Resolve the full SDK model so we have the `input` capability array.

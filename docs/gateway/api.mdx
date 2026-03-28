@@ -7,7 +7,7 @@ The HTTP API is also described in [Channels → Custom Integrations](/channels#c
 
 ---
 
-The gateway exposes an HTTP API on port 7433 (configurable via `gateway.port`). This API is used by external channels like the TUI and can be used for custom integrations.
+The gateway exposes an HTTP API on port 7433 (configurable via `gateway.port`). This API is used by the TUI (for LLM proxying and tool execution), by plugin channels, and can be used for custom integrations.
 
 ## Base URL
 
@@ -56,7 +56,7 @@ curl http://127.0.0.1:7433/api/health
 GET /api/agents
 ```
 
-Returns all configured agents with their model and tool assignments.
+Returns all configured agents with their model configuration, tool/skill assignments, and pre-built context strings for the system prompt.
 
 **Response:**
 ```json
@@ -69,7 +69,14 @@ Returns all configured agents with their model and tool assignments.
         "model": "claude-sonnet-4-6",
         "thinkingLevel": "off"
       },
-      "tools": ["git"]
+      "fallbackModels": [
+        { "provider": "anthropic", "model": "claude-3-5-sonnet-20241022" }
+      ],
+      "tools": ["git"],
+      "skills": ["code-review"],
+      "workspaceDir": "/home/user/projects",
+      "toolContext": "## Available Tools\n\n### git\n...",
+      "skillContext": "## Available Skills\n\n### code-review\n..."
     }
   ]
 }
@@ -99,7 +106,10 @@ Returns agent configurations and provider metadata (without API keys).
         "provider": "anthropic",
         "model": "claude-sonnet-4-6"
       },
-      "tools": ["git"]
+      "fallbackModels": [],
+      "tools": ["git"],
+      "skills": [],
+      "workspaceDir": "/home/user/projects"
     }
   },
   "llm": {
@@ -116,6 +126,45 @@ Returns agent configurations and provider metadata (without API keys).
 **Example:**
 ```bash
 curl http://127.0.0.1:7433/api/config
+```
+
+---
+
+### List Agent Models
+
+```
+GET /api/agents/:name/models
+```
+
+Returns model metadata for the agent's allowed models (primary + fallbacks). The TUI uses this to set up proxy model registrations without needing API keys.
+
+**Parameters:**
+- `:name` — Agent name (URL-encoded)
+
+**Response:**
+```json
+{
+  "models": [
+    {
+      "id": "claude-sonnet-4-6",
+      "name": "Claude Sonnet 4",
+      "provider": "anthropic",
+      "api": "anthropic-messages",
+      "baseUrl": "https://api.anthropic.com",
+      "reasoning": false,
+      "input": ["text", "image"],
+      "cost": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 },
+      "contextWindow": 200000,
+      "maxTokens": 16384,
+      "thinkingLevel": "off"
+    }
+  ]
+}
+```
+
+**Example:**
+```bash
+curl http://127.0.0.1:7433/api/agents/assistant/models
 ```
 
 ---
@@ -137,9 +186,12 @@ Execute a core tool (`read`, `write`, `patch`, `exec`) in the agent's sandbox.
   "tool": "read|write|patch|exec",
   "params": {
     // Tool-specific parameters
-  }
+  },
+  "sessionKey": "optional-session-key"
 }
 ```
+
+The optional `sessionKey` is used to derive the channel and session context injected as environment variables into the sandbox (`BEIGE_AGENT_NAME`, `BEIGE_CHANNEL`, `BEIGE_SESSION_KEY`). If omitted, defaults to `tui:<agentName>:default`.
 
 **Response:**
 ```json
@@ -190,7 +242,7 @@ curl -X POST http://127.0.0.1:7433/api/agents/assistant/exec \
 POST /api/agents/:name/prompt
 ```
 
-Send a message to an agent and get the full response (non-streaming).
+Send a message to an agent and get the full response (non-streaming). The agent session is managed server-side by the gateway's AgentManager, including fallback model handling and hook execution.
 
 **Parameters:**
 - `:name` — Agent name (URL-encoded)
@@ -203,7 +255,7 @@ Send a message to an agent and get the full response (non-streaming).
 }
 ```
 
-If `sessionKey` is omitted, a default session key is used.
+If `sessionKey` is omitted, a default session key is used (`api:<agentName>:default`).
 
 **Response:**
 ```json
@@ -217,6 +269,58 @@ If `sessionKey` is omitted, a default session key is used.
 curl -X POST http://127.0.0.1:7433/api/agents/assistant/prompt \
   -H "Content-Type: application/json" \
   -d '{"message": "List files in my workspace"}'
+```
+
+---
+
+### Stream LLM Response (LLM Proxy)
+
+```
+POST /api/chat/stream
+```
+
+Proxy an LLM call through the gateway. The gateway resolves API keys server-side, executes prePrompt/postResponse hooks, applies fallback model logic on rate-limit errors, and audit-logs the call. Responses are streamed back as newline-delimited JSON (`AssistantMessageEvent` objects from the pi SDK).
+
+This is the endpoint the TUI uses for all LLM calls — it never needs API keys locally.
+
+**Request Body:**
+```json
+{
+  "provider": "anthropic",
+  "modelId": "claude-sonnet-4-6",
+  "context": { /* pi SDK Context object (messages array + system prompt) */ },
+  "options": {
+    "reasoning": true,
+    "maxTokens": 8192,
+    "temperature": 0.7
+  },
+  "agentName": "assistant",
+  "sessionKey": "tui:assistant:default"
+}
+```
+
+**Response:** Newline-delimited JSON stream (`application/x-ndjson`).
+
+Each line is a JSON object — standard pi `AssistantMessageEvent` types plus two gateway-specific event types:
+
+| Event type | Description |
+|---|---|
+| `text_delta` | Streaming text chunk |
+| `done` | Stream complete, includes full message with usage stats |
+| `error` | LLM error (includes error message) |
+| `blocked` | Gateway prePrompt hook blocked the message (includes `reason`) |
+| `model_fallback` | Gateway switched to a fallback model due to rate limiting (includes `provider`, `modelId`) |
+
+**Example:**
+```bash
+curl -X POST http://127.0.0.1:7433/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "anthropic",
+    "modelId": "claude-sonnet-4-6",
+    "context": {"messages": [{"role": "user", "content": "Hello!"}]},
+    "agentName": "assistant"
+  }'
 ```
 
 ---
@@ -260,7 +364,7 @@ POST /api/gateway/restart
 ```
 
 Trigger a graceful in-place restart of the gateway:
-1. Drain all in-flight LLM/tool calls
+1. Drain all in-flight LLM/tool calls (including proxied TUI streams)
 2. Tear down sandboxes, sockets, API, and channels
 3. Reload config from disk
 4. Restart everything fresh
@@ -279,6 +383,91 @@ Returns `202 Accepted` immediately; the restart happens asynchronously.
 ```bash
 curl -X POST http://127.0.0.1:7433/api/gateway/restart
 ```
+
+---
+
+### Hook Endpoints
+
+These endpoints execute plugin hooks. They are used by the TUI for session lifecycle events and are available for custom integrations. The prePrompt and postResponse hooks for TUI LLM calls are now executed server-side inside the `/api/chat/stream` endpoint automatically.
+
+#### Run prePrompt Hooks
+
+```
+POST /api/agents/:name/hooks/pre-prompt
+```
+
+**Request Body:**
+```json
+{
+  "message": "User's message",
+  "sessionKey": "tui:assistant:default",
+  "channel": "tui"
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Possibly transformed message",
+  "block": false,
+  "reason": null
+}
+```
+
+#### Run postResponse Hooks
+
+```
+POST /api/agents/:name/hooks/post-response
+```
+
+**Request Body:**
+```json
+{
+  "response": "LLM's response text",
+  "sessionKey": "tui:assistant:default",
+  "channel": "tui"
+}
+```
+
+**Response:**
+```json
+{
+  "response": "Possibly transformed response",
+  "block": false
+}
+```
+
+#### Fire sessionCreated Hook
+
+```
+POST /api/agents/:name/hooks/session-created
+```
+
+**Request Body:**
+```json
+{
+  "sessionKey": "tui:assistant:default",
+  "channel": "tui"
+}
+```
+
+**Response:** `{ "ok": true }`
+
+#### Fire sessionDisposed Hook
+
+```
+POST /api/agents/:name/hooks/session-disposed
+```
+
+**Request Body:**
+```json
+{
+  "sessionKey": "tui:assistant:default",
+  "channel": "tui"
+}
+```
+
+**Response:** `{ "ok": true }`
 
 ---
 
@@ -314,7 +503,7 @@ If you expose the API to a network, you are responsible for adding authenticatio
 
 ## Rate Limiting
 
-There is no built-in rate limiting. The underlying LLM providers have their own rate limits.
+There is no built-in rate limiting on the HTTP API itself. The gateway tracks per-provider rate limits internally and applies fallback logic automatically (see [LLM Providers → Model Fallback](/agents/providers#model-fallback)).
 
 ---
 

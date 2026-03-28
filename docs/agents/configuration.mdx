@@ -111,6 +111,9 @@ Plugin `path` values are resolved relative to the config file's directory, unles
       },
       sandbox: {
         image: "beige-sandbox:latest",
+        // Hard memory cap — container gets OOM-killed before it can exhaust host RAM.
+        // Default is "3g". Use a lower value on memory-constrained hosts (e.g. Raspberry Pi).
+        memoryLimit: "3g",
         extraMounts: {
           "/host/path": "/container/path",
         },
@@ -179,11 +182,16 @@ Optional array of `ModelRef` objects tried in order when the primary model fails
 
 ### `agents.<name>.sandbox`
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `image` | No | Docker image name (default: `beige-sandbox:latest`) |
-| `extraMounts` | No | `{ "/host/path": "/container/path" }` — reduces isolation |
-| `extraEnv` | No | `{ "KEY": "value" }` — visible to the agent, never use for secrets |
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `image` | No | `"beige-sandbox:latest"` | Docker image name |
+| `memoryLimit` | No | `"3g"` | Hard memory cap for the container (e.g. `"3g"`, `"512m"`). The container is OOM-killed by the cgroup before it can exhaust host RAM. Swap is also capped to the same value, so the limit is always hard. |
+| `extraMounts` | No | — | `{ "/host/path": "/container/path" }` — reduces isolation |
+| `extraEnv` | No | — | `{ "KEY": "value" }` — visible to the agent, never use for secrets |
+
+<Note>
+**Why `memoryLimit` matters on constrained hosts.** When the Docker host has no per-container memory limit and `cgroup_disable=memory` is set in the kernel (common on Raspberry Pi), a runaway process inside the sandbox — multiple concurrent `npm install` runs, for example — can exhaust all available RAM. The kernel never gets to invoke the OOM killer, and a hardware watchdog fires a hard reboot instead. Setting `memoryLimit` gives the container a cgroup ceiling so Docker's OOM killer terminates the offending process inside the container, leaving the rest of the system intact.
+</Note>
 
 ### `agents.<name>.workspaceDir`
 

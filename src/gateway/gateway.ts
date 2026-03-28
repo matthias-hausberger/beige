@@ -24,7 +24,8 @@ import {
   type AgentManagerRef,
   type LoadedPlugin,
 } from "../plugins/index.js";
-import { logUnhandledRejection } from "./error-logger.js";
+import { logUnhandledRejection, logError } from "./error-logger.js";
+import { log, warn, error as logErr } from "./logger.js";
 
 export class Gateway {
   private config: BeigeConfig;
@@ -63,19 +64,37 @@ export class Gateway {
   }
 
   async start(): Promise<void> {
-    console.log("[GATEWAY] Starting Beige gateway...");
+    log("[GATEWAY]", "Starting Beige gateway...");
 
     // 0. Set up global error handlers so no error ever disappears silently.
     //    unhandledRejection catches async errors that weren't .catch()-ed.
     //    uncaughtException catches synchronous throws that escape all try/catch.
-    const rejectionHandler = (reason: unknown, promise: Promise<unknown>) => {
-      logUnhandledRejection(reason, promise);
+    //
+    //    IMPORTANT: we intentionally do NOT call process.exit() in either
+    //    handler.  Exiting on every uncaught exception is what caused the
+    //    Pi watchdog to accumulate stuck processes (each dead gateway left
+    //    containers running) and ultimately triggered the hard reboot.
+    //    Instead we log everything to disk and keep running — the gateway
+    //    is more useful alive-but-degraded than crashed.
+    const rejectionHandler = (reason: unknown, _promise: Promise<unknown>) => {
+      // Log to stderr (captured by gateway.log) with full timestamp + stack.
+      const msg = reason instanceof Error ? reason.message : String(reason);
+      const stack = reason instanceof Error ? (reason.stack ?? "") : "";
+      logErr("[GATEWAY]", `Unhandled promise rejection: ${msg}`);
+      if (stack) logErr("[GATEWAY]", stack);
+      logUnhandledRejection(reason, _promise);
     };
     process.on("unhandledRejection", rejectionHandler);
 
-    const exceptionHandler = (err: Error) => {
-      console.error("[GATEWAY] Uncaught exception:", err.message, err.stack ?? "");
-      logUnhandledRejection(err, Promise.resolve());
+    const exceptionHandler = (err: unknown) => {
+      // Log uncaught synchronous exceptions.  We do NOT exit — losing the
+      // gateway process means losing all sandbox socket servers and the HTTP
+      // API, which is worse than continuing in a degraded state.
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? (err.stack ?? "") : "";
+      logErr("[GATEWAY]", `Uncaught exception: ${msg}`);
+      if (stack) logErr("[GATEWAY]", stack);
+      logError("system", `Uncaught exception: ${msg}`, { operation: "uncaughtException" }, err instanceof Error ? err : undefined);
     };
     process.on("uncaughtException", exceptionHandler);
 
@@ -107,7 +126,7 @@ export class Gateway {
 
     if (autoInstallFailed.length > 0) {
       for (const f of autoInstallFailed) {
-        console.error(`[GATEWAY] Plugin auto-install failed for '${f.name}': ${f.error}`);
+        logErr("[GATEWAY]", `Plugin auto-install failed for '${f.name}': ${f.error}`);
       }
       throw new Error(
         `Cannot start gateway: failed to auto-install plugin(s): ` +
@@ -116,8 +135,9 @@ export class Gateway {
     }
 
     if (autoInstalled.length > 0) {
-      console.log(
-        `[GATEWAY] Auto-installed ${autoInstalled.length} plugin(s) ` +
+      log(
+        "[GATEWAY]",
+        `Auto-installed ${autoInstalled.length} plugin(s) ` +
         `(${autoInstalled.join(", ")}). Reloading config...`
       );
       this.config = loadConfig(this.configPath);
@@ -128,7 +148,7 @@ export class Gateway {
 
     // 5. Load plugins — this calls createPlugin() and register() for each
     this.loadedPlugins = await loadPlugins(this.config, this.pluginRegistry, pluginCtx);
-    console.log(`[GATEWAY] Loaded ${this.loadedPlugins.length} plugin(s)`);
+    log("[GATEWAY]", `Loaded ${this.loadedPlugins.length} plugin(s)`);
 
     // 6. Register plugin tools with the ToolRunner (for sandbox tool calls)
     for (const [toolName, pluginTool] of this.pluginRegistry.getAllTools()) {
@@ -141,7 +161,7 @@ export class Gateway {
 
     // 8. Load standalone skill packages
     this.loadedSkills = await loadSkills(this.config);
-    console.log(`[GATEWAY] Loaded ${this.loadedSkills.size} standalone skill(s)`);
+    log("[GATEWAY]", `Loaded ${this.loadedSkills.size} standalone skill(s)`);
 
     // 9. Merge plugin-registered skills into loadedSkills
     for (const [name, pluginSkill] of this.pluginRegistry.getAllSkills()) {
@@ -223,37 +243,37 @@ export class Gateway {
     // 16. Fire gatewayStarted hooks
     await this.pluginRegistry.executeGatewayStarted();
 
-    console.log("[GATEWAY] Beige gateway started ✓");
+    log("[GATEWAY]", "Beige gateway started ✓");
   }
 
   async stop(): Promise<void> {
-    console.log("[GATEWAY] Shutting down...");
+    log("[GATEWAY]", "Shutting down...");
     await this.teardown({ drain: true });
-    console.log("[GATEWAY] Shutdown complete");
+    log("[GATEWAY]", "Shutdown complete");
   }
 
   async restart(): Promise<void> {
     if (this.restarting) {
-      console.log("[GATEWAY] Restart already in progress — ignoring duplicate request");
+      log("[GATEWAY]", "Restart already in progress — ignoring duplicate request");
       return;
     }
     this.restarting = true;
 
     try {
-      console.log("[GATEWAY] ── Restart requested ──────────────────────────────");
+      log("[GATEWAY]", "── Restart requested ──────────────────────────────");
 
-      console.log("[GATEWAY] Phase 1/3: Draining in-flight calls...");
+      log("[GATEWAY]", "Phase 1/3: Draining in-flight calls...");
       await this.agentManager?.drainAll();
 
-      console.log("[GATEWAY] Phase 2/3: Tearing down infrastructure...");
+      log("[GATEWAY]", "Phase 2/3: Tearing down infrastructure...");
       await this.teardown({ drain: false });
 
-      console.log(`[GATEWAY] Phase 3/3: Reloading config from ${this.configPath}...`);
+      log("[GATEWAY]", `Phase 3/3: Reloading config from ${this.configPath}...`);
       try {
         this.config = loadConfig(this.configPath);
       } catch (err) {
-        console.error("[GATEWAY] Failed to reload config — aborting restart:", err);
-        console.error("[GATEWAY] Gateway is now stopped. Fix the config and run 'beige gateway start'.");
+        logErr("[GATEWAY]", "Failed to reload config — aborting restart:", err);
+        logErr("[GATEWAY]", "Gateway is now stopped. Fix the config and run 'beige gateway start'.");
         return;
       }
 
@@ -261,7 +281,7 @@ export class Gateway {
       this.toolRunner = new ToolRunner();
 
       await this.start();
-      console.log("[GATEWAY] ── Restart complete ───────────────────────────────");
+      log("[GATEWAY]", "── Restart complete ───────────────────────────────");
     } finally {
       this.restarting = false;
     }

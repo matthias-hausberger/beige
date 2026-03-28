@@ -1,5 +1,6 @@
 import { getModel, isContextOverflow } from "@mariozechner/pi-ai";
 import { logErrorAuto } from "./error-logger.js";
+import { createLogger } from "./logger.js";
 import {
   AuthStorage,
   createAgentSession,
@@ -236,13 +237,17 @@ export class AgentManager {
       // Skip if this model is in cooldown
       if (this.providerHealth.isCoolingDown(provider, modelId)) {
         const remaining = this.providerHealth.getRemainingCooldown(provider, modelId);
-        console.log(
-          `[AGENT] Skipping ${provider}/${modelId} — in cooldown for ${Math.round(remaining / 1000)}s`
+        createLogger({ agent: agentName, session: sessionKey }).log(
+          "[AGENT]",
+          `Skipping ${provider}/${modelId} — in cooldown for ${Math.round(remaining / 1000)}s`
         );
         continue;
       }
 
-      console.log(`[AGENT] Attempting ${opts.operationLabel} with ${provider}/${modelId}`);
+      createLogger({ agent: agentName, session: sessionKey }).log(
+        "[AGENT]",
+        `Attempting ${opts.operationLabel} with ${provider}/${modelId}`
+      );
 
       try {
         const result = await this.executePromptWithModel(
@@ -270,6 +275,7 @@ export class AgentManager {
 
         // Check if it's a rate limit
         const rateLimitInfo = extractRateLimitInfo(err);
+        const sessionLogger = createLogger({ agent: agentName, session: sessionKey });
         if (rateLimitInfo.isRateLimit) {
           this.providerHealth.markRateLimited(
             provider,
@@ -277,16 +283,15 @@ export class AgentManager {
             rateLimitInfo.retryAfterMs,
             error.message
           );
-          console.log(
-            `[AGENT] ${provider}/${modelId} rate limited, trying next model`
-          );
+          sessionLogger.log("[AGENT]", `${provider}/${modelId} rate limited, trying next model`);
           continue;
         }
 
         // Non-rate-limit error — mark as failed but try next
         this.providerHealth.markFailed(provider, modelId, error.message);
-        console.error(
-          `[AGENT] ${provider}/${modelId} failed: ${error.message}`,
+        sessionLogger.error(
+          "[AGENT]",
+          `${provider}/${modelId} failed: ${error.message}`,
           error.stack ?? "(no stack trace)"
         );
         logErrorAuto(error, { operation: opts.operationLabel, agent: agentName, session: sessionKey, model: `${provider}/${modelId}` });
@@ -350,11 +355,12 @@ export class AgentManager {
         // Watchdog: if the session never emits agent_end (e.g. pi swallows the
         // error internally), reject after a generous timeout so the caller's
         // catch block can log and try the next model instead of hanging forever.
+        const promptLogger = createLogger({ agent: agentName, session: sessionKey });
         const watchdog = setTimeout(() => {
           if (!settled) {
             settled = true;
-            const msg = `[AGENT] Prompt timed out for session '${sessionKey}' (${modelRef.provider}/${modelRef.model}) — no agent_end received`;
-            console.error(msg);
+            const msg = `Prompt timed out (${modelRef.provider}/${modelRef.model}) — no agent_end received`;
+            promptLogger.error("[AGENT]", msg);
             reject(new Error(msg));
           }
         }, PROMPT_TIMEOUT_MS);
@@ -375,7 +381,7 @@ export class AgentManager {
                 settled = true;
                 clearTimeout(watchdog);
                 if (errMsg) {
-                  console.error(`[AGENT] LLM error for session '${sessionKey}': ${errMsg}`);
+                  promptLogger.error("[AGENT]", `LLM error: ${errMsg}`);
                   reject(new Error(errMsg));
                 } else {
                   resolve(responseText);
@@ -392,7 +398,7 @@ export class AgentManager {
             settled = true;
             clearTimeout(watchdog);
             const errMsg = err instanceof Error ? err.message : String(err);
-            console.error(`[AGENT] session.prompt() rejected for session '${sessionKey}': ${errMsg}`, err instanceof Error ? err.stack : "");
+            promptLogger.error("[AGENT]", `session.prompt() rejected: ${errMsg}`, err instanceof Error ? err.stack : "");
             unsubscribe();
             reject(err);
           }
@@ -429,6 +435,7 @@ export class AgentManager {
 
     // Check if we need to recreate the session with a different model
     const existing = this.sessions.get(sessionKey);
+    const sessionLogger = createLogger({ agent: agentName, session: sessionKey });
 
     // If session exists with the same model, return it (but update onToolStart
     // if the caller provided a new one — this is needed for runtime verbose
@@ -449,8 +456,9 @@ export class AgentManager {
       }
 
       // Different model — dispose and recreate
-      console.log(
-        `[AGENT] Switching session ${sessionKey} from ${currentRef.provider}/${currentRef.model} to ${provider}/${modelId}`
+      sessionLogger.log(
+        "[AGENT]",
+        `Switching model from ${currentRef.provider}/${currentRef.model} to ${provider}/${modelId}`
       );
       existing.session.dispose();
       this.sessions.delete(sessionKey);
@@ -469,7 +477,7 @@ export class AgentManager {
       }
     }
 
-    console.log(`[AGENT] Creating session for '${agentName}' with model ${modelRef.provider}/${modelRef.model} (key: ${sessionKey})`);
+    sessionLogger.log("[AGENT]", `Creating session with model ${modelRef.provider}/${modelRef.model}`);
 
     // Validate skill dependencies
     validateSkillDeps(agentConfig.skills ?? [], agentConfig.tools, this.loadedSkills);
@@ -536,7 +544,7 @@ export class AgentManager {
     };
 
     this.sessions.set(sessionKey, managed);
-    console.log(`[AGENT] Session ready for '${agentName}' (key: ${sessionKey})`);
+    sessionLogger.log("[AGENT]", `Session ready`);
 
     // Fire sessionCreated hook (fire-and-forget — don't block session return)
     this.pluginRegistry.executeSessionCreated({
@@ -556,7 +564,7 @@ export class AgentManager {
    * Safe to call multiple times; idempotent once all sessions are disposed.
    */
   async drainAll(): Promise<void> {
-    console.log("[AGENT] Draining in-flight LLM calls...");
+    createLogger().log("[AGENT]", "Draining in-flight LLM calls...");
 
     // Wait for every managed session to have inflightCount === 0.
     const drainSession = (managed: ManagedSession): Promise<void> => {
@@ -595,12 +603,12 @@ export class AgentManager {
         this.activeStreamCount === 0;
     }
 
-    console.log("[AGENT] All in-flight calls finished. Disposing sessions...");
+    createLogger().log("[AGENT]", "All in-flight calls finished. Disposing sessions...");
     for (const [, managed] of this.sessions) {
       managed.session.dispose();
     }
     this.sessions.clear();
-    console.log("[AGENT] Sessions drained and disposed.");
+    createLogger().log("[AGENT]", "Sessions drained and disposed.");
   }
 
   /**
@@ -797,7 +805,9 @@ export class AgentManager {
       if (!agentName) {
         throw new Error("No session found for this chat. Send a message first to start one.");
       }
-      console.log(`[AGENT] Restoring session '${sessionKey}' (agent '${agentName}') for compaction`);
+      createLogger({ agent: agentName, session: sessionKey }).log(
+        "[AGENT]", "Restoring session for compaction"
+      );
       await this.getOrCreateSession(sessionKey, agentName);
     }
 
@@ -806,9 +816,10 @@ export class AgentManager {
       throw new Error("Failed to restore session. Send a message first.");
     }
 
-    console.log(`[AGENT] Manual compaction requested for session '${sessionKey}'`);
+    const compactLogger = createLogger({ agent: managed.agentName, session: sessionKey });
+    compactLogger.log("[AGENT]", "Manual compaction requested");
     const result = await managed.session.compact();
-    console.log(`[AGENT] Compaction complete for '${sessionKey}': ${result.tokensBefore} tokens freed`);
+    compactLogger.log("[AGENT]", `Compaction complete: ${result.tokensBefore} tokens freed`);
     return { tokensBefore: result.tokensBefore, summary: result.summary };
   }
 

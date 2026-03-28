@@ -47,6 +47,14 @@ const SandboxConfig = Type.Object(
     image: Type.Optional(
       Type.String({ description: 'Docker image name. Default: "beige-sandbox:latest"' })
     ),
+    memoryLimit: Type.Optional(
+      Type.String({
+        description:
+          'Container memory limit (e.g. "3g", "512m"). Default: "3g". ' +
+          "Prevents runaway processes (heavy npm installs, build tools) from taking down the host. " +
+          "The container will hit a cgroup OOM and be killed rather than exhausting host RAM.",
+      })
+    ),
     extraMounts: Type.Optional(
       Type.Record(Type.String(), Type.String(), {
         description: "Additional host→container bind mounts. Reduces isolation — use carefully.",

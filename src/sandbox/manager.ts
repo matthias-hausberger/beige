@@ -12,6 +12,37 @@ import type { LoadedSkill } from "../skills/registry.js";
 const BEIGE_IMAGE_PREFIX = "beige-sandbox";
 const BEIGE_IMAGE_DEFAULT = "beige-sandbox:latest";
 
+/**
+ * Default memory limit applied to every sandbox container (3 GiB).
+ * Prevents runaway processes (npm install, build tools) from exhausting host
+ * RAM and triggering a hardware watchdog reboot.  The container will receive
+ * a cgroup OOM kill instead — much safer than taking down the whole host.
+ */
+const DEFAULT_MEMORY_LIMIT = "3g";
+
+/**
+ * Parse a human-readable memory string into bytes for Docker's Memory field.
+ * Accepts: "3g", "3G", "512m", "512M", "1024k", "1024K", or a plain number
+ * (treated as bytes).
+ */
+function parseMemoryBytes(limit: string): number {
+  const match = limit.trim().match(/^(\d+(?:\.\d+)?)\s*([kmgKMG]?)b?$/i);
+  if (!match) {
+    throw new Error(
+      `Invalid sandbox memoryLimit "${limit}". Use a number with unit, e.g. "3g", "512m".`
+    );
+  }
+  const value = parseFloat(match[1]);
+  const unit = match[2].toLowerCase();
+  const multipliers: Record<string, number> = {
+    "": 1,
+    k: 1_024,
+    m: 1_024 ** 2,
+    g: 1_024 ** 3,
+  };
+  return Math.floor(value * (multipliers[unit] ?? 1));
+}
+
 export interface ExecResult {
   stdout: string;
   stderr: string;
@@ -113,6 +144,11 @@ export class SandboxManager {
       ),
     ];
 
+    // Resolve memory limit — agent-level override → global sandbox default → hardcoded default
+    const memoryLimitStr = agentConfig.sandbox?.memoryLimit ?? DEFAULT_MEMORY_LIMIT;
+    const memoryBytes = parseMemoryBytes(memoryLimitStr);
+    console.log(`[SANDBOX] Memory limit for '${agentName}': ${memoryLimitStr} (${memoryBytes} bytes)`);
+
     const container = await this.docker.createContainer({
       Image: image,
       name: `beige-${agentName}`,
@@ -121,6 +157,11 @@ export class SandboxManager {
       Cmd: ["sleep", "infinity"],
       HostConfig: {
         Binds: binds,
+        // Hard memory cap — container gets OOM-killed by the cgroup before it
+        // can exhaust host RAM.  Swap is intentionally kept at the same value
+        // (MemorySwap = Memory) to disable swap and keep the limit hard.
+        Memory: memoryBytes,
+        MemorySwap: memoryBytes,
       },
       Env: envVars,
     });

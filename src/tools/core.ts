@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { AuditLogger } from "../gateway/audit.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
@@ -26,6 +26,15 @@ export function createCoreTools(
 
 type HandlerRef = ToolStartHandlerRef;
 
+/** Image extensions the read tool handles as multimodal image content. */
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  ".png":  "image/png",
+  ".jpg":  "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif":  "image/gif",
+  ".webp": "image/webp",
+};
+
 function createReadTool(
   agentName: string,
   sandbox: SandboxManager,
@@ -36,19 +45,84 @@ function createReadTool(
     name: "read",
     label: "Read File",
     description:
-      "Read the contents of a file in the sandbox. Paths are relative to /workspace or absolute within the sandbox.",
+      "Read the contents of a file in the sandbox. Paths are relative to /workspace or absolute within the sandbox. " +
+      "For image files (.png, .jpg, .jpeg, .gif, .webp) the image is returned directly for visual inspection " +
+      "— offset and limit are ignored for images.",
     parameters: Type.Object({
       path: Type.String({ description: "File path to read" }),
       offset: Type.Optional(
-        Type.Number({ description: "Line number to start reading from (1-indexed)" })
+        Type.Number({ description: "Line number to start reading from (1-indexed). Ignored for image files." })
       ),
       limit: Type.Optional(
-        Type.Number({ description: "Maximum number of lines to read" })
+        Type.Number({ description: "Maximum number of lines to read. Ignored for image files." })
       ),
     }),
-    execute: async (toolCallId, params) => {
+    execute: async (toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) => {
       const p = params as { path: string; offset?: number; limit?: number };
       handler.fn?.("read", { path: p.path });
+
+      // ── Image handling ──────────────────────────────────────────────
+      const ext = p.path.slice(p.path.lastIndexOf(".")).toLowerCase();
+      const mimeType = IMAGE_EXTENSIONS[ext];
+
+      if (mimeType) {
+        // Check whether the current model supports image input before attempting
+        // to send image bytes — give the agent a clear, actionable error if not.
+        const modelInput = ctx?.model?.input ?? [];
+        if (!modelInput.includes("image")) {
+          const modelLabel = ctx?.model
+            ? `${(ctx.model as any).provider ?? ""}/${(ctx.model as any).id ?? ctx.model}`
+            : "the current model";
+          return {
+            content: [{
+              type: "text",
+              text:
+                `Cannot read image: ${p.path}\n\n` +
+                `${modelLabel} does not support image (vision) input. ` +
+                `You cannot view or analyse image files with this model. ` +
+                `If you need to inspect an image, ask the user to switch to a vision-capable model ` +
+                `(e.g. claude-sonnet, gpt-4o, gemini-1.5-pro) and try again.`,
+            }],
+            details: {},
+            isError: true,
+          };
+        }
+
+        const timer = audit.start(agentName, "core_tool", "read", [p.path], "allowed");
+        try {
+          // Encode inside the container — avoids binary corruption through the
+          // Docker exec stdout demux stream (which is not binary-safe).
+          const result = await sandbox.exec(agentName, ["base64", p.path]);
+          timer.finish({ exitCode: result.exitCode, outputBytes: result.stdout.length });
+
+          if (result.exitCode !== 0) {
+            return {
+              content: [{ type: "text", text: result.stderr || `Failed to read image: ${p.path}` }],
+              details: {},
+              isError: true,
+            };
+          }
+
+          return {
+            content: [{
+              type: "image",
+              data: result.stdout.replace(/\s/g, ""), // strip base64 line-breaks
+              mimeType,
+            }],
+            details: {},
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          timer.finish({ exitCode: 1, error: msg });
+          return {
+            content: [{ type: "text", text: `Error reading image: ${msg}` }],
+            details: {},
+            isError: true,
+          };
+        }
+      }
+
+      // ── Text handling (existing behaviour) ─────────────────────────
       const args = ["cat"];
 
       if (p.offset || p.limit) {

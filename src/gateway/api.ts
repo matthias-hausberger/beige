@@ -82,240 +82,57 @@ export class GatewayAPI {
     const method = req.method ?? "GET";
 
     try {
-      // ── GET /api/health ───────────────────────────────────
+      // ── Static routes ─────────────────────────────────────
       if (method === "GET" && path === "/api/health") {
         return this.json(res, 200, { status: "ok" });
       }
-
-      // ── GET /api/agents ───────────────────────────────────
       if (method === "GET" && path === "/api/agents") {
-        const agents = Object.entries(this.opts.config.agents).map(([name, config]) => ({
-          name,
-          model: config.model,
-          fallbackModels: config.fallbackModels ?? [],
-          tools: config.tools,
-          skills: config.skills ?? [],
-          workspaceDir: config.workspaceDir,
-          toolContext: buildPluginToolContext(config.tools, this.opts.pluginRegistry),
-          skillContext: buildSkillContext(config.skills ?? [], this.opts.loadedSkills),
-        }));
-        return this.json(res, 200, { agents });
+        return this.handleListAgents(res);
       }
-
-      // ── POST /api/agents/:name/exec ───────────────────────
-      const execMatch = path.match(/^\/api\/agents\/([^/]+)\/exec$/);
-      if (method === "POST" && execMatch) {
-        const agentName = decodeURIComponent(execMatch[1]);
-        if (!this.opts.config.agents[agentName]) {
-          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
-        }
-
-        const body = await readBody(req);
-        const { tool, params, sessionKey } = JSON.parse(body);
-
-        if (!tool || !params) {
-          return this.json(res, 400, { error: "Missing tool or params" });
-        }
-
-        const result = await this.executeTool(agentName, tool, params, sessionKey);
-        return this.json(res, 200, result);
-      }
-
-      // ── POST /api/agents/:name/prompt ────────────────────
-      const promptMatch = path.match(/^\/api\/agents\/([^/]+)\/prompt$/);
-      if (method === "POST" && promptMatch) {
-        const agentName = decodeURIComponent(promptMatch[1]);
-        if (!this.opts.config.agents[agentName]) {
-          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
-        }
-
-        const body = await readBody(req);
-        const { message, sessionKey } = JSON.parse(body);
-
-        if (!message) {
-          return this.json(res, 400, { error: "Missing message" });
-        }
-
-        const key = sessionKey ?? `api:${agentName}:default`;
-        console.log(`[API] Prompt to agent '${agentName}' (session: ${key}): ${message.slice(0, 80)}...`);
-
-        const response = await this.opts.agentManager.prompt(key, agentName, message);
-        return this.json(res, 200, { response });
-      }
-
-      // ── GET /api/agents/:name/sessions ────────────────────
-      const sessionsMatch = path.match(/^\/api\/agents\/([^/]+)\/sessions$/);
-      if (method === "GET" && sessionsMatch) {
-        const agentName = decodeURIComponent(sessionsMatch[1]);
-        const sessions = this.opts.sessionStore.listSessions(agentName);
-        return this.json(res, 200, { sessions });
-      }
-
-      // ── POST /api/gateway/restart ─────────────────────────
-      // Triggers a graceful in-place restart: drain → teardown → reload config → start.
-      // Returns 202 immediately; the restart happens asynchronously in the gateway process.
-      if (method === "POST" && path === "/api/gateway/restart") {
-        console.log("[API] Restart requested via HTTP API");
-        // Fire and forget — restart() is idempotent if already in progress
-        this.opts.gateway.restart().catch((err) => {
-          console.error("[API] Restart error:", err);
-        });
-        return this.json(res, 202, {
-          status: "restarting",
-          message: "Graceful restart initiated. Follow progress with: beige gateway logs -f",
-        });
-      }
-
-      // ── GET /api/config ───────────────────────────────────
-      // Returns agent configs + provider metadata (NOT api keys)
       if (method === "GET" && path === "/api/config") {
-        const agents: Record<string, any> = {};
-        for (const [name, agentConfig] of Object.entries(this.opts.config.agents)) {
-          agents[name] = {
-            model: agentConfig.model,
-            fallbackModels: agentConfig.fallbackModels ?? [],
-            tools: agentConfig.tools,
-            skills: agentConfig.skills ?? [],
-            workspaceDir: agentConfig.workspaceDir,
-          };
-        }
-
-        return this.json(res, 200, {
-          agents,
-          llm: {
-            providers: Object.fromEntries(
-              Object.entries(this.opts.config.llm.providers).map(([name, p]) => [
-                name,
-                { baseUrl: p.baseUrl, api: p.api },
-              ])
-            ),
-          },
-        });
+        return this.handleGetConfig(res);
       }
-
-      // ── GET /api/agents/:name/models ──────────────────────
-      // Returns model metadata for the agent's allowed models (primary + fallbacks).
-      // The TUI uses this to create proxy models without needing API keys.
-      const modelsMatch = path.match(/^\/api\/agents\/([^/]+)\/models$/);
-      if (method === "GET" && modelsMatch) {
-        const agentName = decodeURIComponent(modelsMatch[1]);
-        const agentConfig = this.opts.config.agents[agentName];
-        if (!agentConfig) {
-          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
-        }
-
-        const modelRegistry = this.opts.agentManager.getModelRegistry();
-        const models: Array<Record<string, unknown>> = [];
-
-        const addModel = (modelRef: { provider: string; model: string; thinkingLevel?: string }) => {
-          const m = modelRegistry.find(modelRef.provider, modelRef.model);
-          if (m) {
-            models.push({
-              id: m.id,
-              name: m.name,
-              provider: m.provider,
-              api: m.api,
-              baseUrl: m.baseUrl,
-              reasoning: m.reasoning,
-              input: m.input,
-              cost: m.cost,
-              contextWindow: m.contextWindow,
-              maxTokens: m.maxTokens,
-              headers: m.headers,
-              compat: m.compat,
-              thinkingLevel: modelRef.thinkingLevel ?? "off",
-            });
-          }
-        };
-
-        addModel(agentConfig.model);
-        for (const fb of agentConfig.fallbackModels ?? []) {
-          addModel(fb);
-        }
-
-        return this.json(res, 200, { models });
+      if (method === "POST" && path === "/api/gateway/restart") {
+        return this.handleRestart(res);
       }
-
-      // ── POST /api/chat/stream ────────────────────────────
-      // LLM proxy: resolves auth server-side, runs hooks, forwards to
-      // the real LLM provider, audit-logs the call, and streams events
-      // back as newline-delimited JSON.
       if (method === "POST" && path === "/api/chat/stream") {
-        return this.handleChatStream(req, res);
+        return await this.handleChatStream(req, res);
       }
 
-      // ── POST /api/agents/:name/hooks/pre-prompt ──────────
-      // Run prePrompt hooks.  Used by the TUI before prompting the LLM.
-      const prePromptMatch = path.match(/^\/api\/agents\/([^/]+)\/hooks\/pre-prompt$/);
-      if (method === "POST" && prePromptMatch) {
-        const agentName = decodeURIComponent(prePromptMatch[1]);
+      // ── Parameterised agent routes ────────────────────────
+      const agentMatch = path.match(/^\/api\/agents\/([^/]+)\/(.+)$/);
+      if (agentMatch) {
+        const agentName = decodeURIComponent(agentMatch[1]);
+        const subPath = agentMatch[2];
+
         if (!this.opts.config.agents[agentName]) {
           return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
         }
-        const body = await readBody(req);
-        const { message, sessionKey, channel } = JSON.parse(body);
-        const result = await this.opts.pluginRegistry.executePrePrompt({
-          message,
-          sessionKey: sessionKey ?? `tui:${agentName}:default`,
-          agentName,
-          channel: channel ?? "tui",
-        });
-        return this.json(res, 200, result);
-      }
 
-      // ── POST /api/agents/:name/hooks/post-response ───────
-      // Run postResponse hooks.  Used by the TUI after the LLM responds.
-      const postResponseMatch = path.match(/^\/api\/agents\/([^/]+)\/hooks\/post-response$/);
-      if (method === "POST" && postResponseMatch) {
-        const agentName = decodeURIComponent(postResponseMatch[1]);
-        if (!this.opts.config.agents[agentName]) {
-          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
+        if (method === "POST" && subPath === "exec") {
+          return await this.handleExec(req, res, agentName);
         }
-        const body = await readBody(req);
-        const { response, sessionKey, channel } = JSON.parse(body);
-        const result = await this.opts.pluginRegistry.executePostResponse({
-          response,
-          sessionKey: sessionKey ?? `tui:${agentName}:default`,
-          agentName,
-          channel: channel ?? "tui",
-        });
-        return this.json(res, 200, result);
-      }
-
-      // ── POST /api/agents/:name/hooks/session-created ─────
-      // Fire sessionCreated hook.  Used by the TUI when a new session starts.
-      const sessionCreatedMatch = path.match(/^\/api\/agents\/([^/]+)\/hooks\/session-created$/);
-      if (method === "POST" && sessionCreatedMatch) {
-        const agentName = decodeURIComponent(sessionCreatedMatch[1]);
-        if (!this.opts.config.agents[agentName]) {
-          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
+        if (method === "POST" && subPath === "prompt") {
+          return await this.handlePrompt(req, res, agentName);
         }
-        const body = await readBody(req);
-        const { sessionKey, channel } = JSON.parse(body);
-        await this.opts.pluginRegistry.executeSessionCreated({
-          sessionKey: sessionKey ?? `tui:${agentName}:default`,
-          agentName,
-          channel: channel ?? "tui",
-        });
-        return this.json(res, 200, { ok: true });
-      }
-
-      // ── POST /api/agents/:name/hooks/session-disposed ─────
-      // Fire sessionDisposed hook.  Used by the TUI when a session is disposed.
-      const sessionDisposedMatch = path.match(/^\/api\/agents\/([^/]+)\/hooks\/session-disposed$/);
-      if (method === "POST" && sessionDisposedMatch) {
-        const agentName = decodeURIComponent(sessionDisposedMatch[1]);
-        if (!this.opts.config.agents[agentName]) {
-          return this.json(res, 404, { error: `Unknown agent: ${agentName}` });
+        if (method === "GET" && subPath === "sessions") {
+          return this.handleListSessions(res, agentName);
         }
-        const body = await readBody(req);
-        const { sessionKey, channel } = JSON.parse(body);
-        await this.opts.pluginRegistry.executeSessionDisposed({
-          sessionKey: sessionKey ?? `tui:${agentName}:default`,
-          agentName,
-          channel: channel ?? "tui",
-        });
-        return this.json(res, 200, { ok: true });
+        if (method === "GET" && subPath === "models") {
+          return this.handleListModels(res, agentName);
+        }
+        if (method === "POST" && subPath === "hooks/pre-prompt") {
+          return await this.handleHookPrePrompt(req, res, agentName);
+        }
+        if (method === "POST" && subPath === "hooks/post-response") {
+          return await this.handleHookPostResponse(req, res, agentName);
+        }
+        if (method === "POST" && subPath === "hooks/session-created") {
+          return await this.handleHookSessionCreated(req, res, agentName);
+        }
+        if (method === "POST" && subPath === "hooks/session-disposed") {
+          return await this.handleHookSessionDisposed(req, res, agentName);
+        }
       }
 
       // ── 404 ───────────────────────────────────────────────
@@ -326,6 +143,170 @@ export class GatewayAPI {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  // ── Route handlers ─────────────────────────────────────────────────
+
+  private handleListAgents(res: ServerResponse): void {
+    const agents = Object.entries(this.opts.config.agents).map(([name, config]) => ({
+      name,
+      model: config.model,
+      fallbackModels: config.fallbackModels ?? [],
+      tools: config.tools,
+      skills: config.skills ?? [],
+      workspaceDir: config.workspaceDir,
+      toolContext: buildPluginToolContext(config.tools, this.opts.pluginRegistry),
+      skillContext: buildSkillContext(config.skills ?? [], this.opts.loadedSkills),
+    }));
+    this.json(res, 200, { agents });
+  }
+
+  private handleGetConfig(res: ServerResponse): void {
+    const agents: Record<string, any> = {};
+    for (const [name, agentConfig] of Object.entries(this.opts.config.agents)) {
+      agents[name] = {
+        model: agentConfig.model,
+        fallbackModels: agentConfig.fallbackModels ?? [],
+        tools: agentConfig.tools,
+        skills: agentConfig.skills ?? [],
+        workspaceDir: agentConfig.workspaceDir,
+      };
+    }
+
+    this.json(res, 200, {
+      agents,
+      llm: {
+        providers: Object.fromEntries(
+          Object.entries(this.opts.config.llm.providers).map(([name, p]) => [
+            name,
+            { baseUrl: p.baseUrl, api: p.api },
+          ])
+        ),
+      },
+    });
+  }
+
+  private handleRestart(res: ServerResponse): void {
+    console.log("[API] Restart requested via HTTP API");
+    this.opts.gateway.restart().catch((err) => {
+      console.error("[API] Restart error:", err);
+    });
+    this.json(res, 202, {
+      status: "restarting",
+      message: "Graceful restart initiated. Follow progress with: beige gateway logs -f",
+    });
+  }
+
+  private async handleExec(req: IncomingMessage, res: ServerResponse, agentName: string): Promise<void> {
+    const body = await readBody(req);
+    const { tool, params, sessionKey } = JSON.parse(body);
+
+    if (!tool || !params) {
+      return this.json(res, 400, { error: "Missing tool or params" });
+    }
+
+    const result = await this.executeTool(agentName, tool, params, sessionKey);
+    this.json(res, 200, result);
+  }
+
+  private async handlePrompt(req: IncomingMessage, res: ServerResponse, agentName: string): Promise<void> {
+    const body = await readBody(req);
+    const { message, sessionKey } = JSON.parse(body);
+
+    if (!message) {
+      return this.json(res, 400, { error: "Missing message" });
+    }
+
+    const key = sessionKey ?? `api:${agentName}:default`;
+    console.log(`[API] Prompt to agent '${agentName}' (session: ${key}): ${message.slice(0, 80)}...`);
+
+    const response = await this.opts.agentManager.prompt(key, agentName, message);
+    this.json(res, 200, { response });
+  }
+
+  private handleListSessions(res: ServerResponse, agentName: string): void {
+    const sessions = this.opts.sessionStore.listSessions(agentName);
+    this.json(res, 200, { sessions });
+  }
+
+  private handleListModels(res: ServerResponse, agentName: string): void {
+    const agentConfig = this.opts.config.agents[agentName];
+    const modelRegistry = this.opts.agentManager.getModelRegistry();
+    const models: Array<Record<string, unknown>> = [];
+
+    const addModel = (modelRef: { provider: string; model: string; thinkingLevel?: string }) => {
+      const m = modelRegistry.find(modelRef.provider, modelRef.model);
+      if (m) {
+        models.push({
+          id: m.id,
+          name: m.name,
+          provider: m.provider,
+          api: m.api,
+          baseUrl: m.baseUrl,
+          reasoning: m.reasoning,
+          input: m.input,
+          cost: m.cost,
+          contextWindow: m.contextWindow,
+          maxTokens: m.maxTokens,
+          headers: m.headers,
+          compat: m.compat,
+          thinkingLevel: modelRef.thinkingLevel ?? "off",
+        });
+      }
+    };
+
+    addModel(agentConfig.model);
+    for (const fb of agentConfig.fallbackModels ?? []) {
+      addModel(fb);
+    }
+
+    this.json(res, 200, { models });
+  }
+
+  private async handleHookPrePrompt(req: IncomingMessage, res: ServerResponse, agentName: string): Promise<void> {
+    const body = await readBody(req);
+    const { message, sessionKey, channel } = JSON.parse(body);
+    const result = await this.opts.pluginRegistry.executePrePrompt({
+      message,
+      sessionKey: sessionKey ?? `tui:${agentName}:default`,
+      agentName,
+      channel: channel ?? "tui",
+    });
+    this.json(res, 200, result);
+  }
+
+  private async handleHookPostResponse(req: IncomingMessage, res: ServerResponse, agentName: string): Promise<void> {
+    const body = await readBody(req);
+    const { response, sessionKey, channel } = JSON.parse(body);
+    const result = await this.opts.pluginRegistry.executePostResponse({
+      response,
+      sessionKey: sessionKey ?? `tui:${agentName}:default`,
+      agentName,
+      channel: channel ?? "tui",
+    });
+    this.json(res, 200, result);
+  }
+
+  private async handleHookSessionCreated(req: IncomingMessage, res: ServerResponse, agentName: string): Promise<void> {
+    const body = await readBody(req);
+    const { sessionKey, channel } = JSON.parse(body);
+    await this.opts.pluginRegistry.executeSessionCreated({
+      sessionKey: sessionKey ?? `tui:${agentName}:default`,
+      agentName,
+      channel: channel ?? "tui",
+    });
+    this.json(res, 200, { ok: true });
+  }
+
+  private async handleHookSessionDisposed(req: IncomingMessage, res: ServerResponse, agentName: string): Promise<void> {
+    const body = await readBody(req);
+    const { sessionKey, channel } = JSON.parse(body);
+    await this.opts.pluginRegistry.executeSessionDisposed({
+      sessionKey: sessionKey ?? `tui:${agentName}:default`,
+      agentName,
+      channel: channel ?? "tui",
+    });
+    this.json(res, 200, { ok: true });
   }
 
   /**

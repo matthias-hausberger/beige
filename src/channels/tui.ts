@@ -710,7 +710,6 @@ async function buildBeigeExtension(
     if (state.session) {
       const newModel = state.underlyingModelRegistry.find(state.agentModelRef.provider, state.agentModelRef.model);
       if (newModel) {
-        const newModelInfo = newModelInfos.find((m) => m.id === state.agentModelRef.model && m.provider === state.agentModelRef.provider);
         await state.session.setModel(newModel);
       }
     }

@@ -411,7 +411,7 @@ export class AgentManager {
     sessionKey: string,
     agentName: string,
     modelRef: ModelRef,
-    opts?: { onToolStart?: OnToolStart; forceNew?: boolean }
+    opts?: { onToolStart?: OnToolStart; forceNew?: boolean; sessionFile?: string }
   ): Promise<ManagedSession> {
     // If forceNew, dispose old session and create fresh
     if (opts?.forceNew) {
@@ -458,7 +458,9 @@ export class AgentManager {
 
     // Determine session file
     let sessionFile: string | undefined;
-    if (opts?.forceNew) {
+    if (opts?.sessionFile) {
+      sessionFile = opts.sessionFile;
+    } else if (opts?.forceNew) {
       sessionFile = this.sessionStore.createSession(sessionKey, agentName);
     } else {
       sessionFile = this.sessionStore.getSessionFile(sessionKey);

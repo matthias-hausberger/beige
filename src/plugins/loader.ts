@@ -6,8 +6,9 @@
  */
 
 import { resolve, join } from "path";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, mkdirSync } from "fs";
 import type { BeigeConfig } from "../config/schema.js";
+import { beigeDir } from "../paths.js";
 import type {
   PluginManifest,
   PluginInstance,
@@ -83,9 +84,12 @@ export async function loadPlugins(
       );
     }
 
-    // 4. Create per-plugin context with a namespaced logger
+    // 4. Create per-plugin context with a namespaced logger and data directory
+    const pluginDataDir = resolve(beigeDir(), "data", pluginName);
+    mkdirSync(pluginDataDir, { recursive: true });
     const pluginCtx: PluginContext = Object.create(ctx, {
       log: { value: createLogger(pluginName), enumerable: true },
+      dataDir: { value: pluginDataDir, enumerable: true },
     });
 
     // 5. Create plugin instance

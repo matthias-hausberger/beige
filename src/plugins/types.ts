@@ -451,6 +451,15 @@ export interface PluginContext {
   // ── Logging ────────────────────────────────────────────
   /** Namespaced logger (logs are prefixed with plugin name). */
   log: PluginLogger;
+
+  // ── Data directory ─────────────────────────────────────
+  /**
+   * Per-plugin data directory at `<BEIGE_HOME>/data/<pluginName>/`.
+   * Created automatically on first access. Use this for plugin-owned
+   * persistent data (schedules, caches, browser profiles, etc.) rather
+   * than inventing ad-hoc paths.
+   */
+  readonly dataDir: string;
 }
 
 export interface PluginLogger {

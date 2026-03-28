@@ -10,8 +10,10 @@ import type { AgentManager, OnToolStart } from "../gateway/agent-manager.js";
 import type { BeigeSessionStore } from "../gateway/sessions.js";
 import type { SessionSettingsStore } from "../gateway/session-settings.js";
 import type { SessionContext } from "../types/session.js";
-import { readFileSync } from "fs";
+import { readFileSync, mkdirSync } from "fs";
+import { resolve } from "path";
 import { parseSessionEntries, getLastAssistantUsage, calculateContextTokens } from "@mariozechner/pi-coding-agent";
+import { beigeDir } from "../paths.js";
 import type {
   PluginContext,
   PluginLogger,
@@ -231,6 +233,9 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
     // ── Logging ────────────────────────────────────────────
     // Default logger; overridden per-plugin in loader.ts with a namespaced one
     log: createLogger("plugins"),
+
+    // Default dataDir; overridden per-plugin in loader.ts
+    dataDir: resolve(beigeDir(), "data", "unknown"),
   };
 
   return ctx;

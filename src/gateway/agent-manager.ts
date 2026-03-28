@@ -52,7 +52,7 @@ const PROMPT_TIMEOUT_MS = 10 * 60 * 1000;
 import { ProviderHealthTracker, extractRateLimitInfo } from "./provider-health.js";
 import { parseSessionKey, type SessionContext } from "../types/session.js";
 import { beigeDir } from "../paths.js";
-import { validateModelAllowed } from "../config/restricted-model-registry.js";
+import { validateModelAllowed, buildAllowedModels } from "../config/restricted-model-registry.js";
 
 /**
  * Callback fired by the gateway when the agent is about to execute a tool.
@@ -647,7 +647,7 @@ export class AgentManager {
     }
 
     // Validate that the requested model is allowed for this agent
-    const allowedModels = this.getAllowedModels(agentConfig);
+    const allowedModels = buildAllowedModels(agentConfig.model, agentConfig.fallbackModels);
     validateModelAllowed(modelRef.provider, modelRef.model, allowedModels);
 
     // Check if we need to recreate the session with a different model
@@ -985,23 +985,6 @@ export class AgentManager {
     const model = getModel(provider as any, modelId);
     if (model) return model;
     throw new Error(`Model not found: ${provider}/${modelId}. Check your config and API keys.`);
-  }
-
-  /**
-   * Build the list of allowed models for an agent.
-   */
-  private getAllowedModels(agentConfig: AgentConfig): Array<{ provider: string; modelId: string }> {
-    const allowed: Array<{ provider: string; modelId: string }> = [
-      { provider: agentConfig.model.provider, modelId: agentConfig.model.model },
-    ];
-
-    if (agentConfig.fallbackModels) {
-      for (const fallback of agentConfig.fallbackModels) {
-        allowed.push({ provider: fallback.provider, modelId: fallback.model });
-      }
-    }
-
-    return allowed;
   }
 
   /**

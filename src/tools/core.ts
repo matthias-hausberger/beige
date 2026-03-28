@@ -283,7 +283,7 @@ function createExecTool(
       }),
       timeout: Type.Optional(
         Type.Number({
-          description: "Timeout in seconds (default: 120)",
+          description: "Timeout in seconds (default: 900)",
         })
       ),
     }),
@@ -300,7 +300,7 @@ function createExecTool(
       );
 
       try {
-        const timeout = (p.timeout ?? 120) * 1000;
+        const timeout = (p.timeout ?? 900) * 1000;
         const envVars = buildSessionEnvVars(sessionContext);
         const result = await sandbox.exec(agentName, args, undefined, timeout, envVars);
 

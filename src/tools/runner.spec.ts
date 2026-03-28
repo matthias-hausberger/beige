@@ -226,7 +226,7 @@ describe("ToolRunner", () => {
 
       // Verify callback was invoked with correct args
       // argsToObject only maps "key=value" style args; positional args without "=" are ignored.
-      expect(onToolStart).toHaveBeenCalledWith("test", { key1: "val1", key2: "val2" });
+      expect(onToolStart).toHaveBeenCalledWith("test", { _args: ["key1=val1", "key2=val2"], key1: "val1", key2: "val2" });
       expect(result.output).toBe("test result");
     });
   });

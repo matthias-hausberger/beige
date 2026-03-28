@@ -177,6 +177,10 @@ export class ToolRunner {
       }
       // Args without "=" are ignored (e.g., flags)
     }
+    // Always include the raw args array so consumers (e.g. verbose
+    // formatters) can reconstruct the full command for tools like git
+    // whose args are purely positional / flag-based.
+    result._args = args;
     return result;
   }
 }

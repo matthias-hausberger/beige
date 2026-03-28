@@ -239,38 +239,105 @@ sequenceDiagram
 
 ## 8. TUI Channel — Interactive Terminal Session
 
-The TUI runs as a separate process (`beige tui`) and connects to the gateway's HTTP API. The LLM session runs locally in the TUI (full pi experience), but tool execution is proxied through the gateway.
+The TUI runs as a separate process (`beige tui`) and connects to the gateway's HTTP API. The LLM session runs locally in the TUI (full pi experience with editor, streaming, model switching, compaction), but **all LLM calls are proxied through the gateway** and **tool execution is proxied through the gateway**. The TUI never needs API keys.
 
 ```mermaid
 sequenceDiagram
     actor User
     participant TUI as TUI process<br/>(pi InteractiveMode)
-    participant LLM as LLM (via pi SDK)
     participant API as Gateway HTTP API
+    participant HOOKS as Plugin Hooks
+    participant LLM as LLM Provider<br/>(Anthropic/OpenAI)
     participant SM as Sandbox Manager
     participant SB as Docker Sandbox
 
     Note over User,SB: Gateway is running in another shell
 
     User->>TUI: type message in editor
-    TUI->>LLM: session.prompt(message)
-    LLM-->>TUI: tool_use: exec("ls /workspace")
+    TUI->>API: POST /api/chat/stream<br/>{provider, modelId, context, agentName}
 
-    TUI->>API: POST /api/agents/testo/exec<br/>{tool: "exec", params: {command: "ls"}}
-    API->>SM: sandbox.exec("testo", ["sh","-c","ls"])
+    Note over API,HOOKS: Gateway runs prePrompt hooks server-side
+
+    API->>HOOKS: executePrePrompt(message)
+    HOOKS-->>API: {message, block: false}
+
+    API->>LLM: streamSimple(model, context, apiKey)
+    LLM-->>API: streaming events (ndjson)
+    API-->>TUI: text_delta, done events (ndjson stream)
+    TUI-->>User: streaming text rendered in terminal
+
+    Note over API,HOOKS: Gateway runs postResponse hooks server-side
+
+    API->>HOOKS: executePostResponse(response)
+
+    Note over TUI,SB: When the LLM calls a tool
+
+    TUI->>API: POST /api/agents/assistant/exec<br/>{tool: "exec", params: {command: "ls"}}
+    API->>SM: sandbox.exec("assistant", ["sh","-c","ls"])
     SM->>SB: docker exec
     SB-->>SM: file listing
     SM-->>API: result
     API-->>TUI: {content: [{type:"text", text:"..."}]}
 
-    TUI->>LLM: tool_result
-    LLM-->>TUI: streaming text_delta
-    TUI-->>User: rendered in terminal
+    TUI-->>User: tool result shown, LLM continues
 ```
 
-> The TUI process needs the config file (for LLM API keys) but all tool execution goes through the gateway. This means audit logging, policy enforcement, and sandbox management are always centralized in the gateway.
+> **Key architecture points:**
+> - The TUI process has **no API keys** — the gateway resolves them server-side
+> - LLM calls go through `POST /api/chat/stream`, where the gateway handles auth, audit logging, prePrompt/postResponse hooks, and fallback model logic
+> - Tool execution goes through `POST /api/agents/:name/exec`, where the gateway handles sandbox routing, audit logging, and policy enforcement
+> - If the primary model is rate-limited, the gateway automatically tries fallback models and sends a `model_fallback` event to the TUI
 
-## 9. Session Lifecycle
+## 9. LLM Proxy — Gateway-Side Fallback and Hooks
+
+When the TUI (or any client) calls `POST /api/chat/stream`, the gateway handles auth, hooks, and fallback logic server-side.
+
+```mermaid
+sequenceDiagram
+    participant Client as TUI / Custom Client
+    participant API as Gateway API
+    participant HOOKS as Plugin Hooks
+    participant HEALTH as Provider Health Tracker
+    participant LLM1 as Primary Model<br/>(e.g. Claude Sonnet 4)
+    participant LLM2 as Fallback Model<br/>(e.g. Claude 3.5 Sonnet)
+    participant AUDIT as Audit Logger
+
+    Client->>API: POST /api/chat/stream<br/>{provider, modelId, context, agentName}
+
+    API->>HOOKS: executePrePrompt(userMessage)
+    HOOKS-->>API: {message, block: false}
+
+    API->>HEALTH: isCoolingDown(primary)?
+    HEALTH-->>API: no
+
+    API->>AUDIT: start(llm:anthropic/claude-sonnet-4)
+    API->>LLM1: streamSimple(model, context, apiKey)
+    LLM1-->>API: 429 Rate Limited
+
+    API->>HEALTH: markRateLimited(primary, retryAfterMs)
+    API->>AUDIT: finish(exitCode: 1, "rate limited")
+
+    Note over API,LLM2: Gateway automatically tries fallback
+
+    API-->>Client: {type: "model_fallback", provider, modelId}
+    API->>AUDIT: start(llm:anthropic/claude-3-5-sonnet)
+    API->>LLM2: streamSimple(fallback, context, apiKey)
+    LLM2-->>API: streaming events
+    API-->>Client: text_delta, done events (ndjson)
+
+    API->>HEALTH: markHealthy(fallback)
+    API->>AUDIT: finish(exitCode: 0)
+
+    API->>HOOKS: executePostResponse(fullText)
+```
+
+> **Key points:**
+> - The client sends a single request — fallback is transparent
+> - Each model attempt gets its own audit log entry
+> - Rate-limit cooldowns are persisted in `~/.beige/data/provider-health.json` and survive gateway restarts
+> - The `model_fallback` event lets the client update its UI if desired
+
+## 10. Session Lifecycle
 
 Sessions persist across gateway restarts. Each conversation gets its own `.jsonl` file.
 
@@ -325,7 +392,7 @@ flowchart LR
 │       └── 20260304-091500-g7h8i9.jsonl
 ```
 
-## 10. Gateway Startup → Ready
+## 11. Gateway Startup → Ready
 
 ```mermaid
 flowchart TD

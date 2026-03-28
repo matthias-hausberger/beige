@@ -61,21 +61,12 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
     // ── Session operations ─────────────────────────────────
     async prompt(sessionKey, agentName, message, opts) {
       const mgr = getAgentManager();
-      return mgr.prompt(sessionKey, agentName, message, {
-        onToolStart: opts?.onToolStart,
-        onAutoCompactionStart: opts?.onAutoCompactionStart,
-        onAutoCompactionEnd: opts?.onAutoCompactionEnd,
-      });
+      return mgr.prompt(sessionKey, agentName, message, opts);
     },
 
     async promptStreaming(sessionKey, agentName, message, onDelta, opts) {
       const mgr = getAgentManager();
-      return mgr.promptStreaming(sessionKey, agentName, message, onDelta, {
-        onToolStart: opts?.onToolStart,
-        onAssistantTurnStart: opts?.onAssistantTurnStart,
-        onAutoCompactionStart: opts?.onAutoCompactionStart,
-        onAutoCompactionEnd: opts?.onAutoCompactionEnd,
-      });
+      return mgr.promptStreaming(sessionKey, agentName, message, onDelta, opts);
     },
 
     async newSession(sessionKey, agentName) {

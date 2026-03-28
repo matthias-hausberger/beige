@@ -1,6 +1,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
 import type { BeigeConfig } from "../config/schema.js";
-import type { AgentManager } from "./agent-manager.js";
+import { type AgentManager } from "./agent-manager.js";
+import { buildPluginToolContext } from "./agent-manager.js";
 import type { BeigeSessionStore } from "./sessions.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { AuditLogger } from "./audit.js";
@@ -771,31 +772,3 @@ function extractLastUserMessage(context: Context): string {
   return "";
 }
 
-/**
- * Build tool context string for the system prompt from the plugin registry.
- */
-function buildPluginToolContext(
-  agentTools: string[],
-  registry: PluginRegistry
-): string {
-  if (agentTools.length === 0) return "";
-
-  const lines: string[] = ["## Available Tools", ""];
-
-  for (const toolName of agentTools) {
-    const tool = registry.getTool(toolName);
-    if (!tool) continue;
-
-    lines.push(`### ${toolName}`);
-    lines.push(`${tool.description}`);
-    if (tool.commands?.length) {
-      lines.push("Commands:");
-      for (const cmd of tool.commands) {
-        lines.push(`  ${toolName} ${cmd}`);
-      }
-    }
-    lines.push("");
-  }
-
-  return lines.join("\n");
-}

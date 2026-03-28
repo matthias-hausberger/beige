@@ -1245,7 +1245,7 @@ export function readWorkspaceAgentsMd(workspaceDir: string): Array<{ path: strin
 /**
  * Build tool context string for the system prompt from the plugin registry.
  */
-function buildPluginToolContext(
+export function buildPluginToolContext(
   agentTools: string[],
   registry: PluginRegistry
 ): string {

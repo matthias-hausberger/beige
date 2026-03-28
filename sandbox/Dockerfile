@@ -4,12 +4,17 @@ FROM denoland/deno:2.2.3
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     jq \
-    git \
     ca-certificates \
     nodejs \
     npm \
     && npm install -g pnpm \
     && rm -rf /var/lib/apt/lists/*
+# git is intentionally NOT installed in the container. Agents must use the
+# git tool (/tools/bin/git -> /beige/tool-client) which runs on the gateway
+# host where the SSH key lives. Installing system git leads agents to call
+# /usr/bin/git directly, which has no credentials, hits dubious-ownership
+# errors on host-owned repo files, and cannot resolve /workspace paths on
+# the gateway.
 
 # Create workspace directory
 RUN mkdir -p /workspace /tools/bin /tools/packages /beige

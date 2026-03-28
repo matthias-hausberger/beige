@@ -1,23 +1,43 @@
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { AuditLogger } from "../gateway/audit.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { OnToolStart } from "../gateway/agent-manager.js";
 import type { SessionContext } from "../types/session.js";
 
+
 export type ToolStartHandlerRef = { fn: OnToolStart | undefined };
+
+/**
+ * Resolved pi-SDK model shape — only the fields core tools need.
+ * Avoids importing the full pi-ai Model type into core.ts.
+ */
+export interface ResolvedModel {
+  provider: string;
+  id: string;
+  input: ("text" | "image")[];
+}
+
+/**
+ * Mutable reference to the currently active resolved model for the session.
+ * AgentManager keeps this in sync (including during fallback switches) so
+ * tools always reflect the live model without being recreated.
+ */
+export type CurrentModelRef = { current: ResolvedModel | undefined };
 
 export function createCoreTools(
   agentName: string,
   sandbox: SandboxManager,
   audit: AuditLogger,
   handlerRef?: ToolStartHandlerRef,
-  sessionContext?: SessionContext
+  sessionContext?: SessionContext,
+  modelRef?: CurrentModelRef
 ): ToolDefinition[] {
   const handler: ToolStartHandlerRef = handlerRef ?? { fn: undefined };
+  const model: CurrentModelRef = modelRef ?? { current: undefined };
 
   return [
-    createReadTool(agentName, sandbox, audit, handler),
+    createReadTool(agentName, sandbox, audit, handler, model),
     createWriteTool(agentName, sandbox, audit, handler),
     createPatchTool(agentName, sandbox, audit, handler),
     createExecTool(agentName, sandbox, audit, handler, sessionContext),
@@ -39,7 +59,8 @@ function createReadTool(
   agentName: string,
   sandbox: SandboxManager,
   audit: AuditLogger,
-  handler: HandlerRef
+  handler: HandlerRef,
+  modelRef: CurrentModelRef
 ): ToolDefinition {
   return {
     name: "read",
@@ -57,7 +78,7 @@ function createReadTool(
         Type.Number({ description: "Maximum number of lines to read. Ignored for image files." })
       ),
     }),
-    execute: async (toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) => {
+    execute: async (toolCallId, params) => {
       const p = params as { path: string; offset?: number; limit?: number };
       handler.fn?.("read", { path: p.path });
 
@@ -68,11 +89,12 @@ function createReadTool(
       if (mimeType) {
         // Check whether the current model supports image input before attempting
         // to send image bytes — give the agent a clear, actionable error if not.
-        const modelInput = ctx?.model?.input ?? [];
+        // modelRef.current is kept up-to-date by AgentManager (including during
+        // fallback switches), so this always reflects the live model.
+        const modelInput = modelRef.current?.input ?? [];
         if (!modelInput.includes("image")) {
-          const modelLabel = ctx?.model
-            ? `${(ctx.model as any).provider ?? ""}/${(ctx.model as any).id ?? ctx.model}`
-            : "the current model";
+          const ref = modelRef.current;
+          const modelLabel = ref ? `${ref.provider}/${ref.id}` : "the current model";
           return {
             content: [{
               type: "text",

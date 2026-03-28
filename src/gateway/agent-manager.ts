@@ -19,7 +19,7 @@ import type { BeigeConfig, AgentConfig, ModelRef } from "../config/schema.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { AuditLogger } from "./audit.js";
 import type { BeigeSessionStore } from "./sessions.js";
-import { createCoreTools, type ToolStartHandlerRef } from "../tools/core.js";
+import { createCoreTools, type ToolStartHandlerRef, type CurrentModelRef } from "../tools/core.js";
 import type { PluginRegistry } from "../plugins/registry.js";
 import { buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
 
@@ -79,6 +79,12 @@ export interface ManagedSession {
    * Update `.fn` to change the active handler without recreating tools.
    */
   toolStartHandlerRef: ToolStartHandlerRef;
+  /**
+   * Mutable model reference shared with core tool closures.
+   * Kept in sync with currentModel so tools always see the live model
+   * (including during fallback switches) without being recreated.
+   */
+  currentModelRef: CurrentModelRef;
 }
 
 /**
@@ -479,6 +485,19 @@ export class AgentManager {
 
     sessionLogger.log("[AGENT]", `Creating session with model ${modelRef.provider}/${modelRef.model}`);
 
+    // Resolve the full SDK model so we have the `input` capability array.
+    // This is also used below for the pi session; resolve once and reuse.
+    const resolvedModel = this.resolveModelFromRef(modelRef);
+
+    // Mutable model ref shared with core tool closures — updated on fallback switch.
+    const currentModelRef: CurrentModelRef = {
+      current: {
+        provider: resolvedModel.provider,
+        id: resolvedModel.id,
+        input: resolvedModel.input as ("text" | "image")[],
+      },
+    };
+
     // Validate skill dependencies
     validateSkillDeps(agentConfig.skills ?? [], agentConfig.tools, this.loadedSkills);
 
@@ -488,13 +507,13 @@ export class AgentManager {
     const workspaceDir = agentConfig.workspaceDir 
       ?? resolve(agentDir, "workspace");
     const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir, onToolStart: toolStartHandlerRef.fn };
-    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
+    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext, currentModelRef);
     const toolContext = buildPluginToolContext(agentConfig.tools, this.pluginRegistry);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
     const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
     const agentsFiles = readWorkspaceAgentsMd(workspaceDir);
 
-    const model = this.resolveModelFromRef(modelRef);
+    const model = resolvedModel;
 
     const resourceLoader: ResourceLoader = {
       getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
@@ -541,6 +560,7 @@ export class AgentManager {
       inflightCount: 0,
       drainResolvers: [],
       toolStartHandlerRef,
+      currentModelRef,
     };
 
     this.sessions.set(sessionKey, managed);

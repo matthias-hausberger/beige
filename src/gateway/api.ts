@@ -317,12 +317,73 @@ export class GatewayAPI {
     tool: string,
     params: Record<string, any>,
     sessionKey?: string
-  ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  ): Promise<{ content: Array<{ type: string; [key: string]: unknown }>; isError?: boolean }> {
     const sandbox = this.opts.sandbox;
     const audit = this.opts.audit;
 
     switch (tool) {
       case "read": {
+        // ── Image detection ───────────────────────────────────────────────
+        const IMAGE_MIME: Record<string, string> = {
+          ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+          ".gif": "image/gif", ".webp": "image/webp",
+        };
+        const ext = params.path.slice(params.path.lastIndexOf(".")).toLowerCase();
+        const mimeType = IMAGE_MIME[ext];
+
+        if (mimeType) {
+          // Resolve the current model for this agent to check vision capability.
+          // Use the session's active model if one exists, otherwise fall back to
+          // the agent's configured primary model.
+          const agentConfig = this.opts.config.agents[agentName];
+          const modelRef = agentConfig?.model;
+          const resolvedModel = modelRef
+            ? this.opts.agentManager.getModelRegistry().find(modelRef.provider, modelRef.model)
+            : undefined;
+          const modelInput: string[] = (resolvedModel?.input as string[] | undefined) ?? [];
+
+          if (!modelInput.includes("image")) {
+            const modelLabel = resolvedModel
+              ? `${resolvedModel.provider}/${resolvedModel.id}`
+              : "the current model";
+            return {
+              content: [{
+                type: "text",
+                text:
+                  `Cannot read image: ${params.path}\n\n` +
+                  `${modelLabel} does not support image (vision) input. ` +
+                  `You cannot view or analyse image files with this model. ` +
+                  `If you need to inspect an image, ask the user to switch to a ` +
+                  `vision-capable model (e.g. claude-sonnet, gpt-4o, gemini-1.5-pro) ` +
+                  `and try again.`,
+              }],
+              isError: true,
+            };
+          }
+
+          // Encode inside the container — avoids binary corruption through the
+          // HTTP transport layer (which is not binary-safe for raw bytes).
+          const timer = audit.start(agentName, "core_tool", "read", [params.path], "allowed");
+          const result = await sandbox.exec(agentName, ["base64", params.path]);
+          timer.finish({ exitCode: result.exitCode, outputBytes: result.stdout.length });
+
+          if (result.exitCode !== 0) {
+            return {
+              content: [{ type: "text", text: result.stderr || `Failed to read image: ${params.path}` }],
+              isError: true,
+            };
+          }
+
+          return {
+            content: [{
+              type: "image",
+              data: result.stdout.replace(/\s/g, ""),
+              mimeType,
+            }],
+          };
+        }
+
+        // ── Text files (original behaviour) ──────────────────────────────
         const args = [];
         if (params.offset || params.limit) {
           const start = params.offset ?? 1;

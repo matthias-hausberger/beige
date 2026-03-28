@@ -162,7 +162,7 @@ async function waitForGatewayReady(
   logFile: string,
   port: number,
   host: string = "127.0.0.1",
-  timeoutMs: number = 60000
+  timeoutMs: number = 300000
 ): Promise<boolean> {
   const startTime = Date.now();
   const indefinite = timeoutMs === 0;
@@ -623,7 +623,7 @@ Usage:
 
 Options:
   -c, --config <path>        Config file (default: ~/.beige/config.json5)
-  --timeout <seconds>        Startup/restart wait timeout in seconds (default: 60, 0 = indefinite)
+  --timeout <seconds>        Startup/restart wait timeout in seconds (default: 300, 0 = indefinite)
   -h, --help                 Show this help
 `);
 }
@@ -667,7 +667,7 @@ function parseArgs(): Mode {
     }
     if (sub === "start") {
       const foreground = rest.includes("--foreground") || rest.includes("-F");
-      let timeoutMs = 60000;
+      let timeoutMs = 300000;
       const timeoutIdx = rest.findIndex((a) => a.startsWith("--timeout"));
       if (timeoutIdx !== -1) {
         const arg = rest[timeoutIdx];
@@ -683,7 +683,7 @@ function parseArgs(): Mode {
     }
     if (sub === "stop") return { kind: "gateway-stop" };
     if (sub === "restart") {
-      let timeoutMs = 60000;
+      let timeoutMs = 300000;
       const timeoutIdx = rest.findIndex((a) => a.startsWith("--timeout"));
       if (timeoutIdx !== -1) {
         const arg = rest[timeoutIdx];

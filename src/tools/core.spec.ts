@@ -339,7 +339,7 @@ describe("createCoreTools", () => {
         "test-agent",
         ["sh", "-c", "ls -la"],
         undefined,
-        120_000,
+        900_000,
         undefined
       );
     });

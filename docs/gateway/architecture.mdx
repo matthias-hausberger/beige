@@ -68,16 +68,16 @@ Gateway (Node.js)
 
 Since `/tools/bin` is on `$PATH`, the agent calls tools naturally. When the LLM runs `exec git status`:
 
-1. LLM calls `exec` with args `["git", "set", "mykey", "myvalue"]`
+1. LLM calls `exec` with args `["git", "status"]`
 2. Gateway receives the tool call, logs it as a core `exec` call
-3. Gateway runs `docker exec <container> sh -c "git commit mykey myvalue"`
+3. Gateway runs `docker exec <container> sh -c "git status"`
 4. The shell finds `/tools/bin/git` on `$PATH` — a generated launcher script that:
    - Connects to `/beige/gateway.sock` (Unix socket mounted into container)
-   - Sends: `{"tool": "git", "args": ["set", "mykey", "myvalue"]}`
+   - Sends: `{"tool": "git", "args": ["status"]}`
    - Waits for response
 5. Gateway socket server receives the request:
    - Identifies agent from socket identity (each agent has its own socket)
-   - Logs: `{agent: "travel", tool: "git", args: ["set", "mykey", "myvalue"], decision: "allowed"}`
+   - Logs: `{agent: "travel", tool: "git", args: ["status"], decision: "allowed"}`
    - Checks policy (is "travel" agent allowed to use "git"?)
    - Executes the git tool handler on the gateway host
    - Returns result through socket
@@ -138,8 +138,9 @@ Single config file (JSON5 — JSON with comments) drives the entire system. No d
 ### 2. Gateway Core (`src/gateway/`)
 
 - **Config loader**: Reads and validates `config.json5`, resolves env vars.
-- **Agent manager**: Creates/destroys agent sessions. Maps agent name → pi SDK `AgentSession` + Docker container. Handles model fallback and rate limit tracking.
+- **Agent manager**: Creates/destroys agent sessions. Maps session keys → pi SDK `AgentSession` + Docker container. Supports multiple concurrent sessions per agent (one per channel/chat/thread). Handles model fallback and rate limit tracking.
 - **Provider health tracker**: Monitors per-provider rate limits and cooldowns. Persisted to `~/.beige/data/provider-health.json`.
+- **LLM proxy**: The `/api/chat/stream` endpoint proxies LLM calls for the TUI. Resolves API keys server-side, executes prePrompt/postResponse hooks, applies fallback model logic on rate limits, and audit-logs every attempt. The TUI never needs API keys.
 - **Sandbox manager**: Creates Docker containers with correct mounts, generates tool launchers, manages lifecycle.
 - **Socket server**: One Unix domain socket per agent at `~/.beige/sockets/<agent>.sock`, mounted into container at `/beige/gateway.sock`.
 - **Policy engine**: Checks if agent is allowed to use a tool. Deny by default.
@@ -161,7 +162,7 @@ Rate limit handling:
 - Otherwise, a 30-minute default cooldown is applied
 - Cooldown state is persisted in `~/.beige/data/provider-health.json` and survives restarts
 
-### 3. Core Tools (`src/tools/core/`)
+### 3. Core Tools (`src/tools/core.ts`)
 
 Implemented as pi SDK `ToolDefinition` objects:
 
@@ -189,8 +190,8 @@ plugins/git/
 ```json
 {
   "name": "git",
-  "description": "Key-value store. Set and get values.",
-  "commands": ["set <key> <value>", "get <key>"],
+  "description": "Git version control operations.",
+  "commands": ["status", "commit", "log"],
   "provides": { "tools": ["git"] }
 }
 ```
@@ -263,7 +264,7 @@ Error response:
 
 The TUI is the only built-in channel. Other channels (Telegram, Discord, etc.) are provided by plugins.
 
-- **TUI** (built-in, separate process): Connects to gateway HTTP API. Runs pi's `InteractiveMode` locally for the full pi experience. Tool execution is proxied through the gateway API.
+- **TUI** (built-in, separate process): Connects to gateway HTTP API. Runs pi's `InteractiveMode` locally for the full pi experience. LLM calls are proxied through the gateway's `/api/chat/stream` endpoint (the TUI never needs API keys). Tool execution is proxied through the gateway's `/api/agents/:name/exec` endpoint. The gateway handles auth, hooks, fallback models, and audit logging for both paths.
 - **Plugin channels** (in-process): Plugins can register channel adapters and run background processes (e.g. Telegram polling). They create sessions via `PluginContext.prompt()` and receive responses through the channel adapter.
 
 #### Session Settings System

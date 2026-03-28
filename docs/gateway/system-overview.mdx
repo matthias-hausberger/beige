@@ -57,7 +57,7 @@ The gateway is the single host process. It never runs untrusted code — all age
 | Component | Responsibility |
 |-----------|---------------|
 | **Plugin System** | Loads plugins that provide tools, channels, hooks, and skills |
-| **Agent Manager** | Manages pi SDK `AgentSession` instances. One session per agent, lazily initialized |
+| **Agent Manager** | Manages pi SDK `AgentSession` instances. Multiple concurrent sessions per agent (one per channel/chat/thread), lazily initialized. Handles model fallback and rate-limit tracking |
 | **pi SDK (LLM Layer)** | Makes LLM API calls (Anthropic, OpenAI/ZAI, etc). Owns the 4 core tool definitions |
 | **Policy Engine** | Deny-by-default permission checks. Validates agent→tool access before every execution |
 | **Audit Logger** | Appends JSONL entries for every tool invocation (core and custom) |

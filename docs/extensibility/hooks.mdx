@@ -34,6 +34,10 @@ Then `logger`'s hooks run before `filter`'s hooks.
 
 ## Hook Flow
 
+### Channel plugins (Telegram, etc.)
+
+For channels that run in-process with the gateway, hooks execute as part of the `AgentManager.prompt()` / `promptStreaming()` call:
+
 ```
 User message arrives
   │
@@ -53,6 +57,31 @@ postResponse hooks (can transform/block)
   ▼
 Response delivered to channel
 ```
+
+### TUI (separate process)
+
+For the TUI, LLM calls are proxied through the gateway's `/api/chat/stream` endpoint. Hooks execute **server-side in the gateway**, not in the TUI process:
+
+```
+User types message in TUI
+  │
+  ▼
+TUI sends POST /api/chat/stream to gateway
+  │
+  ▼
+Gateway: prePrompt hooks (can transform/block)
+  │ (if blocked → sends "blocked" event → TUI aborts)
+  ▼
+Gateway: streams LLM call back to TUI (with fallback model logic)
+  │
+  ▼
+Gateway: postResponse hooks (fire-and-forget, response already streamed)
+  │
+  ▼
+TUI renders streamed response
+```
+
+> **Note:** preToolExec/postToolExec hooks run on tool calls made through the `AgentManager` path (channel plugins). For TUI tool calls (which go through `/api/agents/:name/exec`), tools execute directly in the sandbox — preToolExec/postToolExec hooks apply to plugin tool calls routed through the Unix socket, not to core tool execution.
 
 ## Registering Hooks
 

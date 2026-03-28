@@ -89,7 +89,7 @@ export class ToolRunner {
       const preResult = await this.pluginRegistry.executePreToolExec({
         toolName,
         args,
-        sessionKey: sessionContext?.agentName ? `${sessionContext.channel ?? "unknown"}:${sessionContext.agentName}` : "",
+        sessionKey: sessionContext?.sessionKey ?? "",
         agentName: sessionContext?.agentName ?? "",
       });
       if (!preResult.allow) {
@@ -118,7 +118,7 @@ export class ToolRunner {
         toolName,
         args,
         result,
-        sessionKey: sessionContext?.agentName ? `${sessionContext.channel ?? "unknown"}:${sessionContext.agentName}` : "",
+        sessionKey: sessionContext?.sessionKey ?? "",
         agentName: sessionContext?.agentName ?? "",
       });
       if (postResult.result) {
@@ -177,6 +177,10 @@ export class ToolRunner {
       }
       // Args without "=" are ignored (e.g., flags)
     }
+    // Always include the raw args array so consumers (e.g. verbose
+    // formatters) can reconstruct the full command for tools like git
+    // whose args are purely positional / flag-based.
+    result._args = args;
     return result;
   }
 }

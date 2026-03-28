@@ -102,6 +102,9 @@ interface TUIState {
   agentModelRef: { provider: string; model: string };
   agentFallbackRefs: Array<{ provider: string; model: string }>;
   workspaceDir: string;
+  /** Pre-built tool/skill context strings from the gateway (avoids re-fetching /api/agents) */
+  toolContext: string;
+  skillContext: string;
   session: AgentSession | null;
   toolStartHandlerRef: { fn: OnToolStart | undefined };
   gatewayUrl: string;
@@ -227,6 +230,8 @@ export async function launchTUI(opts: TUIOptions): Promise<void> {
     agentModelRef: primaryRef,
     agentFallbackRefs: fallbackRefs,
     workspaceDir,
+    toolContext: agentInfo.toolContext ?? "",
+    skillContext: agentInfo.skillContext ?? "",
     session: null,
     toolStartHandlerRef,
     gatewayUrl,
@@ -436,12 +441,7 @@ async function createSession(
   systemPromptRef: { value: string },
   agentsFilesRef: { value: Array<{ path: string; content: string }> }
 ): Promise<void> {
-  const { agentName, agentModelRef, gatewayUrl, authStorage, modelRegistry, underlyingModelRegistry, toolStartHandlerRef, workspaceDir } = state;
-
-  // Fetch agent info from gateway (for tool/skill context)
-  const agentsRes = await fetch(`${gatewayUrl}/api/agents`);
-  const { agents } = (await agentsRes.json()) as { agents: GatewayAgentInfo[] };
-  const agentInfo = agents.find((a) => a.name === agentName);
+  const { agentName, agentModelRef, gatewayUrl, authStorage, modelRegistry, underlyingModelRegistry, toolStartHandlerRef, workspaceDir, toolContext, skillContext } = state;
 
   // Resolve the model from the proxy registry
   const model = underlyingModelRegistry.find(agentModelRef.provider, agentModelRef.model);
@@ -452,9 +452,7 @@ async function createSession(
   // Pass a getter so tool calls always route to the currently-active agent
   const coreTools = createProxyTools(() => state.agentName, gatewayUrl, toolStartHandlerRef);
 
-  // Use pre-built tool/skill context from the gateway
-  const toolContext = agentInfo?.toolContext ?? "";
-  const skillContext = agentInfo?.skillContext ?? "";
+  // Use pre-built tool/skill context from state (populated on agent load/switch)
   systemPromptRef.value = buildSystemPrompt(agentName, toolContext, skillContext);
 
   // Read workspace AGENTS.md so it's injected into the system prompt context.
@@ -541,7 +539,7 @@ async function buildBeigeExtension(
 
   // ── /sessions ─────────────────────────────────────────────
   const handleSessions = async (_args: string, ctx: any) => {
-    const sessions = listSessions(state.agentName);
+    const sessions = listSessions(state.agentName, state.sessionStore);
     if (sessions.length === 0) {
       ctx.ui.notify("No saved sessions for this agent.", "info");
       return;
@@ -565,7 +563,7 @@ async function buildBeigeExtension(
 
   // ── /resume ───────────────────────────────────────────────
   const handleResume = async (args: string, ctx: any) => {
-    const sessions = listSessions(state.agentName);
+    const sessions = listSessions(state.agentName, state.sessionStore);
     if (sessions.length === 0) {
       ctx.ui.notify("No saved sessions to resume.", "info");
       return;
@@ -679,10 +677,10 @@ async function buildBeigeExtension(
       (state.session as any)._modelRegistry = state.modelRegistry;
     }
 
-    // Rebuild system prompt
-    const toolContext = newAgentInfo.toolContext ?? "";
-    const skillContext = newAgentInfo.skillContext ?? "";
-    systemPromptRef.value = buildSystemPrompt(arg, toolContext, skillContext);
+    // Rebuild system prompt and update state for future createSession calls
+    state.toolContext = newAgentInfo.toolContext ?? "";
+    state.skillContext = newAgentInfo.skillContext ?? "";
+    systemPromptRef.value = buildSystemPrompt(arg, state.toolContext, state.skillContext);
     agentsFilesRef.value = readWorkspaceAgentsMd(state.workspaceDir);
 
     if (state.session) {
@@ -712,7 +710,6 @@ async function buildBeigeExtension(
     if (state.session) {
       const newModel = state.underlyingModelRegistry.find(state.agentModelRef.provider, state.agentModelRef.model);
       if (newModel) {
-        const newModelInfo = newModelInfos.find((m) => m.id === state.agentModelRef.model && m.provider === state.agentModelRef.provider);
         await state.session.setModel(newModel);
       }
     }
@@ -803,8 +800,7 @@ interface SessionEntry {
   timestamp: Date;
 }
 
-function listSessions(agentName: string): SessionEntry[] {
-  const store = new BeigeSessionStore();
+function listSessions(agentName: string, store: BeigeSessionStore): SessionEntry[] {
   return store.listSessions(agentName).map((info) => ({
     file: info.sessionFile,
     timestamp: new Date(info.createdAt),

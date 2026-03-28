@@ -52,7 +52,7 @@ const PROMPT_TIMEOUT_MS = 10 * 60 * 1000;
 import { ProviderHealthTracker, extractRateLimitInfo } from "./provider-health.js";
 import { parseSessionKey, type SessionContext } from "../types/session.js";
 import { beigeDir } from "../paths.js";
-import { validateModelAllowed } from "../config/restricted-model-registry.js";
+import { validateModelAllowed, buildAllowedModels } from "../config/restricted-model-registry.js";
 
 /**
  * Callback fired by the gateway when the agent is about to execute a tool.
@@ -131,112 +131,17 @@ export class AgentManager {
     agentName: string,
     opts?: { forceNew?: boolean; sessionFile?: string; onToolStart?: OnToolStart }
   ): Promise<ManagedSession> {
-    // If forceNew, dispose old session and create fresh
-    if (opts?.forceNew) {
-      await this.disposeSession(sessionKey);
-    }
-
-    // Return cached session if it exists
-    const existing = this.sessions.get(sessionKey);
-    if (existing) return existing;
-
     const agentConfig = this.config.agents[agentName];
     if (!agentConfig) {
       throw new Error(`Unknown agent: ${agentName}`);
     }
 
-    // Determine session file
-    let sessionFile: string | undefined;
-    if (opts?.sessionFile) {
-      sessionFile = opts.sessionFile;
-    } else if (!opts?.forceNew) {
-      sessionFile = this.sessionStore.getSessionFile(sessionKey);
-    }
-
-    // Create new session file if none exists
-    if (!sessionFile) {
-      sessionFile = this.sessionStore.createSession(sessionKey, agentName);
-    }
-
-    console.log(`[AGENT] Creating session for '${agentName}' (key: ${sessionKey})`);
-
-    // Validate skill dependencies
-    validateSkillDeps(agentConfig.skills ?? [], agentConfig.tools, this.loadedSkills);
-
-    // Build pi session — wire onToolStart so channels get notified on tool calls.
-    // Store the ref on the ManagedSession so it can be mutated at runtime (verbose toggle).
-    const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
-    const agentDir = resolve(this.beigeDir, "agents", agentName);
-    const workspaceDir = agentConfig.workspaceDir 
-      ?? resolve(agentDir, "workspace");
-    const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir, onToolStart: toolStartHandlerRef.fn };
-    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext);
-    const toolContext = buildPluginToolContext(agentConfig.tools, this.pluginRegistry);
-    const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
-    const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
-    const agentsFiles = readWorkspaceAgentsMd(workspaceDir);
-
-    const model = this.resolveModel(agentConfig);
-
-    const resourceLoader: ResourceLoader = {
-      getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
-      getSkills: () => ({ skills: [], diagnostics: [] }),
-      getPrompts: () => ({ prompts: [], diagnostics: [] }),
-      getThemes: () => ({ themes: [], diagnostics: [] }),
-      getAgentsFiles: () => ({ agentsFiles }),
-      getSystemPrompt: () => systemPrompt,
-      getAppendSystemPrompt: () => [],
-      getPathMetadata: () => new Map(),
-      extendResources: () => {},
-      reload: async () => {},
-    };
-
-    // Use file-based session manager for persistence
-    let sessionManager: ReturnType<typeof SessionManager.create>;
-    try {
-      sessionManager = SessionManager.open(sessionFile);
-    } catch {
-      // File doesn't exist yet or is empty — create new
-      const { dir } = await import("path").then((p) => ({ dir: p.dirname(sessionFile!) }));
-      sessionManager = SessionManager.create(process.cwd(), dir);
-    }
-
-    const { session } = await createAgentSession({
-      model,
-      thinkingLevel: (agentConfig.model.thinkingLevel as any) ?? "off",
-      tools: [],
-      customTools: coreTools,
-      sessionManager,
-      settingsManager: SettingsManager.inMemory({
-        compaction: buildCompactionSettings(agentConfig.model, model.contextWindow),
-        retry: { enabled: true, maxRetries: 3 },
-      }),
-      resourceLoader,
-      authStorage: this.authStorage,
-      modelRegistry: this.modelRegistry,
-    });
-
-    const managed: ManagedSession = {
-      agentName,
-      sessionKey,
-      session,
-      currentModel: agentConfig.model,
-      inflightCount: 0,
-      drainResolvers: [],
-      toolStartHandlerRef,
-    };
-
-    this.sessions.set(sessionKey, managed);
-    console.log(`[AGENT] Session ready for '${agentName}' (key: ${sessionKey})`);
-
-    // Fire sessionCreated hook (fire-and-forget — don't block session return)
-    this.pluginRegistry.executeSessionCreated({
+    return this.getOrCreateSessionWithModel(
       sessionKey,
       agentName,
-      channel: "unknown",
-    }).catch((err) => console.error(`[AGENT] sessionCreated hook error:`, err));
-
-    return managed;
+      agentConfig.model,
+      opts
+    );
   }
 
   /**
@@ -250,6 +155,55 @@ export class AgentManager {
     message: string,
     opts?: { onToolStart?: OnToolStart; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void; channel?: string; modelOverride?: { provider: string; model: string } }
   ): Promise<string> {
+    return this.runWithFallback(sessionKey, agentName, message, {
+      ...opts,
+      operationLabel: "prompt",
+    });
+  }
+
+  /**
+   * Send a message and stream deltas via callback.
+   * Implements fallback logic: if the primary model fails after retries,
+   * tries each fallback model in order.
+   */
+  async promptStreaming(
+    sessionKey: string,
+    agentName: string,
+    message: string,
+    onDelta: (delta: string) => void,
+    opts?: { onToolStart?: OnToolStart; onAssistantTurnStart?: () => void; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void; channel?: string; modelOverride?: { provider: string; model: string } }
+  ): Promise<string> {
+    return this.runWithFallback(sessionKey, agentName, message, {
+      ...opts,
+      operationLabel: "promptStreaming",
+      onDelta,
+    });
+  }
+
+  /**
+   * Shared fallback loop for prompt() and promptStreaming().
+   *
+   * Handles: prePrompt hooks → model fallback loop → per-model prompt
+   * execution → postResponse hooks.  The only difference between the
+   * non-streaming and streaming variants is the presence of onDelta /
+   * onAssistantTurnStart callbacks — both funnel through the same
+   * executePromptWithModel() implementation.
+   */
+  private async runWithFallback(
+    sessionKey: string,
+    agentName: string,
+    message: string,
+    opts: {
+      onToolStart?: OnToolStart;
+      onDelta?: (delta: string) => void;
+      onAssistantTurnStart?: () => void;
+      onAutoCompactionStart?: () => void;
+      onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void;
+      channel?: string;
+      modelOverride?: { provider: string; model: string };
+      operationLabel: string;
+    }
+  ): Promise<string> {
     const agentConfig = this.config.agents[agentName];
     if (!agentConfig) {
       throw new Error(`Unknown agent: ${agentName}`);
@@ -260,15 +214,17 @@ export class AgentManager {
       message,
       sessionKey,
       agentName,
-      channel: opts?.channel ?? "unknown",
+      channel: opts.channel ?? "unknown",
     });
     if (preResult.block) {
-      return preResult.reason ?? "Message blocked by plugin hook.";
+      const blocked = preResult.reason ?? "Message blocked by plugin hook.";
+      opts.onDelta?.(blocked);
+      return blocked;
     }
     const effectiveMessage = preResult.message;
 
     // Build list of models to try: override (if set) or primary + fallbacks
-    const modelsToTry = opts?.modelOverride
+    const modelsToTry = opts.modelOverride
       ? [opts.modelOverride]
       : this.getModelsToTry(agentConfig);
 
@@ -286,10 +242,10 @@ export class AgentManager {
         continue;
       }
 
-      console.log(`[AGENT] Attempting prompt with ${provider}/${modelId}`);
+      console.log(`[AGENT] Attempting ${opts.operationLabel} with ${provider}/${modelId}`);
 
       try {
-        const result = await this.promptWithModel(
+        const result = await this.executePromptWithModel(
           sessionKey,
           agentName,
           effectiveMessage,
@@ -305,119 +261,7 @@ export class AgentManager {
           response: result,
           sessionKey,
           agentName,
-          channel: opts?.channel ?? "unknown",
-        });
-        if (postResult.block) {
-          return "";
-        }
-        return postResult.response;
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
-        lastError = error;
-
-        // Check if it's a rate limit
-        const rateLimitInfo = extractRateLimitInfo(err);
-        if (rateLimitInfo.isRateLimit) {
-          this.providerHealth.markRateLimited(
-            provider,
-            modelId,
-            rateLimitInfo.retryAfterMs,
-            error.message
-          );
-          console.log(
-            `[AGENT] ${provider}/${modelId} rate limited, trying next model`
-          );
-          continue;
-        }
-
-        // Non-rate-limit error — mark as failed but try next
-        this.providerHealth.markFailed(provider, modelId, error.message);
-        console.error(
-          `[AGENT] ${provider}/${modelId} failed: ${error.message}`,
-          error.stack ?? "(no stack trace)"
-        );
-        logErrorAuto(error, { operation: "prompt", agent: agentName, session: sessionKey, model: `${provider}/${modelId}` });
-      }
-    }
-
-    // All models failed
-    throw new Error(
-      `All models failed for agent '${agentName}'. Last error: ${lastError?.message ?? "unknown"}`
-    );
-  }
-
-  /**
-   * Send a message and stream deltas via callback.
-   * Implements fallback logic: if the primary model fails after retries,
-   * tries each fallback model in order.
-   */
-  async promptStreaming(
-    sessionKey: string,
-    agentName: string,
-    message: string,
-    onDelta: (delta: string) => void,
-    opts?: { onToolStart?: OnToolStart; onAssistantTurnStart?: () => void; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void; channel?: string; modelOverride?: { provider: string; model: string } }
-  ): Promise<string> {
-    const agentConfig = this.config.agents[agentName];
-    if (!agentConfig) {
-      throw new Error(`Unknown agent: ${agentName}`);
-    }
-
-    // Execute prePrompt hooks — may transform or block the message
-    const preResult = await this.pluginRegistry.executePrePrompt({
-      message,
-      sessionKey,
-      agentName,
-      channel: opts?.channel ?? "unknown",
-    });
-    if (preResult.block) {
-      const blocked = preResult.reason ?? "Message blocked by plugin hook.";
-      onDelta(blocked);
-      return blocked;
-    }
-    const effectiveMessage = preResult.message;
-
-    // Build list of models to try: override (if set) or primary + fallbacks
-    const modelsToTry = opts?.modelOverride
-      ? [opts.modelOverride]
-      : this.getModelsToTry(agentConfig);
-
-    let lastError: Error | undefined;
-
-    for (const modelRef of modelsToTry) {
-      const { provider, model: modelId } = modelRef;
-
-      // Skip if this model is in cooldown
-      if (this.providerHealth.isCoolingDown(provider, modelId)) {
-        const remaining = this.providerHealth.getRemainingCooldown(provider, modelId);
-        console.log(
-          `[AGENT] Skipping ${provider}/${modelId} — in cooldown for ${Math.round(remaining / 1000)}s`
-        );
-        continue;
-      }
-
-      console.log(`[AGENT] Attempting streaming prompt with ${provider}/${modelId}`);
-
-      try {
-        const result = await this.promptStreamingWithModel(
-          sessionKey,
-          agentName,
-          effectiveMessage,
-          onDelta,
-          modelRef,
-          opts
-        );
-
-        // Success — mark provider as healthy
-        this.providerHealth.markHealthy(provider, modelId);
-
-        // Execute postResponse hooks (note: for streaming, the deltas have
-        // already been sent; postResponse can still log/transform the final text)
-        const postResult = await this.pluginRegistry.executePostResponse({
-          response: result,
-          sessionKey,
-          agentName,
-          channel: opts?.channel ?? "unknown",
+          channel: opts.channel ?? "unknown",
         });
         return postResult.block ? "" : postResult.response;
       } catch (err) {
@@ -445,7 +289,7 @@ export class AgentManager {
           `[AGENT] ${provider}/${modelId} failed: ${error.message}`,
           error.stack ?? "(no stack trace)"
         );
-        logErrorAuto(error, { operation: "promptStreaming", agent: agentName, session: sessionKey, model: `${provider}/${modelId}` });
+        logErrorAuto(error, { operation: opts.operationLabel, agent: agentName, session: sessionKey, model: `${provider}/${modelId}` });
       }
     }
 
@@ -471,13 +315,24 @@ export class AgentManager {
 
   /**
    * Execute a prompt with a specific model (internal).
+   *
+   * Handles both buffered and streaming modes.  When `opts.onDelta` is
+   * provided, text deltas are forwarded to the callback as they arrive
+   * (streaming mode).  Otherwise only the final accumulated text is
+   * returned (buffered mode).
    */
-  private async promptWithModel(
+  private async executePromptWithModel(
     sessionKey: string,
     agentName: string,
     message: string,
     modelRef: ModelRef,
-    opts?: { onToolStart?: OnToolStart; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void }
+    opts?: {
+      onToolStart?: OnToolStart;
+      onDelta?: (delta: string) => void;
+      onAssistantTurnStart?: () => void;
+      onAutoCompactionStart?: () => void;
+      onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void;
+    }
   ): Promise<string> {
     const managed = await this.getOrCreateSessionWithModel(
       sessionKey,
@@ -489,8 +344,6 @@ export class AgentManager {
 
     try {
       return await new Promise<string>((resolve, reject) => {
-        // Reset on each new assistant turn so only the final turn's text is returned.
-        // Intermediate text emitted before tool calls (e.g. "I'll check…") is discarded.
         let responseText = "";
         let settled = false;
 
@@ -509,89 +362,13 @@ export class AgentManager {
         const unsubscribe = managed.session.subscribe(
           makeSessionSubscriber({
             sessionKey,
-            onTextReset: () => { responseText = ""; },
-            onTextDelta: (delta) => { responseText += delta; },
-            onSettle: (errMsg) => {
-              if (!settled) {
-                settled = true;
-                clearTimeout(watchdog);
-                if (errMsg) {
-                  console.error(`[AGENT] LLM error for session '${sessionKey}': ${errMsg}`);
-                  reject(new Error(errMsg));
-                } else {
-                  resolve(responseText);
-                }
-              }
-            },
-            onCleanup: () => unsubscribe(),
-            opts,
-          })
-        );
-
-        managed.session.prompt(message).catch((err) => {
-          if (!settled) {
-            settled = true;
-            clearTimeout(watchdog);
-            const errMsg = err instanceof Error ? err.message : String(err);
-            console.error(`[AGENT] session.prompt() rejected for session '${sessionKey}': ${errMsg}`, err instanceof Error ? err.stack : "");
-            unsubscribe();
-            reject(err);
-          }
-        });
-      });
-    } finally {
-      this.decrementInflight(managed);
-    }
-  }
-
-  /**
-   * Execute a streaming prompt with a specific model (internal).
-   */
-  private async promptStreamingWithModel(
-    sessionKey: string,
-    agentName: string,
-    message: string,
-    onDelta: (delta: string) => void,
-    modelRef: ModelRef,
-    opts?: { onToolStart?: OnToolStart; onAssistantTurnStart?: () => void; onAutoCompactionStart?: () => void; onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void }
-  ): Promise<string> {
-    const managed = await this.getOrCreateSessionWithModel(
-      sessionKey,
-      agentName,
-      modelRef,
-      opts
-    );
-    managed.inflightCount++;
-
-    try {
-      return await new Promise<string>((resolve, reject) => {
-        // Reset on each new assistant turn so only the final turn's text is returned
-        // and streamed. The onAssistantTurnStart callback lets the caller (e.g. the
-        // Telegram plugin) discard/replace any previously rendered partial content.
-        let responseText = "";
-        let settled = false;
-
-        // Watchdog: if pi never emits agent_end, reject after the timeout so the
-        // caller's catch block can log and try the next model instead of hanging.
-        const watchdog = setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            const msg = `[AGENT] Streaming prompt timed out for session '${sessionKey}' (${modelRef.provider}/${modelRef.model}) — no agent_end received`;
-            console.error(msg);
-            reject(new Error(msg));
-          }
-        }, PROMPT_TIMEOUT_MS);
-
-        const unsubscribe = managed.session.subscribe(
-          makeSessionSubscriber({
-            sessionKey,
             onTextReset: () => {
               responseText = "";
               opts?.onAssistantTurnStart?.();
             },
             onTextDelta: (delta) => {
               responseText += delta;
-              onDelta(delta);
+              opts?.onDelta?.(delta);
             },
             onSettle: (errMsg) => {
               if (!settled) {
@@ -634,7 +411,7 @@ export class AgentManager {
     sessionKey: string,
     agentName: string,
     modelRef: ModelRef,
-    opts?: { onToolStart?: OnToolStart; forceNew?: boolean }
+    opts?: { onToolStart?: OnToolStart; forceNew?: boolean; sessionFile?: string }
   ): Promise<ManagedSession> {
     // If forceNew, dispose old session and create fresh
     if (opts?.forceNew) {
@@ -647,7 +424,7 @@ export class AgentManager {
     }
 
     // Validate that the requested model is allowed for this agent
-    const allowedModels = this.getAllowedModels(agentConfig);
+    const allowedModels = buildAllowedModels(agentConfig.model, agentConfig.fallbackModels);
     validateModelAllowed(modelRef.provider, modelRef.model, allowedModels);
 
     // Check if we need to recreate the session with a different model
@@ -681,7 +458,9 @@ export class AgentManager {
 
     // Determine session file
     let sessionFile: string | undefined;
-    if (opts?.forceNew) {
+    if (opts?.sessionFile) {
+      sessionFile = opts.sessionFile;
+    } else if (opts?.forceNew) {
       sessionFile = this.sessionStore.createSession(sessionKey, agentName);
     } else {
       sessionFile = this.sessionStore.getSessionFile(sessionKey);
@@ -763,7 +542,7 @@ export class AgentManager {
     this.pluginRegistry.executeSessionCreated({
       sessionKey,
       agentName,
-      channel: "unknown",
+      channel: parseSessionKey(sessionKey).channel,
     }).catch((err) => console.error(`[AGENT] sessionCreated hook error:`, err));
 
     return managed;
@@ -868,7 +647,7 @@ export class AgentManager {
       this.pluginRegistry.executeSessionDisposed({
         sessionKey,
         agentName: existing.agentName,
-        channel: "unknown",
+        channel: parseSessionKey(sessionKey).channel,
       }).catch((err) => console.error(`[AGENT] sessionDisposed hook error:`, err));
     }
   }
@@ -985,23 +764,6 @@ export class AgentManager {
     const model = getModel(provider as any, modelId);
     if (model) return model;
     throw new Error(`Model not found: ${provider}/${modelId}. Check your config and API keys.`);
-  }
-
-  /**
-   * Build the list of allowed models for an agent.
-   */
-  private getAllowedModels(agentConfig: AgentConfig): Array<{ provider: string; modelId: string }> {
-    const allowed: Array<{ provider: string; modelId: string }> = [
-      { provider: agentConfig.model.provider, modelId: agentConfig.model.model },
-    ];
-
-    if (agentConfig.fallbackModels) {
-      for (const fallback of agentConfig.fallbackModels) {
-        allowed.push({ provider: fallback.provider, modelId: fallback.model });
-      }
-    }
-
-    return allowed;
   }
 
   /**
@@ -1245,7 +1007,7 @@ export function readWorkspaceAgentsMd(workspaceDir: string): Array<{ path: strin
 /**
  * Build tool context string for the system prompt from the plugin registry.
  */
-function buildPluginToolContext(
+export function buildPluginToolContext(
   agentTools: string[],
   registry: PluginRegistry
 ): string {

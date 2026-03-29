@@ -122,6 +122,10 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       }
     },
 
+    clearSessionSettings(sessionKey) {
+      settingsStore.clearAll(sessionKey);
+    },
+
     setSessionMetadata(sessionKey, key, value) {
       sessionStore.updateMetadata(sessionKey, { [`plugin_${key}`]: value });
     },

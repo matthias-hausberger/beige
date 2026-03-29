@@ -370,6 +370,13 @@ export interface PluginContext {
   /** Update session settings (partial update, deep-merged). */
   updateSessionSettings(sessionKey: string, update: Partial<SessionSettings>): void;
 
+  /**
+   * Clear all session setting overrides (verbose, streaming, etc.) so the
+   * session falls back to channel config defaults.
+   * Intended for use when starting a fresh session (e.g. /new command).
+   */
+  clearSessionSettings(sessionKey: string): void;
+
   /** Attach/update plugin metadata on a session. */
   setSessionMetadata(sessionKey: string, key: string, value: unknown): void;
 

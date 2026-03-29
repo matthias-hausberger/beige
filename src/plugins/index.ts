@@ -6,7 +6,7 @@ export { PluginRegistry } from "./registry.js";
 export { loadPlugins, startPlugins, stopPlugins, loadPluginManifest } from "./loader.js";
 export { ensurePluginsInstalled } from "./installer.js";
 export { createPluginContext, createLogger } from "./context.js";
-export type { AgentManagerRef, PluginContextDeps } from "./context.js";
+export type { AgentManagerRef, ModelRegistryRef, PluginContextDeps } from "./context.js";
 export type { LoadedPlugin } from "./loader.js";
 
 // Re-export all plugin types so consumers (beige-toolkit) can import from beige
@@ -39,4 +39,9 @@ export type {
   PostToolExecResult,
   SessionLifecycleEvent,
   GatewayLifecycleEvent,
+  ModelInfo,
+  LlmMessage,
+  LlmTextContent,
+  LlmImageContent,
+  LlmPromptOpts,
 } from "./types.js";

@@ -10,9 +10,11 @@ import type { AgentManager, OnToolStart } from "../gateway/agent-manager.js";
 import type { BeigeSessionStore } from "../gateway/sessions.js";
 import type { SessionSettingsStore } from "../gateway/session-settings.js";
 import type { SessionContext } from "../types/session.js";
+import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import { readFileSync, mkdirSync } from "fs";
 import { resolve } from "path";
 import { parseSessionEntries, getLastAssistantUsage, calculateContextTokens } from "@mariozechner/pi-coding-agent";
+import { streamSimple } from "@mariozechner/pi-ai";
 import { beigeDir } from "../paths.js";
 import type {
   PluginContext,
@@ -37,16 +39,25 @@ export interface AgentManagerRef {
   current: AgentManager | null;
 }
 
+/**
+ * Mutable reference to the ModelRegistry.
+ * Populated after model registry is created in the gateway.
+ */
+export interface ModelRegistryRef {
+  current: ModelRegistry | null;
+}
+
 export interface PluginContextDeps {
   config: BeigeConfig;
   agentManagerRef: AgentManagerRef;
+  modelRegistryRef: ModelRegistryRef;
   sessionStore: BeigeSessionStore;
   settingsStore: SessionSettingsStore;
   registry: PluginRegistry;
 }
 
 export function createPluginContext(deps: PluginContextDeps): PluginContext {
-  const { config, agentManagerRef, sessionStore, settingsStore, registry } = deps;
+  const { config, agentManagerRef, modelRegistryRef, sessionStore, settingsStore, registry } = deps;
 
   function getAgentManager(): AgentManager {
     if (!agentManagerRef.current) {
@@ -226,6 +237,67 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
 
     get agentNames() {
       return Object.keys(config.agents);
+    },
+
+    // ── Direct LLM access ──────────────────────────────────
+    async llmPrompt(provider, modelId, messages, opts) {
+      if (!modelRegistryRef.current) {
+        throw new Error(
+          "ModelRegistry not yet initialized. llmPrompt() can only be called after gateway startup."
+        );
+      }
+      const reg = modelRegistryRef.current;
+
+      // Resolve model from registry
+      const model = reg.find(provider, modelId);
+      if (!model) {
+        throw new Error(
+          `Model "${provider}/${modelId}" not found in the model registry. ` +
+          `Check that the provider and model ID match a registered model.`
+        );
+      }
+
+      // Resolve API key through AuthStorage (handles API keys, OAuth, env vars)
+      const apiKey = await reg.getApiKey(model);
+      if (!apiKey) {
+        throw new Error(
+          `No credentials found for provider "${provider}". ` +
+          `Configure an API key in auth.json, log in via OAuth, or set the corresponding environment variable.`
+        );
+      }
+
+      // Build pi-ai Context
+      const context = {
+        systemPrompt: opts?.systemPrompt,
+        messages: messages.map((m) => ({
+          role: m.role as "user",
+          content: m.content,
+          timestamp: Date.now(),
+        })),
+        tools: [],
+      };
+
+      // Stream and collect response text
+      const eventStream = streamSimple(model, context, {
+        apiKey,
+        maxTokens: opts?.maxTokens ?? model.maxTokens,
+        reasoning: opts?.thinkingLevel === "off" ? undefined : opts?.thinkingLevel,
+      });
+
+      const textParts: string[] = [];
+
+      for await (const event of eventStream) {
+        if (event.type === "text_delta") {
+          textParts.push(event.delta);
+        }
+      }
+
+      const result = textParts.join("");
+      if (!result) {
+        throw new Error("LLM returned no text content.");
+      }
+
+      return result;
     },
 
     // ── Plugin registry (read-only view) ───────────────────

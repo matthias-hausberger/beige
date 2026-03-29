@@ -289,6 +289,42 @@ export interface ModelInfo {
   maxTokens: number;
 }
 
+// ── Direct LLM access types ──────────────────────────────────────────────────
+
+/** Text content in an LlmMessage. */
+export interface LlmTextContent {
+  type: "text";
+  text: string;
+}
+
+/** Image content in an LlmMessage (base64-encoded). */
+export interface LlmImageContent {
+  type: "image";
+  /** Base64-encoded image data (no data URI prefix). */
+  data: string;
+  /** MIME type, e.g. "image/png", "image/jpeg". */
+  mimeType: string;
+}
+
+/**
+ * A message for llmPrompt(). Mirrors the pi-ai UserMessage shape
+ * so it can be passed through without conversion.
+ */
+export interface LlmMessage {
+  role: "user";
+  content: string | (LlmTextContent | LlmImageContent)[];
+}
+
+/** Options for llmPrompt(). */
+export interface LlmPromptOpts {
+  /** System prompt prepended to the conversation. */
+  systemPrompt?: string;
+  /** Maximum tokens to generate. Default: model's maxTokens. */
+  maxTokens?: number;
+  /** Thinking / reasoning level. Default: "off". */
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high";
+}
+
 /** Most-recent token usage for a session, read from the session file. */
 export interface SessionUsage {
   /** Total input tokens sent on the last LLM turn (= current context size). */
@@ -453,6 +489,36 @@ export interface PluginContext {
 
   /** List of configured agent names. */
   readonly agentNames: string[];
+
+  // ── Direct LLM access ──────────────────────────────────
+  /**
+   * Send a one-shot prompt to any LLM model registered in the gateway.
+   *
+   * This is the recommended way for plugins to call LLMs. It routes through
+   * the gateway's full infrastructure (ModelRegistry, AuthStorage) so all
+   * credential types (API keys, OAuth tokens, env vars) work transparently.
+   *
+   * No agent, session file, or session map entry is created. The call is
+   * completely stateless — a single request/response round-trip.
+   *
+   * The `messages` array uses the pi-ai message format:
+   *   - `{ role: "user", content: "text" }` for text prompts
+   *   - `{ role: "user", content: [{ type: "text", text: "..." }, { type: "image", data: "<base64>", mimeType: "image/png" }] }`
+   *     for vision prompts with images
+   *
+   * @param provider  The provider name (key in llm.providers, e.g. "anthropic", "openai").
+   * @param modelId   The model ID (e.g. "claude-sonnet-4-5", "gpt-4o").
+   * @param messages  Array of messages in pi-ai format.
+   * @param opts      Optional parameters: systemPrompt, maxTokens, thinkingLevel.
+   * @returns The assistant's text response.
+   * @throws If the model is not found, credentials are missing, or the API call fails.
+   */
+  llmPrompt(
+    provider: string,
+    modelId: string,
+    messages: LlmMessage[],
+    opts?: LlmPromptOpts,
+  ): Promise<string>;
 
   // ── Plugin registry (read-only view) ───────────────────
   /** Get a registered channel adapter by name. */

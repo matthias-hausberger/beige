@@ -22,6 +22,7 @@ import {
   createPluginContext,
   ensurePluginsInstalled,
   type AgentManagerRef,
+  type ModelRegistryRef,
   type LoadedPlugin,
 } from "../plugins/index.js";
 import { logUnhandledRejection, logError } from "./error-logger.js";
@@ -50,6 +51,7 @@ export class Gateway {
    * `.current` is updated, not the ref itself.
    */
   private readonly agentManagerRef: AgentManagerRef = { current: null };
+  private readonly modelRegistryRef: ModelRegistryRef = { current: null };
 
   constructor(config: BeigeConfig, configPath: string) {
     this.config = config;
@@ -105,11 +107,13 @@ export class Gateway {
     this.pluginRegistry = new PluginRegistry();
     this.toolRunner.setPluginRegistry(this.pluginRegistry);
 
-    // 3. Create plugin context (agentManagerRef is resolved later)
+    // 3. Create plugin context (agentManagerRef and modelRegistryRef are resolved later)
     this.agentManagerRef.current = null;
+    this.modelRegistryRef.current = null;
     const pluginCtx = createPluginContext({
       config: this.config,
       agentManagerRef: this.agentManagerRef,
+      modelRegistryRef: this.modelRegistryRef,
       sessionStore: this.sessionStore,
       settingsStore: this.settingsStore,
       registry: this.pluginRegistry,
@@ -190,6 +194,9 @@ export class Gateway {
         });
       }
     }
+
+    // Populate the ref so plugins can use ctx.llmPrompt() for direct LLM calls.
+    this.modelRegistryRef.current = modelRegistry;
 
     // 11. Create sandbox manager
     this.sandboxManager = new SandboxManager(

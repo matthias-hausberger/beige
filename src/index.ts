@@ -54,4 +54,9 @@ export type {
   PostToolExecResult,
   SessionLifecycleEvent,
   GatewayLifecycleEvent,
+  ModelInfo,
+  LlmMessage,
+  LlmTextContent,
+  LlmImageContent,
+  LlmPromptOpts,
 } from "./plugins/index.js";

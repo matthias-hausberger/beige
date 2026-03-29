@@ -84,6 +84,13 @@
         apiKey: "${BRAVE_SEARCH_API_KEY}",
       },
     },
+    image: {
+      path: "../../beige-toolkit/plugins/image",
+      config: {
+        "analyzeProvider": "anthropic",        // must match a key in llm.providers
+        "analyzeModel": "claude-sonnet-4-6",      // must match a model in the provider
+      },
+    },
     telegram: {
       path: "../../beige-toolkit/plugins/telegram",
       config: {
@@ -114,7 +121,7 @@
           thinkingLevel: "off",
         },
       ],
-      tools: ["chrome", "sessions", "spawn", "git", "github", "wrangler", "telegram", "schedule", "brave-search"],
+      tools: ["chrome", "sessions", "spawn", "git", "github", "wrangler", "telegram", "schedule", "brave-search", "image"],
       sandbox: {
         image: "beige-sandbox:latest",
       },

@@ -1,0 +1,130 @@
+---
+title: "image — Beige Image Plugin"
+---
+
+{/* Auto-generated from beige-toolkit — do not edit manually. */}
+{/* Run: pnpm run docs:sync-toolkit */}
+
+
+Analyze local image files using a vision-capable LLM.
+
+## Why this plugin exists
+
+Some LLM providers — like GLM or other text-only models — cannot process images directly. This plugin acts as a vision proxy: the calling agent invokes the `image` tool, which forwards the image to a separately configured vision-capable model (e.g. Claude Sonnet or GPT-4o) and returns a text description.
+
+**No new API keys are needed.** The plugin uses `ctx.llmPrompt()` — the gateway's direct LLM access — so all credential types (API keys, OAuth tokens, env vars) work transparently.
+
+## Installation
+
+Install this tool individually:
+
+```bash
+beige tools install github:matthias-hausberger/beige-toolkit/plugins/image
+```
+
+Or install all tools from the toolkit:
+
+```bash
+# From npm
+beige tools install npm:@matthias-hausberger/beige-toolkit
+
+# From GitHub
+beige tools install github:matthias-hausberger/beige-toolkit
+```
+
+## Configuration
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `analyzeProvider` | *(required)* | Name of the `llm.providers` entry to use for image analysis. Must be a vision-capable model (e.g. `"anthropic"` for Claude, `"openai"` for GPT-4o). Credentials are resolved automatically from `auth.json`, OAuth tokens, or environment variables — no separate key needed. |
+| `analyzeModel` | *(required)* | Model ID for image analysis (e.g. `"claude-sonnet-4-5"`, `"gpt-4o"`). |
+
+## Prerequisites
+
+| Requirement | Details |
+|---|---|
+| Vision-capable provider | The `analyzeProvider` must be a provider already configured in `llm.providers` with a vision-capable model. No additional API key is required — the plugin routes through the gateway's model registry and auth infrastructure. |
+
+## Config Examples
+
+**Basic setup:**
+
+```json5
+{
+  plugins: {
+    image: {
+      config: {
+        analyzeProvider: "anthropic",
+        analyzeModel: "claude-sonnet-4-5",
+      },
+    },
+  },
+}
+```
+
+**Using an OAuth-authenticated provider:**
+
+If you've authenticated with Anthropic via `beige auth login anthropic`, no further configuration is needed — the plugin picks up the OAuth token automatically.
+
+```json5
+{
+  llm: {
+    providers: {
+      anthropic: {}, // credentials come from auth.json (OAuth or API key)
+    },
+  },
+  plugins: {
+    image: {
+      config: {
+        analyzeProvider: "anthropic",
+        analyzeModel: "claude-sonnet-4-5",
+      },
+    },
+  },
+}
+```
+
+## Usage
+
+```
+image analyze <path>
+image analyze <path> --prompt "<question>"
+```
+
+**Examples:**
+
+```bash
+# General description
+image analyze /workspace/screenshot.png
+
+# Ask a specific question
+image analyze /workspace/chart.jpg --prompt "What trend does this chart show?"
+
+# From the agent's working directory
+image analyze diagram.png --prompt "List all components in this architecture diagram"
+```
+
+**Path resolution:** paths are resolved against the agent's sandbox workspace (`/workspace/...` → host workspace directory). Relative paths are resolved from the agent's current working directory within the workspace.
+
+## Supported image formats
+
+JPEG, PNG, GIF, WebP
+
+## Command Reference
+
+| Command | Description |
+|---------|-------------|
+| `analyze <path>` | Analyze image, return general description |
+| `analyze <path> --prompt "<question>"` | Ask a specific question about the image |
+
+**Tool name**: `image`
+
+## Error Reference
+
+| Error | Cause |
+|---|---|
+| `analyzeProvider and analyzeModel are required` | Plugin config is incomplete — both fields must be set. |
+| `Model "provider/model" not found` | The provider/model combination is not registered in the gateway's model registry. |
+| `No credentials found for provider "..."` | No API key, OAuth token, or environment variable found for the configured provider. |
+| `file not found` | The image path does not exist on the host filesystem after workspace path translation. |
+| `unsupported image type` | The file extension is not one of: `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`. |

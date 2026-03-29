@@ -13,6 +13,7 @@ import type { Context, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { extractRateLimitInfo } from "./provider-health.js";
 import { parseSessionKey } from "../types/session.js";
 import { imageExtension, buildVisionUnsupportedError } from "../tools/image.js";
+import { createLogger } from "./logger.js";
 
 export interface GatewayAPIOptions {
   config: BeigeConfig;
@@ -371,7 +372,9 @@ export class GatewayAPI {
     }
 
     this.opts.sessionStore.updateMetadata(sessionKey, { activeModel: { provider, modelId } });
-    console.log(`[API] Persisted model ${provider}/${modelId} for session '${sessionKey}'`);
+    createLogger({ agent: agentName, session: sessionKey, model: `${provider}/${modelId}` }).log(
+      "[API]", `Persisted model preference for session`
+    );
     this.json(res, 200, { ok: true });
   }
 

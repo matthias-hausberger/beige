@@ -25,6 +25,8 @@ export interface LogContext {
   agent?: string;
   session?: string;
   channel?: string;
+  /** Active model identifier, e.g. "anthropic/claude-sonnet-4-5". */
+  model?: string;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -38,6 +40,7 @@ function contextSuffix(ctx: LogContext): string {
   if (ctx.agent) parts.push(`agent=${ctx.agent}`);
   if (ctx.session) parts.push(`session=${ctx.session}`);
   if (ctx.channel) parts.push(`channel=${ctx.channel}`);
+  if (ctx.model) parts.push(`model=${ctx.model}`);
   return parts.length > 0 ? ` [${parts.join(" ")}]` : "";
 }
 

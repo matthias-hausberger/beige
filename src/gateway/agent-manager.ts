@@ -249,30 +249,31 @@ export class AgentManager {
     }
     const effectiveMessage = preResult.message;
 
-    // Build list of models to try: override (if set) or primary + fallbacks
+    // Build list of models to try: explicit override → per-session override → primary + fallbacks.
+    // getModelsToTry respects per-session model preferences so a user's /model choice is
+    // preserved across messages and gateway restarts rather than always starting from primary.
     const modelsToTry = opts.modelOverride
       ? [opts.modelOverride]
-      : this.getModelsToTry(agentConfig);
+      : this.getModelsToTry(agentConfig, sessionKey);
 
     let lastError: Error | undefined;
 
     for (const modelRef of modelsToTry) {
       const { provider, model: modelId } = modelRef;
+      const modelLabel = `${provider}/${modelId}`;
+      const modelLogger = createLogger({ agent: agentName, session: sessionKey, model: modelLabel });
 
       // Skip if this model is in cooldown
       if (this.providerHealth.isCoolingDown(provider, modelId)) {
         const remaining = this.providerHealth.getRemainingCooldown(provider, modelId);
-        createLogger({ agent: agentName, session: sessionKey }).log(
+        modelLogger.log(
           "[AGENT]",
-          `Skipping ${provider}/${modelId} — in cooldown for ${Math.round(remaining / 1000)}s`
+          `Skipping — in cooldown for ${Math.round(remaining / 1000)}s`
         );
         continue;
       }
 
-      createLogger({ agent: agentName, session: sessionKey }).log(
-        "[AGENT]",
-        `Attempting ${opts.operationLabel} with ${provider}/${modelId}`
-      );
+      modelLogger.log("[AGENT]", `Attempting ${opts.operationLabel}`);
 
       try {
         const result = await this.executePromptWithModel(
@@ -285,6 +286,7 @@ export class AgentManager {
 
         // Success — mark provider as healthy
         this.providerHealth.markHealthy(provider, modelId);
+        modelLogger.log("[AGENT]", `${opts.operationLabel} succeeded`);
 
         // Execute postResponse hooks — may transform or suppress the response
         const postResult = await this.pluginRegistry.executePostResponse({
@@ -300,7 +302,6 @@ export class AgentManager {
 
         // Check if it's a rate limit
         const rateLimitInfo = extractRateLimitInfo(err);
-        const sessionLogger = createLogger({ agent: agentName, session: sessionKey });
         if (rateLimitInfo.isRateLimit) {
           this.providerHealth.markRateLimited(
             provider,
@@ -308,25 +309,25 @@ export class AgentManager {
             rateLimitInfo.retryAfterMs,
             error.message
           );
-          sessionLogger.log("[AGENT]", `${provider}/${modelId} rate limited, trying next model`);
+          modelLogger.warn("[AGENT]", `Rate limited — trying next model. Retry-after: ${rateLimitInfo.retryAfterMs != null ? `${Math.round(rateLimitInfo.retryAfterMs / 1000)}s` : "unknown"}`);
           continue;
         }
 
         // Non-rate-limit error — mark as failed but try next
         this.providerHealth.markFailed(provider, modelId, error.message);
-        sessionLogger.error(
+        modelLogger.error(
           "[AGENT]",
-          `${provider}/${modelId} failed: ${error.message}`,
+          `Failed: ${error.message}`,
           error.stack ?? "(no stack trace)"
         );
-        logErrorAuto(error, { operation: opts.operationLabel, agent: agentName, session: sessionKey, model: `${provider}/${modelId}` });
+        logErrorAuto(error, { operation: opts.operationLabel, agent: agentName, session: sessionKey, model: modelLabel });
 
         // If the session timed out, the underlying AgentSession is stuck and
         // must be disposed before the next model attempt — otherwise
         // getOrCreateSessionWithModel would return the same poisoned session.
         if ((error as any).isPromptTimeout) {
           await this.disposeSession(sessionKey);
-          sessionLogger.log("[AGENT]", `Disposed stuck session after timeout; next attempt will start fresh`);
+          modelLogger.log("[AGENT]", `Disposed stuck session after timeout; next attempt will start fresh`);
         }
       }
     }
@@ -338,17 +339,50 @@ export class AgentManager {
   }
 
   /**
-   * Get the list of models to try, skipping those in cooldown.
-   * Returns primary model + fallbacks that are not currently rate-limited.
+   * Get the ordered list of models to try for a session prompt.
+   *
+   * If the session has an active per-session model override (set by the user
+   * via /model, Ctrl+P, or a channel command), we start the fallback chain
+   * from that model rather than always from the agent's primary model.
+   * This preserves per-session model selection across gateway restarts and
+   * across multiple messages in the same session.
+   *
+   * Fallback order when an override is active:
+   *   [override, …remaining fallbacks after override in config order]
+   *
+   * Fallback order when no override is set:
+   *   [primary, …fallbackModels]
    */
-  private getModelsToTry(agentConfig: AgentConfig): ModelRef[] {
-    const models: ModelRef[] = [agentConfig.model];
+  private getModelsToTry(agentConfig: AgentConfig, sessionKey?: string): ModelRef[] {
+    const allModels: ModelRef[] = [agentConfig.model, ...(agentConfig.fallbackModels ?? [])];
 
-    if (agentConfig.fallbackModels) {
-      models.push(...agentConfig.fallbackModels);
+    if (sessionKey) {
+      // Check in-memory session first (cheapest, most up-to-date).
+      const inMemory = this.sessions.get(sessionKey);
+      const overrideRef = inMemory?.currentModel
+        ?? (() => {
+          // Fall back to stored metadata when no in-memory session exists yet.
+          const stored = this.sessionStore.getEntry(sessionKey)?.metadata?.activeModel as
+            | { provider: string; modelId: string }
+            | undefined;
+          if (!stored) return undefined;
+          return allModels.find(
+            (m) => m.provider === stored.provider && m.model === stored.modelId
+          );
+        })();
+
+      if (overrideRef) {
+        const startIdx = allModels.findIndex(
+          (m) => m.provider === overrideRef.provider && m.model === overrideRef.model
+        );
+        if (startIdx > 0) {
+          // Start from the override model; if it fails, continue with remaining fallbacks.
+          return allModels.slice(startIdx);
+        }
+      }
     }
 
-    return models;
+    return allModels;
   }
 
   /**
@@ -390,8 +424,8 @@ export class AgentManager {
         // from the subscriber, so a busy agent (many tool calls, long LLM turns)
         // can run indefinitely without being killed — the timeout only triggers
         // when the session has been completely silent (truly stuck / hung).
-        const promptLogger = createLogger({ agent: agentName, session: sessionKey });
         const modelLabel = `${modelRef.provider}/${modelRef.model}`;
+        const promptLogger = createLogger({ agent: agentName, session: sessionKey, model: modelLabel });
 
         let watchdog: ReturnType<typeof setTimeout>;
         const armWatchdog = () => {
@@ -508,9 +542,9 @@ export class AgentManager {
       }
 
       // Different model — dispose and recreate
-      sessionLogger.log(
+      createLogger({ agent: agentName, session: sessionKey, model: `${currentRef.provider}/${currentRef.model}` }).log(
         "[AGENT]",
-        `Switching model from ${currentRef.provider}/${currentRef.model} to ${provider}/${modelId}`
+        `Switching model to ${provider}/${modelId}`
       );
       existing.session.dispose();
       this.sessions.delete(sessionKey);
@@ -549,10 +583,9 @@ export class AgentManager {
             (m) => m.provider === storedModel.provider && m.model === storedModel.modelId
           );
           if (storedRef && (storedRef.provider !== modelRef.provider || storedRef.model !== modelRef.model)) {
-            sessionLogger.log(
+            createLogger({ agent: agentName, session: sessionKey, model: `${storedRef.provider}/${storedRef.model}` }).log(
               "[AGENT]",
-              `Restoring stored model preference ${storedRef.provider}/${storedRef.model} ` +
-              `(overrides default ${modelRef.provider}/${modelRef.model})`
+              `Restoring stored model preference (overrides default ${modelRef.provider}/${modelRef.model})`
             );
             modelRef = storedRef;
           }
@@ -560,7 +593,7 @@ export class AgentManager {
       }
     }
 
-    sessionLogger.log("[AGENT]", `Creating session with model ${modelRef.provider}/${modelRef.model}`);
+    createLogger({ agent: agentName, session: sessionKey, model: `${modelRef.provider}/${modelRef.model}` }).log("[AGENT]", `Creating session`);
 
     // Resolve the full SDK model so we have the `input` capability array.
     // This is also used below for the pi session; resolve once and reuse.
@@ -641,7 +674,7 @@ export class AgentManager {
     };
 
     this.sessions.set(sessionKey, managed);
-    sessionLogger.log("[AGENT]", `Session ready`);
+    createLogger({ agent: agentName, session: sessionKey, model: `${modelRef.provider}/${modelRef.model}` }).log("[AGENT]", `Session ready`);
 
     // Fire sessionCreated hook (fire-and-forget — don't block session return)
     this.pluginRegistry.executeSessionCreated({

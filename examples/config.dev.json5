@@ -42,7 +42,7 @@
         "polling": {
           "enabled": true,
           "username": "beige-agent",
-          "pollIntervalSeconds": 60,
+          "pollIntervalSeconds": 15,
           "respondTo": "mentions",
           "includeFullThread": true,
           "agentMapping": {

@@ -46,13 +46,9 @@ import {
 
 // ── Timestamp helpers ────────────────────────────────────────────────
 
-/** Returns a local-time HH:MM:SS prefix, e.g. "14:03:07". */
+/** Returns a full ISO-8601 timestamp prefix, e.g. "2026-03-29T14:03:07.123Z". */
 function timestampPrefix(): string {
-  const d = new Date();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  const ss = String(d.getSeconds()).padStart(2, "0");
-  return `${hh}:${mm}:${ss}`;
+  return new Date().toISOString();
 }
 
 // Save original stderr.write before wrapping (for immediate flush on shutdown)
@@ -382,7 +378,12 @@ async function cmdGatewayStart(configPath: string, foreground: boolean, timeoutM
   // When running in foreground mode we also tee every line to gateway.log so
   // the persistent log file always contains a full record of the run.
   ensureDirs();
-  installTimestampInjector(getLogFile());
+  // Only tee to the log file when stdout is a real TTY (i.e. the user ran
+  // `beige gateway start --foreground` directly).  When the gateway is
+  // launched as a daemon the child's stdout/stderr are already redirected to
+  // logFd (the log file), so passing logFilePath here would cause every line
+  // to be written twice — once via appendFileSync and once via the fd redirect.
+  installTimestampInjector(process.stdout.isTTY ? getLogFile() : undefined);
 
   const { loadConfig } = await import("./config/loader.js");
   console.log(`[BEIGE] Loading config from: ${resolve(configPath)}`);

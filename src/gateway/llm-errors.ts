@@ -159,9 +159,9 @@ const USER_MESSAGES: Record<LLMErrorCategory, { message: string; emoji: string; 
   },
   timeout: {
     emoji: "⏰",
-    message: "The request took too long. The AI might be busy.",
+    message: "The agent stopped responding for 10 minutes and was automatically cancelled. The model may be overloaded or have encountered a silent error.",
     retryable: true,
-    action: "Try again in a moment.",
+    action: "Try sending your message again. If this keeps happening, try /new to start a fresh session or /model to switch to a different model.",
   },
   invalid_response: {
     emoji: "🔧",
@@ -236,6 +236,7 @@ export function isAllModelsExhausted(err: unknown): boolean {
 
 /**
  * Format the "all models failed" error for channel display.
+ * Gives a specific, thorough message when the root cause was an inactivity timeout.
  */
 export function formatAllModelsExhaustedError(err: unknown): string {
   // Extract the last error message if available
@@ -243,8 +244,24 @@ export function formatAllModelsExhaustedError(err: unknown): string {
     ? err.message.replace(/.*Last error:\s*/, "")
     : "Unknown error";
 
+  // If the failure was caused by an inactivity timeout, give a specific explanation
+  // rather than the generic "all models failed" message.
+  const isTimeout =
+    lastError.toLowerCase().includes("timed out") ||
+    lastError.toLowerCase().includes("no agent_end");
+
+  if (isTimeout) {
+    return (
+      `⏰ The agent stopped responding for 10 minutes and was automatically cancelled.\n\n` +
+      `This usually means the model silently froze — it wasn't making progress and never ` +
+      `sent a completion signal. The session has been reset so your next message will start fresh.\n\n` +
+      `💡 Try sending your request again. If this keeps happening with the same model, ` +
+      `use /model to switch to a different one.`
+    );
+  }
+
   return `❌ All AI models failed. This might be a temporary issue.\n\n` +
-    `💡 Try again in a few minutes, or start a new session.\n\n` +
+    `💡 Try again in a few minutes, or start a new session with /new.\n\n` +
     `Last error: ${lastError}`;
 }
 

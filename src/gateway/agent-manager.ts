@@ -44,12 +44,31 @@ function loadSystemPromptTemplate(): string {
 const SYSTEM_PROMPT_TEMPLATE = loadSystemPromptTemplate();
 
 /**
- * Maximum time to wait for a single prompt call to settle (agent_end).
- * If pi swallows an error internally and never emits agent_end, we reject
- * after this delay so the fallback model loop can proceed.
- * Set to 10 minutes — well above any realistic agent run.
+ * Maximum inactivity time before a prompt is considered stuck.
+ *
+ * The watchdog is reset on every session event (text delta, tool execution,
+ * turn start/end, retries, etc.). It only fires if the session emits
+ * absolutely nothing for this duration — meaning the LLM or tool runner
+ * has silently frozen without ever reaching agent_end.
+ *
+ * A legitimately busy agent (many tool calls, long computations) will keep
+ * resetting the watchdog and will never time out no matter how long it runs.
+ * Set to 10 minutes of silence — far above any normal inter-event gap.
  */
-const PROMPT_TIMEOUT_MS = 10 * 60 * 1000;
+const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Sentinel error thrown when the watchdog fires.
+ * Caught in runWithFallback to trigger session disposal before the next
+ * model attempt — prevents a poisoned (stuck) AgentSession from being reused.
+ */
+class PromptTimeoutError extends Error {
+  readonly isPromptTimeout = true;
+  constructor(modelLabel: string) {
+    super(`Prompt timed out (${modelLabel}) — no agent_end received`);
+    this.name = "PromptTimeoutError";
+  }
+}
 import { ProviderHealthTracker, extractRateLimitInfo } from "./provider-health.js";
 import { parseSessionKey, type SessionContext } from "../types/session.js";
 import { beigeDir } from "../paths.js";
@@ -301,6 +320,14 @@ export class AgentManager {
           error.stack ?? "(no stack trace)"
         );
         logErrorAuto(error, { operation: opts.operationLabel, agent: agentName, session: sessionKey, model: `${provider}/${modelId}` });
+
+        // If the session timed out, the underlying AgentSession is stuck and
+        // must be disposed before the next model attempt — otherwise
+        // getOrCreateSessionWithModel would return the same poisoned session.
+        if ((error as any).isPromptTimeout) {
+          await this.disposeSession(sessionKey);
+          sessionLogger.log("[AGENT]", `Disposed stuck session after timeout; next attempt will start fresh`);
+        }
       }
     }
 
@@ -358,22 +385,41 @@ export class AgentManager {
         let responseText = "";
         let settled = false;
 
-        // Watchdog: if the session never emits agent_end (e.g. pi swallows the
-        // error internally), reject after a generous timeout so the caller's
-        // catch block can log and try the next model instead of hanging forever.
+        // Inactivity watchdog: fires only if the session emits NO events at all
+        // for INACTIVITY_TIMEOUT_MS. The timer is reset on every event received
+        // from the subscriber, so a busy agent (many tool calls, long LLM turns)
+        // can run indefinitely without being killed — the timeout only triggers
+        // when the session has been completely silent (truly stuck / hung).
         const promptLogger = createLogger({ agent: agentName, session: sessionKey });
-        const watchdog = setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            const msg = `Prompt timed out (${modelRef.provider}/${modelRef.model}) — no agent_end received`;
-            promptLogger.error("[AGENT]", msg);
-            reject(new Error(msg));
-          }
-        }, PROMPT_TIMEOUT_MS);
+        const modelLabel = `${modelRef.provider}/${modelRef.model}`;
+
+        let watchdog: ReturnType<typeof setTimeout>;
+        const armWatchdog = () => {
+          clearTimeout(watchdog);
+          watchdog = setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              const timeoutErr = new PromptTimeoutError(modelLabel);
+              promptLogger.error("[AGENT]", `${timeoutErr.message} (no activity for ${INACTIVITY_TIMEOUT_MS / 1000}s)`);
+              // Clean up the subscription so we stop receiving events from the
+              // stuck session — unsubscribe is assigned after this closure, but by
+              // the time the timer fires it will have been set (setTimeout is async).
+              try { unsubscribe(); } catch { /* best-effort */ }
+              // Abort the underlying pi session so any in-flight HTTP request is
+              // cancelled and the session can be safely disposed by runWithFallback.
+              managed.session.abort().catch(() => { /* best-effort */ });
+              reject(timeoutErr);
+            }
+          }, INACTIVITY_TIMEOUT_MS);
+        };
+
+        // Arm the watchdog immediately — reset on each incoming event.
+        armWatchdog();
 
         const unsubscribe = managed.session.subscribe(
           makeSessionSubscriber({
             sessionKey,
+            onActivity: armWatchdog,
             onTextReset: () => {
               responseText = "";
               opts?.onAssistantTurnStart?.();
@@ -923,6 +969,8 @@ export class AgentManager {
  */
 function makeSessionSubscriber(params: {
   sessionKey: string;
+  /** Called on every event — used to reset the inactivity watchdog timer. */
+  onActivity?: () => void;
   onTextReset: () => void;
   onTextDelta: (delta: string) => void;
   onSettle: (errMsg: string | undefined) => void;
@@ -932,7 +980,7 @@ function makeSessionSubscriber(params: {
     onAutoCompactionEnd?: (result: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void;
   };
 }) {
-  const { onTextReset, onTextDelta, onSettle, onCleanup, opts } = params;
+  const { onActivity, onTextReset, onTextDelta, onSettle, onCleanup, opts } = params;
 
   let settled = false;
   let compactionInProgress = false;
@@ -944,6 +992,10 @@ function makeSessionSubscriber(params: {
   };
 
   return (event: { type: string; message?: { role: string }; assistantMessageEvent?: { type: string; delta?: string }; messages?: readonly unknown[]; result?: { tokensBefore?: number }; aborted?: boolean; willRetry?: boolean; errorMessage?: string }) => {
+    // Reset the inactivity watchdog on every event — the agent is alive as
+    // long as it keeps emitting (tool calls, deltas, retries, turns, etc.).
+    onActivity?.();
+
     if (event.type === "message_start" && event.message?.role === "assistant") {
       onTextReset();
     }

@@ -151,6 +151,10 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       sessionStore.updateMetadata(sessionKey, { activeModel: { provider, modelId } });
     },
 
+    clearSessionModel(sessionKey) {
+      sessionStore.deleteMetadataKey(sessionKey, "activeModel");
+    },
+
     // ── Session data access ─────────────────────────────────
     listSessions(agentName, opts) {
       return sessionStore.listSessions(agentName, opts);

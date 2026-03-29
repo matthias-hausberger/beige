@@ -396,6 +396,16 @@ export interface PluginContext {
    */
   persistSessionModel(sessionKey: string, agentName: string, provider: string, modelId: string): void;
 
+  /**
+   * Clear any persisted model override for a session so the agent falls back to
+   * its configured primary model (and normal fallback chain) on the next invocation.
+   *
+   * This removes the canonical `activeModel` entry from the session metadata.
+   * The in-memory AgentSession is left untouched — the caller is responsible for
+   * disposing it when an immediate model switch is desired (e.g. after `/model reset`).
+   */
+  clearSessionModel(sessionKey: string): void;
+
   // ── Session data access ─────────────────────────────────
   /** List sessions for an agent (for session history tools). */
   listSessions(agentName: string, opts?: { includeToolSessions?: boolean }): Array<{

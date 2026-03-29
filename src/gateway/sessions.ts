@@ -90,6 +90,25 @@ export class BeigeSessionStore {
   }
 
   /**
+   * Delete a single top-level key from a session's metadata and persist to disk.
+   * No-op if the entry or the key does not exist.
+   *
+   * Use this to remove per-session overrides (e.g. `activeModel`) so the agent
+   * falls back to its configured default on the next invocation.
+   */
+  deleteMetadataKey(key: string, metaKey: string): void {
+    const entry = this.sessionMap[key];
+    if (!entry?.metadata) return;
+    if (!(metaKey in entry.metadata)) return;
+    delete entry.metadata[metaKey];
+    // Remove the metadata object entirely when it becomes empty
+    if (Object.keys(entry.metadata).length === 0) {
+      delete entry.metadata;
+    }
+    this.saveMap();
+  }
+
+  /**
    * Reset a key's session — creates a new session file.
    * The old session file is kept on disk for history.
    *

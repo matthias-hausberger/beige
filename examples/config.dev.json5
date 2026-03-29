@@ -39,6 +39,17 @@
       path: "../../beige-toolkit/plugins/github",
       config: {
         token: "${GITHUB_TOKEN}",
+        "polling": {
+          "enabled": true,
+          "username": "beige-agent",
+          "pollIntervalSeconds": 60,
+          "respondTo": "mentions",
+          "includeFullThread": true,
+          "agentMapping": {
+            "default": "beige"
+          },
+          "allowedUsers": ["matthias-hausberger"],
+        }
       },
     },
     chrome: {

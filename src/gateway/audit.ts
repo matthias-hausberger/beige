@@ -4,6 +4,9 @@ import { dirname } from "path";
 export interface AuditEntry {
   ts: string;
   agent: string;
+  session?: string;
+  model?: string;
+  channel?: string;
   phase: "started" | "finished";
   type: "core_tool" | "tool";
   tool: string;
@@ -16,13 +19,23 @@ export interface AuditEntry {
   error?: string;
 }
 
-/** Format a Date as "YYYY-MM-DD HH:mm:ss" in local time. */
-function formatTimestamp(date: Date): string {
-  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
-  return (
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
-    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-  );
+/**
+ * Optional session/model/channel context attached to an audit entry.
+ * All fields are optional so callers only need to supply what they know.
+ */
+export interface AuditContext {
+  session?: string;
+  model?: string;
+  channel?: string;
+}
+
+/** Format context fields as a bracketed suffix, e.g. " [session=… model=… channel=…]". */
+function contextSuffix(entry: AuditEntry): string {
+  const parts: string[] = [];
+  if (entry.session) parts.push(`session=${entry.session}`);
+  if (entry.model)   parts.push(`model=${entry.model}`);
+  if (entry.channel) parts.push(`channel=${entry.channel}`);
+  return parts.length > 0 ? ` [${parts.join(" ")}]` : "";
 }
 
 export class AuditLogger {
@@ -37,23 +50,24 @@ export class AuditLogger {
     const line = JSON.stringify(entry) + "\n";
     appendFileSync(this.logPath, line);
 
-    const ts = formatTimestamp(new Date(entry.ts));
+    const ts = new Date(entry.ts).toISOString();
     const emoji = entry.decision === "allowed" ? "✓" : "✗";
     const typeLabel = entry.type === "core_tool" ? "CORE" : "TOOL";
     const argsStr = entry.args.join(" ");
     const agentTool = `${entry.agent}/${entry.tool}`;
+    const ctx = contextSuffix(entry);
 
     if (entry.phase === "started") {
       // "→ started" line — no duration yet
       console.log(
-        `[AUDIT] [${ts}] ${emoji} ${typeLabel} ${agentTool} ${argsStr} → ${entry.decision}, started`
+        `[AUDIT] [${ts}]${ctx} ${emoji} ${typeLabel} ${agentTool} ${argsStr} → ${entry.decision}, started`
       );
     } else {
       // "→ finished" line — include duration (and error if present)
       const durationStr = entry.durationMs !== undefined ? ` (${entry.durationMs}ms)` : "";
       const errorStr = entry.error ? `, error: ${entry.error}` : "";
       console.log(
-        `[AUDIT] [${ts}] ${emoji} ${typeLabel} ${agentTool} ${argsStr} → finished${durationStr}${errorStr}`
+        `[AUDIT] [${ts}]${ctx} ${emoji} ${typeLabel} ${agentTool} ${argsStr} → finished${durationStr}${errorStr}`
       );
     }
   }
@@ -63,6 +77,9 @@ export class AuditLogger {
    * For "denied" decisions, logs immediately (no started/finished split).
    * For "allowed" decisions, logs a "started" line immediately, then a "finished"
    * line when .finish() is called.
+   *
+   * @param ctx  Optional session/model/channel context so every audit line is
+   *             traceable back to the exact session and model that triggered it.
    */
   start(
     agent: string,
@@ -70,11 +87,15 @@ export class AuditLogger {
     tool: string,
     args: string[],
     decision: "allowed" | "denied",
-    target?: "gateway" | "sandbox"
+    target?: "gateway" | "sandbox",
+    ctx?: AuditContext
   ): AuditTimer {
     const entry: AuditEntry = {
       ts: new Date().toISOString(),
       agent,
+      ...(ctx?.session  !== undefined ? { session: ctx.session }   : {}),
+      ...(ctx?.model    !== undefined ? { model: ctx.model }       : {}),
+      ...(ctx?.channel  !== undefined ? { channel: ctx.channel }   : {}),
       phase: decision === "denied" ? "finished" : "started",
       type,
       tool,

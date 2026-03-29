@@ -38,10 +38,10 @@ export function createCoreTools(
   const model: CurrentModelRef = modelRef ?? { current: undefined };
 
   return [
-    createReadTool(agentName, sandbox, audit, handler, model),
-    createWriteTool(agentName, sandbox, audit, handler),
-    createPatchTool(agentName, sandbox, audit, handler),
-    createExecTool(agentName, sandbox, audit, handler, sessionContext),
+    createReadTool(agentName, sandbox, audit, handler, model, sessionContext),
+    createWriteTool(agentName, sandbox, audit, handler, model, sessionContext),
+    createPatchTool(agentName, sandbox, audit, handler, model, sessionContext),
+    createExecTool(agentName, sandbox, audit, handler, sessionContext, model),
   ];
 }
 
@@ -54,7 +54,8 @@ function createReadTool(
   sandbox: SandboxManager,
   audit: AuditLogger,
   handler: HandlerRef,
-  modelRef: CurrentModelRef
+  modelRef: CurrentModelRef,
+  sessionContext?: SessionContext
 ): ToolDefinition {
   return {
     name: "read",
@@ -95,7 +96,11 @@ function createReadTool(
           };
         }
 
-        const timer = audit.start(agentName, "core_tool", "read", [p.path], "allowed");
+        const timer = audit.start(agentName, "core_tool", "read", [p.path], "allowed", undefined, {
+          session: sessionContext?.sessionKey,
+          channel: sessionContext?.channel,
+          model: modelRef.current ? `${modelRef.current.provider}/${modelRef.current.id}` : undefined,
+        });
         try {
           // Encode inside the container — avoids binary corruption through the
           // Docker exec stdout demux stream (which is not binary-safe).
@@ -141,7 +146,11 @@ function createReadTool(
         args.push(p.path);
       }
 
-      const timer = audit.start(agentName, "core_tool", "read", [p.path], "allowed");
+      const timer = audit.start(agentName, "core_tool", "read", [p.path], "allowed", undefined, {
+        session: sessionContext?.sessionKey,
+        channel: sessionContext?.channel,
+        model: modelRef.current ? `${modelRef.current.provider}/${modelRef.current.id}` : undefined,
+      });
 
       try {
         const result = await sandbox.exec(agentName, args);
@@ -179,7 +188,9 @@ function createWriteTool(
   agentName: string,
   sandbox: SandboxManager,
   audit: AuditLogger,
-  handler: HandlerRef
+  handler: HandlerRef,
+  modelRef?: CurrentModelRef,
+  sessionContext?: SessionContext
 ): ToolDefinition {
   return {
     name: "write",
@@ -198,7 +209,13 @@ function createWriteTool(
         "core_tool",
         "write",
         [p.path, `(${Buffer.byteLength(p.content)} bytes)`],
-        "allowed"
+        "allowed",
+        undefined,
+        {
+          session: sessionContext?.sessionKey,
+          channel: sessionContext?.channel,
+          model: modelRef?.current ? `${modelRef.current.provider}/${modelRef.current.id}` : undefined,
+        }
       );
 
       try {
@@ -244,7 +261,9 @@ function createPatchTool(
   agentName: string,
   sandbox: SandboxManager,
   audit: AuditLogger,
-  handler: HandlerRef
+  handler: HandlerRef,
+  modelRef?: CurrentModelRef,
+  sessionContext?: SessionContext
 ): ToolDefinition {
   return {
     name: "patch",
@@ -264,7 +283,13 @@ function createPatchTool(
         "core_tool",
         "patch",
         [p.path],
-        "allowed"
+        "allowed",
+        undefined,
+        {
+          session: sessionContext?.sessionKey,
+          channel: sessionContext?.channel,
+          model: modelRef?.current ? `${modelRef.current.provider}/${modelRef.current.id}` : undefined,
+        }
       );
 
       try {
@@ -351,7 +376,8 @@ function createExecTool(
   sandbox: SandboxManager,
   audit: AuditLogger,
   handler: HandlerRef,
-  sessionContext?: SessionContext
+  sessionContext?: SessionContext,
+  modelRef?: CurrentModelRef
 ): ToolDefinition {
   return {
     name: "exec",
@@ -377,7 +403,13 @@ function createExecTool(
         "core_tool",
         "exec",
         [p.command],
-        "allowed"
+        "allowed",
+        undefined,
+        {
+          session: sessionContext?.sessionKey,
+          channel: sessionContext?.channel,
+          model: modelRef?.current ? `${modelRef.current.provider}/${modelRef.current.id}` : undefined,
+        }
       );
 
       try {

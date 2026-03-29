@@ -521,7 +521,6 @@ export class AgentManager {
 
     // Check if we need to recreate the session with a different model
     const existing = this.sessions.get(sessionKey);
-    const sessionLogger = createLogger({ agent: agentName, session: sessionKey });
 
     // If session exists with the same model, return it (but update onToolStart
     // if the caller provided a new one — this is needed for runtime verbose
@@ -654,7 +653,11 @@ export class AgentManager {
       customTools: coreTools,
       sessionManager,
       settingsManager: SettingsManager.inMemory({
-        compaction: buildCompactionSettings(modelRef, model.contextWindow),
+        compaction: buildCompactionSettings(
+          modelRef,
+          model.contextWindow,
+          createLogger({ agent: agentName, session: sessionKey, model: `${modelRef.provider}/${modelRef.model}` })
+        ),
         retry: { enabled: true, maxRetries: 3 },
       }),
       resourceLoader,
@@ -681,7 +684,7 @@ export class AgentManager {
       sessionKey,
       agentName,
       channel: parseSessionKey(sessionKey).channel,
-    }).catch((err) => console.error(`[AGENT] sessionCreated hook error:`, err));
+    }).catch((err) => createLogger({ agent: agentName, session: sessionKey, model: `${modelRef.provider}/${modelRef.model}` }).error(`[AGENT]`, `sessionCreated hook error:`, err));
 
     return managed;
   }
@@ -786,7 +789,7 @@ export class AgentManager {
         sessionKey,
         agentName: existing.agentName,
         channel: parseSessionKey(sessionKey).channel,
-      }).catch((err) => console.error(`[AGENT] sessionDisposed hook error:`, err));
+      }).catch((err) => createLogger({ agent: existing.agentName, session: sessionKey, model: `${existing.currentModel.provider}/${existing.currentModel.model}` }).error(`[AGENT]`, `sessionDisposed hook error:`, err));
     }
   }
 
@@ -946,7 +949,7 @@ export class AgentManager {
       throw new Error("Failed to restore session. Send a message first.");
     }
 
-    const compactLogger = createLogger({ agent: managed.agentName, session: sessionKey });
+    const compactLogger = createLogger({ agent: managed.agentName, session: sessionKey, model: `${managed.currentModel.provider}/${managed.currentModel.model}` });
     compactLogger.log("[AGENT]", "Manual compaction requested");
     const result = await managed.session.compact();
     compactLogger.log("[AGENT]", `Compaction complete: ${result.tokensBefore} tokens freed`);
@@ -1088,10 +1091,13 @@ function makeSessionSubscriber(params: {
  *   → reserveTokens = contextWindow - compactionThreshold
  *
  * Falls back to pi's default (reserveTokens = 16384) when no threshold is set.
+ *
+ * @param logger  Scoped logger carrying the current agent/session/model context.
  */
 function buildCompactionSettings(
   modelRef: ModelRef,
-  contextWindow: number
+  contextWindow: number,
+  logger: import("./logger.js").ScopedLogger
 ): { enabled: boolean; reserveTokens?: number } {
   if (modelRef.compactionThreshold === undefined) {
     return { enabled: true };
@@ -1099,16 +1105,17 @@ function buildCompactionSettings(
 
   const reserveTokens = contextWindow - modelRef.compactionThreshold;
   if (reserveTokens <= 0) {
-    console.warn(
-      `[AGENT] compactionThreshold ${modelRef.compactionThreshold} is >= contextWindow ` +
-      `${contextWindow} for ${modelRef.provider}/${modelRef.model} — using default threshold.`
+    logger.warn(
+      "[AGENT]",
+      `compactionThreshold ${modelRef.compactionThreshold} is >= contextWindow ` +
+      `${contextWindow} — using default threshold.`
     );
     return { enabled: true };
   }
 
-  console.log(
-    `[AGENT] Custom compaction threshold: ${modelRef.compactionThreshold} tokens ` +
-    `(reserveTokens=${reserveTokens}) for ${modelRef.provider}/${modelRef.model}`
+  logger.log(
+    "[AGENT]",
+    `Custom compaction threshold: ${modelRef.compactionThreshold} tokens (reserveTokens=${reserveTokens})`
   );
   return { enabled: true, reserveTokens };
 }

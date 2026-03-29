@@ -117,7 +117,10 @@ export class AgentSocketServer {
 
     // Check policy
     if (!this.policy.isToolAllowed(this.agentName, tool)) {
-      const timer = this.audit.start(this.agentName, "tool", tool, args, "denied");
+      const timer = this.audit.start(this.agentName, "tool", tool, args, "denied", undefined, {
+        session: req.sessionContext?.sessionKey,
+        channel: req.sessionContext?.channel,
+      });
       timer.finish({ exitCode: 1, error: "Permission denied" });
       return {
         type: "tool_response",
@@ -147,7 +150,11 @@ export class AgentSocketServer {
       tool,
       args,
       "allowed",
-      this.policy.getToolTarget(tool)
+      this.policy.getToolTarget(tool),
+      {
+        session: sessionContext.sessionKey,
+        channel: sessionContext.channel,
+      }
     );
 
     try {

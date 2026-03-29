@@ -137,7 +137,9 @@ describe("createCoreTools", () => {
         "core_tool",
         "read",
         ["/test.txt"],
-        "allowed"
+        "allowed",
+        undefined,
+        { session: undefined, channel: undefined, model: undefined }
       );
       expect(mockAuditTimer.finish).toHaveBeenCalled();
     });

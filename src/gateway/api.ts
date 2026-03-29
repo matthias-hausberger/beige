@@ -390,6 +390,12 @@ export class GatewayAPI {
   ): Promise<{ content: Array<{ type: string; [key: string]: unknown }>; isError?: boolean }> {
     const sandbox = this.opts.sandbox;
     const audit = this.opts.audit;
+    // Context attached to every audit entry from this call so each tool
+    // invocation is traceable back to its session and active model.
+    const auditCtx = {
+      session: sessionKey,
+      model: activeModel ? `${activeModel.provider}/${activeModel.modelId}` : undefined,
+    };
 
     switch (tool) {
       case "read": {
@@ -423,7 +429,7 @@ export class GatewayAPI {
 
           // Encode inside the container — avoids binary corruption through the
           // HTTP transport layer (which is not binary-safe for raw bytes).
-          const timer = audit.start(agentName, "core_tool", "read", [params.path], "allowed");
+          const timer = audit.start(agentName, "core_tool", "read", [params.path], "allowed", undefined, auditCtx);
           const result = await sandbox.exec(agentName, ["base64", params.path]);
           timer.finish({ exitCode: result.exitCode, outputBytes: result.stdout.length });
 
@@ -453,7 +459,7 @@ export class GatewayAPI {
           args.push("cat", params.path);
         }
 
-        const timer = audit.start(agentName, "core_tool", "read", [params.path], "allowed");
+        const timer = audit.start(agentName, "core_tool", "read", [params.path], "allowed", undefined, auditCtx);
         const result = await sandbox.exec(agentName, args);
         timer.finish({ exitCode: result.exitCode, outputBytes: Buffer.byteLength(result.stdout) });
 
@@ -472,7 +478,9 @@ export class GatewayAPI {
           "core_tool",
           "write",
           [params.path, `(${Buffer.byteLength(params.content)} bytes)`],
-          "allowed"
+          "allowed",
+          undefined,
+          auditCtx
         );
         const script = `mkdir -p "$(dirname '${params.path}')" && cat > '${params.path}'`;
         const result = await sandbox.exec(agentName, ["sh", "-c", script], params.content);
@@ -492,7 +500,7 @@ export class GatewayAPI {
       }
 
       case "patch": {
-        const timer = audit.start(agentName, "core_tool", "patch", [params.path], "allowed");
+        const timer = audit.start(agentName, "core_tool", "patch", [params.path], "allowed", undefined, auditCtx);
 
         const readResult = await sandbox.exec(agentName, ["cat", params.path]);
         if (readResult.exitCode !== 0) {
@@ -528,7 +536,7 @@ export class GatewayAPI {
       }
 
       case "exec": {
-        const timer = audit.start(agentName, "core_tool", "exec", [params.command], "allowed");
+        const timer = audit.start(agentName, "core_tool", "exec", [params.command], "allowed", undefined, auditCtx);
         const timeout = (params.timeout ?? 120) * 1000;
         // Inject session context env vars so gateway tools (e.g. agent-to-agent)
         // can identify the calling agent. Derive channel and session key from the
@@ -695,7 +703,11 @@ export class GatewayAPI {
           `llm:${modelRef.provider}/${modelRef.model}`,
           sessionKey ? [sessionKey] : [],
           "allowed",
-          "gateway"
+          "gateway",
+          {
+            session: sessionKey,
+            model: `${modelRef.provider}/${modelRef.model}`,
+          }
         );
 
         // If this is a fallback attempt (headers already written), notify

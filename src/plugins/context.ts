@@ -160,6 +160,10 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       return sessionStore.listSessions(agentName, opts);
     },
 
+    listSessionKeys(agentName, opts) {
+      return sessionStore.listSessionKeys(agentName, opts);
+    },
+
     getSessionEntry(sessionKey) {
       return sessionStore.getEntry(sessionKey);
     },

@@ -416,6 +416,12 @@ export interface PluginContext {
     firstMessage: string;
   }>;
 
+  /** List session map keys for an agent (enables reverse lookup from sessionId to key). */
+  listSessionKeys(agentName: string, opts?: { includeToolSessions?: boolean }): Array<{
+    key: string;
+    sessionFile: string;
+  }>;
+
   /** Get a session entry by key (for session history tools). */
   getSessionEntry(sessionKey: string): {
     agentName: string;

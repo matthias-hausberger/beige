@@ -195,6 +195,28 @@ export class BeigeSessionStore {
   }
 
   /**
+   * List all session map keys for a given agent, together with their session
+   * file paths.  This enables reverse lookups (file path or sessionId → key)
+   * without exposing the raw session map.
+   *
+   * Tool-initiated sessions (depth > 0 in metadata) are excluded by default.
+   * Pass `{ includeToolSessions: true }` to include them.
+   */
+  listSessionKeys(agentName: string, opts?: { includeToolSessions?: boolean }): Array<{ key: string; sessionFile: string }> {
+    const results: Array<{ key: string; sessionFile: string }> = [];
+    for (const [key, entry] of Object.entries(this.sessionMap)) {
+      if (entry.agentName !== agentName) continue;
+      // Exclude tool-initiated sessions unless opted in
+      if (!opts?.includeToolSessions) {
+        const depth = entry.metadata?.depth;
+        if (typeof depth === "number" && depth > 0) continue;
+      }
+      results.push({ key, sessionFile: entry.sessionFile });
+    }
+    return results;
+  }
+
+  /**
    * Build a session key for TUI.
    */
   static tuiKey(agentName: string, sessionId?: string): string {

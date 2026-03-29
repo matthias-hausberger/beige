@@ -328,6 +328,14 @@ async function cmdGatewayStart(configPath: string, foreground: boolean, timeoutM
     ensureDirs();
 
     const logFile = getLogFile();
+
+    // Rotate the previous run's log before opening a fresh file.
+    // In daemon mode stdout/stderr are tied to an open fd, so mid-run rotation
+    // isn't feasible — rotating on startup is the clean alternative.
+    const { rotateFile } = await import("./gateway/log-rotation.js");
+    const logMaxFiles = config.gateway?.log?.maxFiles;
+    rotateFile(logFile, logMaxFiles);
+
     const logFd = openSync(logFile, "a");
 
     const isTs = process.argv[1].endsWith(".ts");

@@ -57,7 +57,11 @@ export class Gateway {
     this.config = config;
     this.configPath = resolve(configPath);
     this.audit = new AuditLogger(
-      resolve(beigeDir(), "logs", "audit.jsonl")
+      resolve(beigeDir(), "logs", "audit.jsonl"),
+      {
+        maxSizeBytes: config.gateway?.log?.maxSizeBytes,
+        maxFiles:     config.gateway?.log?.maxFiles,
+      }
     );
     this.policy = new PolicyEngine(config);
     this.toolRunner = new ToolRunner();

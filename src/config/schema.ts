@@ -184,6 +184,24 @@ const SkillConfig = Type.Object(
   { title: "SkillConfig" }
 );
 
+const LogRotationConfig = Type.Object(
+  {
+    maxSizeBytes: Type.Optional(
+      Type.Number({
+        description:
+          "Rotate a log file when it exceeds this size in bytes. Default: 10485760 (10 MB).",
+      })
+    ),
+    maxFiles: Type.Optional(
+      Type.Number({
+        description:
+          "Number of rotated log files to keep (.1 … .N). Oldest is deleted when the limit is reached. Default: 5.",
+      })
+    ),
+  },
+  { title: "LogRotationConfig" }
+);
+
 const GatewayServerConfig = Type.Object(
   {
     host: Type.Optional(
@@ -196,6 +214,12 @@ const GatewayServerConfig = Type.Object(
       Type.String({
         description:
           "Daemon stdout/stderr log file. Default: ~/.beige/logs/gateway.log",
+      })
+    ),
+    log: Type.Optional(
+      Type.Composite([LogRotationConfig], {
+        description:
+          "Log rotation settings applied to gateway.log (on startup) and audit.jsonl (on each write).",
       })
     ),
   },

@@ -1,5 +1,10 @@
 import { appendFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
+import {
+  rotateFileIfNeeded,
+  DEFAULT_MAX_SIZE_BYTES,
+  DEFAULT_MAX_FILES,
+} from "./log-rotation.js";
 
 export interface AuditEntry {
   ts: string;
@@ -40,13 +45,23 @@ function contextSuffix(entry: AuditEntry): string {
 
 export class AuditLogger {
   private logPath: string;
+  private maxSizeBytes: number;
+  private maxFiles: number;
 
-  constructor(logPath: string) {
+  constructor(
+    logPath: string,
+    opts?: { maxSizeBytes?: number; maxFiles?: number }
+  ) {
     this.logPath = logPath;
+    this.maxSizeBytes = opts?.maxSizeBytes ?? DEFAULT_MAX_SIZE_BYTES;
+    this.maxFiles = opts?.maxFiles ?? DEFAULT_MAX_FILES;
     mkdirSync(dirname(logPath), { recursive: true });
   }
 
   log(entry: AuditEntry): void {
+    // Rotate before appending so we never write past the size limit.
+    rotateFileIfNeeded(this.logPath, this.maxSizeBytes, this.maxFiles);
+
     const line = JSON.stringify(entry) + "\n";
     appendFileSync(this.logPath, line);
 

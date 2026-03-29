@@ -27,6 +27,7 @@ import {
   readFileSync,
   existsSync,
   openSync,
+  appendFileSync,
   unlinkSync,
   statSync,
 } from "fs";
@@ -64,8 +65,12 @@ const originalStderrWrite = process.stderr.write.bind(process.stderr);
  * Call once at the very start of the foreground gateway path. When the
  * process is spawned as a daemon its stdout/stderr are already redirected
  * to gateway.log, so timestamps land directly in the file.
+ *
+ * When `logFilePath` is provided (foreground mode), every timestamped line is
+ * also appended to that file — i.e. output is tee'd to both the terminal and
+ * the persistent log file so foreground runs are fully captured.
  */
-function installTimestampInjector(): void {
+function installTimestampInjector(logFilePath?: string): void {
   function wrapWrite(
     original: typeof process.stdout.write
   ): typeof process.stdout.write {
@@ -87,6 +92,15 @@ function installTimestampInjector(): void {
       }
 
       if (out.length === 0) return true;
+
+      // Tee to log file when running in foreground mode (best-effort)
+      if (logFilePath) {
+        try {
+          appendFileSync(logFilePath, out, "utf-8");
+        } catch {
+          // Ignore log file write errors — console output is the primary output
+        }
+      }
 
       if (typeof encodingOrCb === "function") {
         return (original as (c: string, cb: (err?: Error | null) => void) => boolean)(out, encodingOrCb);
@@ -365,7 +379,10 @@ async function cmdGatewayStart(configPath: string, foreground: boolean, timeoutM
   // Inject timestamps into every log line written by this process.
   // When spawned as a daemon the stdout/stderr are redirected to gateway.log,
   // so timestamps land directly in the file.
-  installTimestampInjector();
+  // When running in foreground mode we also tee every line to gateway.log so
+  // the persistent log file always contains a full record of the run.
+  ensureDirs();
+  installTimestampInjector(getLogFile());
 
   const { loadConfig } = await import("./config/loader.js");
   console.log(`[BEIGE] Loading config from: ${resolve(configPath)}`);

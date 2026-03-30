@@ -46,9 +46,18 @@ import {
 
 // ── Timestamp helpers ────────────────────────────────────────────────
 
-/** Returns a full ISO-8601 timestamp prefix, e.g. "2026-03-29T14:03:07.123Z". */
+/** Returns a local-timezone ISO-8601-like timestamp prefix, e.g. "2026-03-29T16:03:07.123+2". */
 function timestampPrefix(): string {
-  return new Date().toISOString();
+  // Import would create a circular dependency — inline the same logic as formatLocalTimestamp.
+  const d = new Date();
+  const off = d.getTimezoneOffset();
+  const sign = off <= 0 ? "+" : "-";
+  const abs = Math.abs(off);
+  const tzH = Math.floor(abs / 60);
+  const tzM = abs % 60;
+  const tz = tzM === 0 ? `${sign}${tzH}` : `${sign}${tzH}:${String(tzM).padStart(2, "0")}`;
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}${tz}`;
 }
 
 // Save original stderr.write before wrapping (for immediate flush on shutdown)

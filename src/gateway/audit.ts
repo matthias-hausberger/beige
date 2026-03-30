@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
+import { formatLocalTimestamp } from "./logger.js";
 import {
   rotateFileIfNeeded,
   DEFAULT_MAX_SIZE_BYTES,
@@ -65,7 +66,7 @@ export class AuditLogger {
     const line = JSON.stringify(entry) + "\n";
     appendFileSync(this.logPath, line);
 
-    const ts = new Date(entry.ts).toISOString();
+    const ts = formatLocalTimestamp(new Date(entry.ts));
     const emoji = entry.decision === "allowed" ? "✓" : "✗";
     const typeLabel = entry.type === "core_tool" ? "CORE" : "TOOL";
     const argsStr = entry.args.join(" ");
@@ -106,7 +107,7 @@ export class AuditLogger {
     ctx?: AuditContext
   ): AuditTimer {
     const entry: AuditEntry = {
-      ts: new Date().toISOString(),
+      ts: formatLocalTimestamp(),
       agent,
       ...(ctx?.session  !== undefined ? { session: ctx.session }   : {}),
       ...(ctx?.model    !== undefined ? { model: ctx.model }       : {}),
@@ -143,7 +144,7 @@ export class AuditTimer {
 
     const finishedEntry: AuditEntry = {
       ...this.entry,
-      ts: new Date().toISOString(),
+      ts: formatLocalTimestamp(),
       phase: "finished",
       durationMs: Date.now() - this.startTime,
       exitCode: result.exitCode,

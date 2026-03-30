@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "fs";
 import { resolve, join } from "path";
 import { beigeDir } from "../paths.js";
+import { formatLocalTimestamp } from "./logger.js";
 
 /**
  * Beige session store.
@@ -60,7 +61,7 @@ export class BeigeSessionStore {
     this.sessionMap[key] = {
       agentName,
       sessionFile,
-      createdAt: new Date().toISOString(),
+      createdAt: formatLocalTimestamp(),
       ...(metadata !== undefined ? { metadata } : {}),
     };
     this.saveMap();
@@ -307,8 +308,8 @@ function extractFirstMessage(line: string): string {
 function extractTimestamp(line: string): string {
   try {
     const parsed = JSON.parse(line);
-    return parsed.timestamp ? new Date(parsed.timestamp).toISOString() : new Date().toISOString();
+    return parsed.timestamp ? formatLocalTimestamp(new Date(parsed.timestamp)) : formatLocalTimestamp();
   } catch {
-    return new Date().toISOString();
+    return formatLocalTimestamp();
   }
 }

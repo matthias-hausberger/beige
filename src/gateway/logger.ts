@@ -29,10 +29,50 @@ export interface LogContext {
   model?: string;
 }
 
+/**
+ * Format a Date as a local-timezone ISO-8601-like string.
+ *
+ * Unlike Date.toISOString() which always outputs UTC (Z suffix),
+ * this produces a human-readable local timestamp with timezone offset.
+ *
+ * @param date   Date to format (defaults to now).
+ * @param short  If true, use compact offset like "+2" instead of "+02:00".
+ *               Short format is NOT parseable by `new Date()` — use only for display/logs.
+ *               Default: false (produces parseable "+02:00" format).
+ */
+export function formatLocalTimestamp(date: Date = new Date(), short: boolean = false): string {
+  const offsetMin = date.getTimezoneOffset();
+  const sign = offsetMin <= 0 ? "+" : "-";
+  const absOffset = Math.abs(offsetMin);
+  const tzHours = Math.floor(absOffset / 60);
+  const tzMinutes = absOffset % 60;
+
+  let tz: string;
+  if (short) {
+    // Compact: "+2", "-5", "+5:30"
+    tz = tzMinutes === 0
+      ? `${sign}${tzHours}`
+      : `${sign}${tzHours}:${String(tzMinutes).padStart(2, "0")}`;
+  } else {
+    // Standard parseable: "+02:00", "-05:00", "+05:30"
+    tz = `${sign}${String(tzHours).padStart(2, "0")}:${String(tzMinutes).padStart(2, "0")}`;
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  const millis = String(date.getMilliseconds()).padStart(3, "0");
+
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${millis}${tz}`;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function ts(): string {
-  return new Date().toISOString();
+  return formatLocalTimestamp(new Date(), true);
 }
 
 function contextSuffix(ctx: LogContext): string {

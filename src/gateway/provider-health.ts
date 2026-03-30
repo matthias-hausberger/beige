@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { beigeDir } from "../paths.js";
+import { formatLocalTimestamp } from "./logger.js";
 
 /**
  * Provider health tracking for rate limit handling and fallback logic.
@@ -116,15 +117,15 @@ export class ProviderHealthTracker {
 
     this.data.providers[key] = {
       ...existing,
-      rateLimitedAt: now.toISOString(),
-      retryAfter: retryAfter.toISOString(),
+      rateLimitedAt: formatLocalTimestamp(now),
+      retryAfter: formatLocalTimestamp(retryAfter),
       consecutiveFailures: existing.consecutiveFailures + 1,
       lastError: error,
     };
 
     this.save();
     console.log(
-      `[PROVIDER_HEALTH] ${key} rate limited until ${retryAfter.toISOString()}` +
+      `[PROVIDER_HEALTH] ${key} rate limited until ${formatLocalTimestamp(retryAfter, true)}` +
       (error ? ` (${error})` : "")
     );
   }
@@ -210,19 +211,19 @@ export class ProviderHealthTracker {
 
   private load(): ProviderHealthData {
     if (!existsSync(this.filePath)) {
-      return { providers: {}, lastUpdated: new Date().toISOString() };
+      return { providers: {}, lastUpdated: formatLocalTimestamp() };
     }
 
     try {
       const raw = readFileSync(this.filePath, "utf-8");
       return JSON.parse(raw) as ProviderHealthData;
     } catch {
-      return { providers: {}, lastUpdated: new Date().toISOString() };
+      return { providers: {}, lastUpdated: formatLocalTimestamp() };
     }
   }
 
   private save(): void {
-    this.data.lastUpdated = new Date().toISOString();
+    this.data.lastUpdated = formatLocalTimestamp();
     writeFileSync(this.filePath, JSON.stringify(this.data, null, 2));
   }
 }

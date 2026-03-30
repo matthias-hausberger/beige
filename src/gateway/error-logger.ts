@@ -12,6 +12,7 @@
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { beigeDir } from "../paths.js";
+import { formatLocalTimestamp } from "./logger.js";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -198,7 +199,7 @@ export function logError(
   err?: Error
 ): void {
   const entry: ErrorLogEntry = {
-    timestamp: new Date().toISOString(),
+    timestamp: formatLocalTimestamp(),
     type,
     message,
     context,

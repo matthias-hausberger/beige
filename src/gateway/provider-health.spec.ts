@@ -114,8 +114,8 @@ describe("ProviderHealthTracker", () => {
       tracker.markRateLimited("anthropic", "claude-sonnet");
 
       const remaining = tracker.getRemainingCooldown("anthropic", "claude-sonnet");
-      // Default is 30 minutes = 1,800,000 ms
-      expect(remaining).toBeGreaterThan(1_700_000);
+      // Default is 5 minutes = 300,000 ms (hard rate limit)
+      expect(remaining).toBeGreaterThan(250_000);
     });
 
     it("stores error message", () => {

@@ -303,13 +303,35 @@ export class AgentManager {
         // Check if it's a rate limit
         const rateLimitInfo = extractRateLimitInfo(err);
         if (rateLimitInfo.isRateLimit) {
+          // Log the full error details BEFORE cooldown so we can diagnose
+          const cooldownType = rateLimitInfo.isHard ? "HARD (HTTP 429)" : "SOFT (pattern match)";
+          modelLogger.warn("[AGENT]", `Rate limit detected — ${cooldownType}`);
+          modelLogger.warn("[AGENT]", `  Detection reason: ${rateLimitInfo.detectionReason}`);
+          modelLogger.warn("[AGENT]", `  Error message: ${error.message}`);
+          modelLogger.warn("[AGENT]", `  Error stack: ${error.stack ?? "(no stack)"}`);
+          // Log raw error properties for maximum visibility
+          try {
+            const errObj = err as Record<string, any>;
+            const details: Record<string, unknown> = {};
+            for (const key of ["status", "statusCode", "code", "type", "headers", "body", "response", "error", "cause"]) {
+              if (errObj[key] !== undefined) details[key] = errObj[key];
+            }
+            if (Object.keys(details).length > 0) {
+              modelLogger.warn("[AGENT]", `  Error details: ${JSON.stringify(details, null, 2).substring(0, 2000)}`);
+            }
+          } catch { /* best-effort */ }
+
           this.providerHealth.markRateLimited(
             provider,
             modelId,
             rateLimitInfo.retryAfterMs,
-            error.message
+            error.message,
+            rateLimitInfo.isHard ?? true
           );
-          modelLogger.warn("[AGENT]", `Rate limited — trying next model. Retry-after: ${rateLimitInfo.retryAfterMs != null ? `${Math.round(rateLimitInfo.retryAfterMs / 1000)}s` : "unknown"}`);
+          const effectiveCooldown = rateLimitInfo.retryAfterMs != null
+            ? `${Math.round(rateLimitInfo.retryAfterMs / 1000)}s (from retry-after)`
+            : rateLimitInfo.isHard ? "300s (default hard)" : "60s (default soft)";
+          modelLogger.warn("[AGENT]", `  Cooldown: ${effectiveCooldown} — trying next model`);
           continue;
         }
 
@@ -320,6 +342,17 @@ export class AgentManager {
           `Failed: ${error.message}`,
           error.stack ?? "(no stack trace)"
         );
+        // Log raw error properties for diagnosis
+        try {
+          const errObj = err as Record<string, any>;
+          const details: Record<string, unknown> = {};
+          for (const key of ["status", "statusCode", "code", "type", "headers", "body", "response", "error", "cause"]) {
+            if (errObj[key] !== undefined) details[key] = errObj[key];
+          }
+          if (Object.keys(details).length > 0) {
+            modelLogger.error("[AGENT]", `Error details: ${JSON.stringify(details, null, 2).substring(0, 2000)}`);
+          }
+        } catch { /* best-effort */ }
         logErrorAuto(error, { operation: opts.operationLabel, agent: agentName, session: sessionKey, model: modelLabel });
 
         // If the session timed out, the underlying AgentSession is stuck and
@@ -850,8 +883,8 @@ export class AgentManager {
   }
 
   /** Mark a model as rate-limited so it is skipped for the cooldown period. */
-  markModelRateLimited(provider: string, modelId: string, retryAfterMs?: number, message?: string): void {
-    this.providerHealth.markRateLimited(provider, modelId, retryAfterMs, message);
+  markModelRateLimited(provider: string, modelId: string, retryAfterMs?: number, message?: string, hard: boolean = true): void {
+    this.providerHealth.markRateLimited(provider, modelId, retryAfterMs, message, hard);
   }
 
   /** Mark a model as failed (non-rate-limit error) for health tracking purposes. */

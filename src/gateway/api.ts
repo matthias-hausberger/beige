@@ -775,7 +775,7 @@ export class GatewayAPI {
           if (rateLimitInfo.isRateLimit) {
             // Rate-limited — record it and try the next fallback model
             this.opts.agentManager.markModelRateLimited(
-              modelRef.provider, modelRef.model, rateLimitInfo.retryAfterMs, errorMsg
+              modelRef.provider, modelRef.model, rateLimitInfo.retryAfterMs, errorMsg, rateLimitInfo.isHard ?? true
             );
             auditTimer.finish({ exitCode: 1, error: "rate limited" });
             console.log(`[API] ${modelRef.provider}/${modelRef.model} rate limited — trying next fallback model`);

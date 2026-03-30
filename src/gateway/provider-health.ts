@@ -30,8 +30,11 @@ export interface ProviderHealthData {
   lastUpdated: string;
 }
 
-/** Default cooldown when no retry-after header is provided (30 minutes) */
-const DEFAULT_COOLDOWN_MS = 30 * 60 * 1000;
+/** Default cooldown when a 429 status is returned but no retry-after header is provided (5 minutes) */
+const DEFAULT_HARD_COOLDOWN_MS = 5 * 60 * 1000;
+
+/** Cooldown for soft rate-limit detection (pattern-matched errors, not HTTP 429) (60 seconds) */
+const DEFAULT_SOFT_COOLDOWN_MS = 60 * 1000;
 
 /** Key format: "provider/model" */
 type ProviderKey = string;
@@ -100,11 +103,13 @@ export class ProviderHealthTracker {
     provider: string,
     model: string,
     retryAfterMs?: number,
-    error?: string
+    error?: string,
+    /** Whether this is a hard rate limit (HTTP 429) or a soft one (pattern-matched). */
+    hard: boolean = true
   ): void {
     const key = this.makeKey(provider, model);
     const now = new Date();
-    const cooldownMs = retryAfterMs ?? DEFAULT_COOLDOWN_MS;
+    const cooldownMs = retryAfterMs ?? (hard ? DEFAULT_HARD_COOLDOWN_MS : DEFAULT_SOFT_COOLDOWN_MS);
     const retryAfter = new Date(now.getTime() + cooldownMs);
 
     const existing = this.data.providers[key] ?? { consecutiveFailures: 0 };
@@ -229,6 +234,10 @@ export class ProviderHealthTracker {
 export function extractRateLimitInfo(error: unknown): {
   isRateLimit: boolean;
   retryAfterMs?: number;
+  /** True if this is a hard rate limit (HTTP 429), false if pattern-matched. */
+  isHard?: boolean;
+  /** The detection method used (for logging). */
+  detectionReason?: string;
 } {
   if (!error || typeof error !== "object") {
     return { isRateLimit: false };
@@ -242,6 +251,8 @@ export function extractRateLimitInfo(error: unknown): {
     return {
       isRateLimit: true,
       retryAfterMs: parseRetryAfter(retryAfter),
+      isHard: true,
+      detectionReason: `HTTP ${err.status ?? err.statusCode}`,
     };
   }
 
@@ -259,13 +270,15 @@ export function extractRateLimitInfo(error: unknown): {
   ];
 
   const combined = `${errorType} ${errorMessage}`.toLowerCase();
-  const isRateLimit = rateLimitPatterns.some((p) => combined.includes(p));
+  const matchedPattern = rateLimitPatterns.find((p) => combined.includes(p));
 
-  if (isRateLimit) {
+  if (matchedPattern) {
     const retryAfter = err.headers?.["retry-after"] ?? err.headers?.["Retry-After"];
     return {
       isRateLimit: true,
       retryAfterMs: parseRetryAfter(retryAfter),
+      isHard: false,
+      detectionReason: `pattern match: "${matchedPattern}" in "${combined.substring(0, 200)}"`,
     };
   }
 

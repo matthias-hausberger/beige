@@ -217,6 +217,10 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       return getAgentManager().getModelHealth(provider, modelId);
     },
 
+    clearModelHealth(provider, modelId) {
+      getAgentManager().markModelHealthy(provider, modelId);
+    },
+
     getSessionUsage(sessionKey): SessionUsage | undefined {
       const entries = readSessionEntries(sessionKey);
       if (!entries) return undefined;

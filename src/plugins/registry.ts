@@ -22,6 +22,7 @@ import type {
   PostToolExecEvent,
   PostToolExecResult,
   SessionLifecycleEvent,
+  ModelSwitchedEvent,
   GatewayLifecycleEvent,
 } from "./types.js";
 
@@ -184,6 +185,14 @@ export class PluginRegistry {
     const entries = this.hooks.get("sessionDisposed") ?? [];
     for (const entry of entries) {
       const handler = entry.handler as HookHandler<"sessionDisposed">;
+      await handler(event);
+    }
+  }
+
+  async executeModelSwitched(event: ModelSwitchedEvent): Promise<void> {
+    const entries = this.hooks.get("modelSwitched") ?? [];
+    for (const entry of entries) {
+      const handler = entry.handler as HookHandler<"modelSwitched">;
       await handler(event);
     }
   }

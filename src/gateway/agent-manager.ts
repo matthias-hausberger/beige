@@ -250,13 +250,19 @@ export class AgentManager {
     const effectiveMessage = preResult.message;
 
     // Build list of models to try: explicit override → per-session override → primary + fallbacks.
-    // getModelsToTry respects per-session model preferences so a user's /model choice is
-    // preserved across messages and gateway restarts rather than always starting from primary.
+    // getModelsToTry only honours explicit user overrides (persisted via /model),
+    // NOT automatic fallback state — so sessions always try primary first once
+    // its cooldown expires.
     const modelsToTry = opts.modelOverride
       ? [opts.modelOverride]
       : this.getModelsToTry(agentConfig, sessionKey);
 
+    // Track the primary model so we can detect fallback switches
+    const primaryModel = modelsToTry[0];
+
     let lastError: Error | undefined;
+    /** Reason for the most recent model skip/failure (used in modelSwitched event). */
+    let lastSkipReason: "fallback_rate_limit" | "fallback_error" | "fallback_timeout" = "fallback_error";
 
     for (const modelRef of modelsToTry) {
       const { provider, model: modelId } = modelRef;
@@ -270,6 +276,7 @@ export class AgentManager {
           "[AGENT]",
           `Skipping — in cooldown for ${Math.round(remaining / 1000)}s`
         );
+        lastSkipReason = "fallback_rate_limit";
         continue;
       }
 
@@ -287,6 +294,19 @@ export class AgentManager {
         // Success — mark provider as healthy
         this.providerHealth.markHealthy(provider, modelId);
         modelLogger.log("[AGENT]", `${opts.operationLabel} succeeded`);
+
+        // Fire modelSwitched hook if we ended up on a different model than primary
+        if (provider !== primaryModel.provider || modelId !== primaryModel.model) {
+          const channel = opts.channel ?? parseSessionKey(sessionKey).channel;
+          this.pluginRegistry.executeModelSwitched({
+            sessionKey,
+            agentName,
+            channel,
+            previousModel: { provider: primaryModel.provider, modelId: primaryModel.model },
+            newModel: { provider, modelId },
+            reason: lastSkipReason,
+          }).catch((err) => modelLogger.error("[AGENT]", `modelSwitched hook error: ${err}`));
+        }
 
         // Execute postResponse hooks — may transform or suppress the response
         const postResult = await this.pluginRegistry.executePostResponse({
@@ -332,6 +352,7 @@ export class AgentManager {
             ? `${Math.round(rateLimitInfo.retryAfterMs / 1000)}s (from retry-after)`
             : rateLimitInfo.isHard ? "300s (default hard)" : "60s (default soft)";
           modelLogger.warn("[AGENT]", `  Cooldown: ${effectiveCooldown} — trying next model`);
+          lastSkipReason = "fallback_rate_limit";
           continue;
         }
 
@@ -361,6 +382,9 @@ export class AgentManager {
         if ((error as any).isPromptTimeout) {
           await this.disposeSession(sessionKey);
           modelLogger.log("[AGENT]", `Disposed stuck session after timeout; next attempt will start fresh`);
+          lastSkipReason = "fallback_timeout";
+        } else {
+          lastSkipReason = "fallback_error";
         }
       }
     }
@@ -374,13 +398,13 @@ export class AgentManager {
   /**
    * Get the ordered list of models to try for a session prompt.
    *
-   * If the session has an active per-session model override (set by the user
-   * via /model, Ctrl+P, or a channel command), we start the fallback chain
-   * from that model rather than always from the agent's primary model.
-   * This preserves per-session model selection across gateway restarts and
-   * across multiple messages in the same session.
+   * Only **explicit user overrides** (set via /model, Ctrl+P, or a channel
+   * command and persisted to session metadata as `activeModel`) shift the
+   * fallback chain start.  The in-memory `currentModel` — which may have been
+   * set by a previous automatic fallback — is intentionally NOT used here so
+   * that sessions always try the primary model first once its cooldown expires.
    *
-   * Fallback order when an override is active:
+   * Fallback order when an explicit override is active:
    *   [override, …remaining fallbacks after override in config order]
    *
    * Fallback order when no override is set:
@@ -390,27 +414,26 @@ export class AgentManager {
     const allModels: ModelRef[] = [agentConfig.model, ...(agentConfig.fallbackModels ?? [])];
 
     if (sessionKey) {
-      // Check in-memory session first (cheapest, most up-to-date).
-      const inMemory = this.sessions.get(sessionKey);
-      const overrideRef = inMemory?.currentModel
-        ?? (() => {
-          // Fall back to stored metadata when no in-memory session exists yet.
-          const stored = this.sessionStore.getEntry(sessionKey)?.metadata?.activeModel as
-            | { provider: string; modelId: string }
-            | undefined;
-          if (!stored) return undefined;
-          return allModels.find(
-            (m) => m.provider === stored.provider && m.model === stored.modelId
-          );
-        })();
+      // Only honour explicit user overrides persisted to session metadata —
+      // NOT the in-memory currentModel which may have been set by automatic
+      // fallback.  This ensures sessions return to the primary model once
+      // its rate-limit cooldown expires instead of staying stuck on a fallback.
+      const stored = this.sessionStore.getEntry(sessionKey)?.metadata?.activeModel as
+        | { provider: string; modelId: string }
+        | undefined;
 
-      if (overrideRef) {
-        const startIdx = allModels.findIndex(
-          (m) => m.provider === overrideRef.provider && m.model === overrideRef.model
+      if (stored) {
+        const overrideRef = allModels.find(
+          (m) => m.provider === stored.provider && m.model === stored.modelId
         );
-        if (startIdx > 0) {
-          // Start from the override model; if it fails, continue with remaining fallbacks.
-          return allModels.slice(startIdx);
+        if (overrideRef) {
+          const startIdx = allModels.findIndex(
+            (m) => m.provider === overrideRef.provider && m.model === overrideRef.model
+          );
+          if (startIdx > 0) {
+            // Start from the override model; if it fails, continue with remaining fallbacks.
+            return allModels.slice(startIdx);
+          }
         }
       }
     }

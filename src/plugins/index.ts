@@ -38,6 +38,7 @@ export type {
   PostToolExecEvent,
   PostToolExecResult,
   SessionLifecycleEvent,
+  ModelSwitchedEvent,
   GatewayLifecycleEvent,
   ModelInfo,
   LlmMessage,

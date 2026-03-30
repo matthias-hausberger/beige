@@ -130,6 +130,7 @@ export type HookName =
   | "postToolExec"
   | "sessionCreated"
   | "sessionDisposed"
+  | "modelSwitched"
   | "gatewayStarted"
   | "gatewayShutdown";
 
@@ -198,6 +199,22 @@ export interface SessionLifecycleEvent {
   channel: string;
 }
 
+/**
+ * Fired when a session switches to a different model — either automatically
+ * (fallback due to rate limit / error) or explicitly (user command).
+ */
+export interface ModelSwitchedEvent {
+  sessionKey: string;
+  agentName: string;
+  channel: string;
+  /** The model that was previously active (provider/modelId). */
+  previousModel: { provider: string; modelId: string };
+  /** The model that is now active (provider/modelId). */
+  newModel: { provider: string; modelId: string };
+  /** Why the switch happened. */
+  reason: "fallback_rate_limit" | "fallback_error" | "fallback_timeout" | "user_override";
+}
+
 export interface GatewayLifecycleEvent {
   /** No additional data for gateway lifecycle events. */
 }
@@ -210,6 +227,7 @@ export interface HookTypeMap {
   postToolExec: { event: PostToolExecEvent; result: PostToolExecResult };
   sessionCreated: { event: SessionLifecycleEvent; result: void };
   sessionDisposed: { event: SessionLifecycleEvent; result: void };
+  modelSwitched: { event: ModelSwitchedEvent; result: void };
   gatewayStarted: { event: GatewayLifecycleEvent; result: void };
   gatewayShutdown: { event: GatewayLifecycleEvent; result: void };
 }
@@ -500,6 +518,13 @@ export interface PluginContext {
     lastError?: string;
     consecutiveFailures: number;
   } | undefined;
+
+  /**
+   * Clear the health/cooldown state for a model, resetting it to healthy.
+   * Use this when the user explicitly wants to retry a model that was
+   * previously rate-limited or marked as failed (e.g. after `/model reset`).
+   */
+  clearModelHealth(provider: string, modelId: string): void;
 
   /**
    * Get the most recent token usage for a session by reading the session file.

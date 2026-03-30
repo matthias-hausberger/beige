@@ -288,25 +288,25 @@ describe("extractRateLimitInfo", () => {
       expect(info.isRateLimit).toBe(true);
     });
 
-    it("detects 'overloaded' in error message", () => {
+    it("does NOT classify 'overloaded' as a rate limit (transient capacity error)", () => {
       const error = { message: "API is overloaded" };
       const info = extractRateLimitInfo(error);
 
-      expect(info.isRateLimit).toBe(true);
+      expect(info.isRateLimit).toBe(false);
     });
 
-    it("detects 'capacity' in error message", () => {
+    it("does NOT classify 'capacity' as a rate limit (transient capacity error)", () => {
       const error = { error: { message: "Insufficient capacity" } };
       const info = extractRateLimitInfo(error);
 
-      expect(info.isRateLimit).toBe(true);
+      expect(info.isRateLimit).toBe(false);
     });
 
-    it("detects 'temporarily unavailable' in error message", () => {
+    it("does NOT classify 'temporarily unavailable' as a rate limit (transient capacity error)", () => {
       const error = { message: "Service temporarily unavailable" };
       const info = extractRateLimitInfo(error);
 
-      expect(info.isRateLimit).toBe(true);
+      expect(info.isRateLimit).toBe(false);
     });
   });
 

@@ -265,21 +265,39 @@ export function extractRateLimitInfo(error: unknown): {
     "rate_limit",
     "rate limit",
     "too many requests",
+  ];
+
+  // Patterns that indicate transient server capacity issues — NOT rate limits.
+  // These are retried by pi's internal retry mechanism; if they still fail,
+  // the session falls back locally but we do NOT mark the model as globally
+  // cooling down (unlike real rate limits).
+  const capacityPatterns = [
     "overloaded",
     "capacity",
     "temporarily unavailable",
   ];
 
   const combined = `${errorType} ${errorMessage}`.toLowerCase();
-  const matchedPattern = rateLimitPatterns.find((p) => combined.includes(p));
+  const matchedRateLimit = rateLimitPatterns.find((p) => combined.includes(p));
 
-  if (matchedPattern) {
+  if (matchedRateLimit) {
     const retryAfter = err.headers?.["retry-after"] ?? err.headers?.["Retry-After"];
     return {
       isRateLimit: true,
       retryAfterMs: parseRetryAfter(retryAfter),
       isHard: false,
-      detectionReason: `pattern match: "${matchedPattern}" in "${combined.substring(0, 200)}"`,
+      detectionReason: `pattern match: "${matchedRateLimit}" in "${combined.substring(0, 200)}"`,
+    };
+  }
+
+  // Capacity errors — classified as transient, NOT rate limits.
+  // Returning isRateLimit: false means runWithFallback will still try the next
+  // model for this session, but will NOT mark the model as globally cooling down.
+  const matchedCapacity = capacityPatterns.find((p) => combined.includes(p));
+  if (matchedCapacity) {
+    return {
+      isRateLimit: false,
+      detectionReason: `capacity/transient: "${matchedCapacity}" in "${combined.substring(0, 200)}"`,
     };
   }
 

@@ -892,6 +892,23 @@ export class AgentManager {
     this.providerHealth.markFailed(provider, modelId, message);
   }
 
+  /** Get health/cooldown info for a model. Returns undefined if no data recorded. */
+  getModelHealth(provider: string, modelId: string): {
+    isCoolingDown: boolean;
+    remainingCooldownMs: number;
+    lastError?: string;
+    consecutiveFailures: number;
+  } | undefined {
+    const entry = this.providerHealth.get(provider, modelId);
+    if (!entry) return undefined;
+    return {
+      isCoolingDown: this.providerHealth.isCoolingDown(provider, modelId),
+      remainingCooldownMs: this.providerHealth.getRemainingCooldown(provider, modelId),
+      lastError: entry.lastError,
+      consecutiveFailures: entry.consecutiveFailures,
+    };
+  }
+
   /**
    * Increment the count of active direct LLM streams (TUI proxy calls).
    * Call this when /api/chat/stream begins; pair with decrementActiveStream.

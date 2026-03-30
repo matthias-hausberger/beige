@@ -213,6 +213,10 @@ export function createPluginContext(deps: PluginContextDeps): PluginContext {
       };
     },
 
+    getModelHealth(provider, modelId) {
+      return getAgentManager().getModelHealth(provider, modelId);
+    },
+
     getSessionUsage(sessionKey): SessionUsage | undefined {
       const entries = readSessionEntries(sessionKey);
       if (!entries) return undefined;

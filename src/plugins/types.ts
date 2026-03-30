@@ -491,6 +491,17 @@ export interface PluginContext {
   getModel(provider: string, modelId: string): ModelInfo | undefined;
 
   /**
+   * Get the health/cooldown status of a specific model.
+   * Returns undefined if no health data has been recorded for this model yet.
+   */
+  getModelHealth(provider: string, modelId: string): {
+    isCoolingDown: boolean;
+    remainingCooldownMs: number;
+    lastError?: string;
+    consecutiveFailures: number;
+  } | undefined;
+
+  /**
    * Get the most recent token usage for a session by reading the session file.
    * Returns undefined if the session has no assistant messages yet.
    *

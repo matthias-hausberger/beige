@@ -54,6 +54,7 @@ Providers are registered under `llm.providers` in `config.json5`. Each key becom
 | `apiKey` | Yes* | API key — use `${VAR}` to read from environment |
 | `baseUrl` | No | Custom API endpoint (required for non-built-in providers) |
 | `api` | No | API type (see table below) |
+| `concurrency` | No | Max parallel LLM requests to this provider. Excess requests queue (FIFO) until a slot frees up. Default: unlimited. |
 
 *Local providers like Ollama don't need an `apiKey`.
 
@@ -172,3 +173,27 @@ When a provider returns HTTP 429 or a rate-limit error:
 - **High availability** — Keep agents working even if one model is rate-limited
 - **Cost control** — Use a cheaper model as fallback for non-critical work
 - **Model migration** — Gradually shift from one model to another
+
+### Concurrency Limits
+
+When running many agents or handling high-traffic channels, parallel LLM requests to a single provider can spike. The `concurrency` setting prevents this by capping in-flight requests per provider:
+
+```json5
+{
+  llm: {
+    providers: {
+      zai: {
+        apiKey: "${ZAI_API_KEY}",
+        baseUrl: "https://api.zai.com/v1",
+        api: "openai-completions",
+        concurrency: 5,
+      },
+    },
+  },
+}
+```
+
+- Requests beyond the limit **wait in a FIFO queue** until a slot frees up — they are never rejected or errored.
+- Omit `concurrency` (or set to `-1`) for unlimited parallel requests (the default).
+- The limit applies per provider across all agents and sessions — all models on the same provider share the pool.
+- This is complementary to rate-limit handling: concurrency limits **prevent** overloading a provider, while fallback models handle errors **after** they occur.

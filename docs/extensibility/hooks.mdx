@@ -16,6 +16,7 @@ Plugins can register hooks to intercept and modify messages, tool calls, and lif
 | `postToolExec` | After a tool executes | Transform result | Audit, caching |
 | `sessionCreated` | New session created | Observe only | Analytics, welcome messages |
 | `sessionDisposed` | Session cleaned up | Observe only | Cleanup |
+| `modelSwitched` | Model changed (fallback or user override) | Observe only | Notifications, analytics |
 | `gatewayStarted` | All plugins loaded + started | Observe only | Health checks |
 | `gatewayShutdown` | Before gateway shuts down | Observe only | Cleanup |
 
@@ -171,4 +172,32 @@ interface SessionLifecycleEvent {
 interface GatewayLifecycleEvent {}
 
 // gatewayStarted / gatewayShutdown: return void
+```
+
+### modelSwitched
+
+Fired when a session uses a different model than the primary — either due to automatic fallback (rate limit, error, timeout) or an explicit user override (e.g. `/model` command).
+
+```typescript
+interface ModelSwitchedEvent {
+  sessionKey: string;
+  agentName: string;
+  channel: string;
+  previousModel: { provider: string; modelId: string };
+  newModel: { provider: string; modelId: string };
+  reason: "fallback_rate_limit" | "fallback_error" | "fallback_timeout" | "user_override";
+}
+
+// return void
+```
+
+Example: send a Telegram notification when a fallback occurs:
+
+```typescript
+reg.hook("modelSwitched", async (event) => {
+  if (event.reason === "user_override") return; // user chose this, no alert needed
+  const from = `${event.previousModel.provider}/${event.previousModel.modelId}`;
+  const to = `${event.newModel.provider}/${event.newModel.modelId}`;
+  ctx.log.warn(`Model switched from ${from} to ${to} (${event.reason})`);
+});
 ```

@@ -137,6 +137,14 @@ const LLMProviderConfig = Type.Object(
         }
       )
     ),
+    concurrency: Type.Optional(
+      Type.Number({
+        description:
+          "Maximum number of concurrent LLM requests to this provider. " +
+          "When the limit is reached, new requests wait until a slot frees up. " +
+          "Default: -1 (unlimited).",
+      })
+    ),
   },
   { title: "LLMProviderConfig" }
 );

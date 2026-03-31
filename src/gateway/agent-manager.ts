@@ -73,6 +73,7 @@ import { ProviderHealthTracker, extractRateLimitInfo } from "./provider-health.j
 import { parseSessionKey, type SessionContext } from "../types/session.js";
 import { beigeDir } from "../paths.js";
 import { validateModelAllowed, buildAllowedModels } from "../config/restricted-model-registry.js";
+import { ConcurrencyLimiter } from "./concurrency.js";
 
 /**
  * Callback fired by the gateway when the agent is about to execute a tool.
@@ -128,6 +129,8 @@ export class AgentManager {
   private sessions = new Map<string, ManagedSession>();
   /** Tracks provider health and rate limits */
   private providerHealth = new ProviderHealthTracker();
+  /** Per-provider concurrency limiter */
+  private concurrencyLimiter: ConcurrencyLimiter;
   /** Beige home directory */
   private beigeDir = beigeDir();
   /**
@@ -148,7 +151,9 @@ export class AgentManager {
     private authStorage: AuthStorage,
     private modelRegistry: ModelRegistry,
     private sessionStore: BeigeSessionStore
-  ) {}
+  ) {
+    this.concurrencyLimiter = new ConcurrencyLimiter(config);
+  }
 
   /**
    * Get or create a session for a given key.
@@ -271,72 +276,146 @@ export class AgentManager {
     /** Reason for the most recent model skip/failure (used in modelSwitched event). */
     let lastSkipReason: "fallback_rate_limit" | "fallback_error" | "fallback_timeout" = "fallback_error";
 
-    for (const modelRef of modelsToTry) {
-      const { provider, model: modelId } = modelRef;
-      const modelLabel = `${provider}/${modelId}`;
-      const modelLogger = createLogger({ agent: agentName, session: sessionKey, model: modelLabel });
+    // ── Multi-pass retry loop ────────────────────────────────────────
+    //
+    // Instead of trying each model once and giving up, we loop through
+    // the model list up to MAX_PASSES times.  A model is eligible for
+    // retry on the next pass if:
+    //   a) it is NOT in rate-limit cooldown (retryAfter > now), AND
+    //   b) it has NOT accumulated MAX_FAILURES_PER_MODEL consecutive
+    //      failures within this single prompt run.
+    //
+    // This handles transient "overloaded" errors gracefully: if model A
+    // fails once and model B also fails once, model A gets another shot
+    // on the next pass — the overload may have cleared in the meantime.
+    //
+    // Rate-limited models (HTTP 429 with retryAfter) are still skipped
+    // globally; only non-cooldown failures use the retry passes.
 
-      // Skip if this model is in cooldown
-      if (this.providerHealth.isCoolingDown(provider, modelId)) {
-        const remaining = this.providerHealth.getRemainingCooldown(provider, modelId);
-        modelLogger.log(
-          "[AGENT]",
-          `Skipping — in cooldown for ${Math.round(remaining / 1000)}s`
-        );
-        lastSkipReason = "fallback_rate_limit";
-        continue;
-      }
+    const MAX_PASSES = 3;
+    const MAX_FAILURES_PER_MODEL = 3;
 
-      modelLogger.log("[AGENT]", `Attempting ${opts.operationLabel}`);
+    /** Per-model failure count within this prompt run. Key: "provider/model" */
+    const runFailures = new Map<string, number>();
 
-      try {
-        const result = await this.executePromptWithModel(
-          sessionKey,
-          agentName,
-          effectiveMessage,
-          modelRef,
-          opts
-        );
+    for (let pass = 0; pass < MAX_PASSES; pass++) {
+      let anyEligible = false;
 
-        // Success — mark provider as healthy
-        this.providerHealth.markHealthy(provider, modelId);
-        modelLogger.log("[AGENT]", `${opts.operationLabel} succeeded`);
+      for (const modelRef of modelsToTry) {
+        const { provider, model: modelId } = modelRef;
+        const modelLabel = `${provider}/${modelId}`;
+        const modelKey = modelLabel;
+        const modelLogger = createLogger({ agent: agentName, session: sessionKey, model: modelLabel });
 
-        // Fire modelSwitched hook if we ended up on a different model than primary
-        if (provider !== primaryModel.provider || modelId !== primaryModel.model) {
-          const channel = opts.channel ?? parseSessionKey(sessionKey).channel;
-          this.pluginRegistry.executeModelSwitched({
-            sessionKey,
-            agentName,
-            channel,
-            previousModel: { provider: primaryModel.provider, modelId: primaryModel.model },
-            newModel: { provider, modelId },
-            reason: lastSkipReason,
-          }).catch((err) => modelLogger.error("[AGENT]", `modelSwitched hook error: ${err}`));
+        // Skip if this model is in rate-limit cooldown (global, persisted)
+        if (this.providerHealth.isCoolingDown(provider, modelId)) {
+          const remaining = this.providerHealth.getRemainingCooldown(provider, modelId);
+          modelLogger.log(
+            "[AGENT]",
+            `Skipping — in cooldown for ${Math.round(remaining / 1000)}s`
+          );
+          lastSkipReason = "fallback_rate_limit";
+          continue;
         }
 
-        // Execute postResponse hooks — may transform or suppress the response
-        const postResult = await this.pluginRegistry.executePostResponse({
-          response: result,
-          sessionKey,
-          agentName,
-          channel: opts.channel ?? "unknown",
-        });
-        return postResult.block ? "" : postResult.response;
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
-        lastError = error;
+        // Skip if this model has exhausted its per-run failure budget
+        const failures = runFailures.get(modelKey) ?? 0;
+        if (failures >= MAX_FAILURES_PER_MODEL) {
+          continue;
+        }
 
-        // Check if it's a rate limit
-        const rateLimitInfo = extractRateLimitInfo(err);
-        if (rateLimitInfo.isRateLimit) {
-          // Log the full error details BEFORE cooldown so we can diagnose
-          const cooldownType = rateLimitInfo.isHard ? "HARD (HTTP 429)" : "SOFT (pattern match)";
-          modelLogger.warn("[AGENT]", `Rate limit detected — ${cooldownType}`);
-          modelLogger.warn("[AGENT]", `  Detection reason: ${rateLimitInfo.detectionReason}`);
-          modelLogger.warn("[AGENT]", `  Error message: ${error.message}`);
-          modelLogger.warn("[AGENT]", `  Error stack: ${error.stack ?? "(no stack)"}`);
-          // Log raw error properties for maximum visibility
+        anyEligible = true;
+        const passLabel = MAX_PASSES > 1 ? ` (pass ${pass + 1}/${MAX_PASSES})` : "";
+        modelLogger.log("[AGENT]", `Attempting ${opts.operationLabel}${passLabel}`);
+
+        try {
+          const result = await this.executePromptWithModel(
+            sessionKey,
+            agentName,
+            effectiveMessage,
+            modelRef,
+            opts
+          );
+
+          // Success — mark provider as healthy and reset run failures
+          this.providerHealth.markHealthy(provider, modelId);
+          modelLogger.log("[AGENT]", `${opts.operationLabel} succeeded`);
+
+          // Fire modelSwitched hook if we ended up on a different model than primary
+          if (provider !== primaryModel.provider || modelId !== primaryModel.model) {
+            const channel = opts.channel ?? parseSessionKey(sessionKey).channel;
+            this.pluginRegistry.executeModelSwitched({
+              sessionKey,
+              agentName,
+              channel,
+              previousModel: { provider: primaryModel.provider, modelId: primaryModel.model },
+              newModel: { provider, modelId },
+              reason: lastSkipReason,
+            }).catch((err) => modelLogger.error("[AGENT]", `modelSwitched hook error: ${err}`));
+          }
+
+          // Execute postResponse hooks — may transform or suppress the response
+          const postResult = await this.pluginRegistry.executePostResponse({
+            response: result,
+            sessionKey,
+            agentName,
+            channel: opts.channel ?? "unknown",
+          });
+          return postResult.block ? "" : postResult.response;
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          lastError = error;
+
+          // Track per-run failures for this model
+          runFailures.set(modelKey, (runFailures.get(modelKey) ?? 0) + 1);
+          const currentFailures = runFailures.get(modelKey)!;
+
+          // Check if it's a rate limit
+          const rateLimitInfo = extractRateLimitInfo(err);
+          if (rateLimitInfo.isRateLimit) {
+            // Log the full error details BEFORE cooldown so we can diagnose
+            const cooldownType = rateLimitInfo.isHard ? "HARD (HTTP 429)" : "SOFT (pattern match)";
+            modelLogger.warn("[AGENT]", `Rate limit detected — ${cooldownType}`);
+            modelLogger.warn("[AGENT]", `  Detection reason: ${rateLimitInfo.detectionReason}`);
+            modelLogger.warn("[AGENT]", `  Error message: ${error.message}`);
+            modelLogger.warn("[AGENT]", `  Error stack: ${error.stack ?? "(no stack)"}`);
+            // Log raw error properties for maximum visibility
+            try {
+              const errObj = err as Record<string, any>;
+              const details: Record<string, unknown> = {};
+              for (const key of ["status", "statusCode", "code", "type", "headers", "body", "response", "error", "cause"]) {
+                if (errObj[key] !== undefined) details[key] = errObj[key];
+              }
+              if (Object.keys(details).length > 0) {
+                modelLogger.warn("[AGENT]", `  Error details: ${JSON.stringify(details, null, 2).substring(0, 2000)}`);
+              }
+            } catch { /* best-effort */ }
+
+            this.providerHealth.markRateLimited(
+              provider,
+              modelId,
+              rateLimitInfo.retryAfterMs,
+              error.message,
+              rateLimitInfo.isHard ?? true
+            );
+            const effectiveCooldown = rateLimitInfo.retryAfterMs != null
+              ? `${Math.round(rateLimitInfo.retryAfterMs / 1000)}s (from retry-after)`
+              : rateLimitInfo.isHard ? "300s (default hard)" : "60s (default soft)";
+            modelLogger.warn("[AGENT]", `  Cooldown: ${effectiveCooldown} — trying next model`);
+            // Rate-limited models are exhausted for this run (cooldown handles global skip)
+            runFailures.set(modelKey, MAX_FAILURES_PER_MODEL);
+            lastSkipReason = "fallback_rate_limit";
+            continue;
+          }
+
+          // Non-rate-limit error — mark as failed, may retry on next pass
+          this.providerHealth.markFailed(provider, modelId, error.message);
+          modelLogger.error(
+            "[AGENT]",
+            `Failed (${currentFailures}/${MAX_FAILURES_PER_MODEL}): ${error.message}`,
+            error.stack ?? "(no stack trace)"
+          );
+          // Log raw error properties for diagnosis
           try {
             const errObj = err as Record<string, any>;
             const details: Record<string, unknown> = {};
@@ -344,56 +423,26 @@ export class AgentManager {
               if (errObj[key] !== undefined) details[key] = errObj[key];
             }
             if (Object.keys(details).length > 0) {
-              modelLogger.warn("[AGENT]", `  Error details: ${JSON.stringify(details, null, 2).substring(0, 2000)}`);
+              modelLogger.error("[AGENT]", `Error details: ${JSON.stringify(details, null, 2).substring(0, 2000)}`);
             }
           } catch { /* best-effort */ }
+          logErrorAuto(error, { operation: opts.operationLabel, agent: agentName, session: sessionKey, model: modelLabel });
 
-          this.providerHealth.markRateLimited(
-            provider,
-            modelId,
-            rateLimitInfo.retryAfterMs,
-            error.message,
-            rateLimitInfo.isHard ?? true
-          );
-          const effectiveCooldown = rateLimitInfo.retryAfterMs != null
-            ? `${Math.round(rateLimitInfo.retryAfterMs / 1000)}s (from retry-after)`
-            : rateLimitInfo.isHard ? "300s (default hard)" : "60s (default soft)";
-          modelLogger.warn("[AGENT]", `  Cooldown: ${effectiveCooldown} — trying next model`);
-          lastSkipReason = "fallback_rate_limit";
-          continue;
-        }
-
-        // Non-rate-limit error — mark as failed but try next
-        this.providerHealth.markFailed(provider, modelId, error.message);
-        modelLogger.error(
-          "[AGENT]",
-          `Failed: ${error.message}`,
-          error.stack ?? "(no stack trace)"
-        );
-        // Log raw error properties for diagnosis
-        try {
-          const errObj = err as Record<string, any>;
-          const details: Record<string, unknown> = {};
-          for (const key of ["status", "statusCode", "code", "type", "headers", "body", "response", "error", "cause"]) {
-            if (errObj[key] !== undefined) details[key] = errObj[key];
+          // If the session timed out, the underlying AgentSession is stuck and
+          // must be disposed before the next model attempt — otherwise
+          // getOrCreateSessionWithModel would return the same poisoned session.
+          if ((error as any).isPromptTimeout) {
+            await this.disposeSession(sessionKey);
+            modelLogger.log("[AGENT]", `Disposed stuck session after timeout; next attempt will start fresh`);
+            lastSkipReason = "fallback_timeout";
+          } else {
+            lastSkipReason = "fallback_error";
           }
-          if (Object.keys(details).length > 0) {
-            modelLogger.error("[AGENT]", `Error details: ${JSON.stringify(details, null, 2).substring(0, 2000)}`);
-          }
-        } catch { /* best-effort */ }
-        logErrorAuto(error, { operation: opts.operationLabel, agent: agentName, session: sessionKey, model: modelLabel });
-
-        // If the session timed out, the underlying AgentSession is stuck and
-        // must be disposed before the next model attempt — otherwise
-        // getOrCreateSessionWithModel would return the same poisoned session.
-        if ((error as any).isPromptTimeout) {
-          await this.disposeSession(sessionKey);
-          modelLogger.log("[AGENT]", `Disposed stuck session after timeout; next attempt will start fresh`);
-          lastSkipReason = "fallback_timeout";
-        } else {
-          lastSkipReason = "fallback_error";
         }
       }
+
+      // If no model was eligible this pass, stop early
+      if (!anyEligible) break;
     }
 
     // All models failed
@@ -477,6 +526,7 @@ export class AgentManager {
     );
     managed.inflightCount++;
 
+    const release = await this.concurrencyLimiter.acquire(modelRef.provider);
     try {
       return await new Promise<string>((resolve, reject) => {
         let responseText = "";
@@ -561,6 +611,7 @@ export class AgentManager {
         });
       });
     } finally {
+      release();
       this.decrementInflight(managed);
     }
   }

@@ -140,6 +140,7 @@ Single config file (JSON5 — JSON with comments) drives the entire system. No d
 - **Config loader**: Reads and validates `config.json5`, resolves env vars.
 - **Agent manager**: Creates/destroys agent sessions. Maps session keys → pi SDK `AgentSession` + Docker container. Supports multiple concurrent sessions per agent (one per channel/chat/thread). Handles model fallback and rate limit tracking.
 - **Provider health tracker**: Monitors per-provider rate limits and cooldowns. Persisted to `~/.beige/data/provider-health.json`.
+- **Concurrency limiter**: Per-provider concurrency control. When a provider has a `concurrency` limit configured, requests beyond that limit queue up (FIFO) until a slot frees up. Prevents overwhelming providers with too many parallel LLM calls.
 - **LLM proxy**: The `/api/chat/stream` endpoint proxies LLM calls for the TUI. Resolves API keys server-side, executes prePrompt/postResponse hooks, applies fallback model logic on rate limits, and audit-logs every attempt. The TUI never needs API keys.
 - **Sandbox manager**: Creates Docker containers with correct mounts, generates tool launchers, manages lifecycle.
 - **Socket server**: One Unix domain socket per agent at `~/.beige/sockets/<agent>.sock`, mounted into container at `/beige/gateway.sock`.
@@ -148,19 +149,50 @@ Single config file (JSON5 — JSON with comments) drives the entire system. No d
 
 #### Model Fallback
 
-When an agent has `fallbackModels` configured, the gateway:
+When an agent has `fallbackModels` configured, the gateway uses a multi-pass retry loop:
 
-1. Tries the primary model first
-2. If the request fails (after the SDK's built-in 3 retries), tries each fallback in order
-3. Skips models that are in cooldown (rate-limited)
-4. Returns the first successful response, or an error if all models fail
+1. Tries each model in order (primary first, then fallbacks)
+2. If a model fails, moves to the next one — but keeps it eligible for retry on the next pass
+3. Loops through the model list up to **3 passes** before giving up
+4. A model is removed from the retry pool when it either:
+   - Has a rate-limit cooldown active (`retryAfter` in the future), OR
+   - Has accumulated **3 consecutive failures** in this prompt run
+5. Returns the first successful response, or an error if all models are exhausted
 
-Rate limit handling:
+This handles transient errors (e.g. Anthropic "overloaded") gracefully: if model A fails once and model B also fails once, model A gets another shot on the next pass — the overload may have cleared by then. With 2 models, this means up to 6 total attempts before giving up.
 
-- When a provider returns a 429 or rate-limit error, it's marked as "cooling down"
-- If the response includes a `retry-after` header, that time is used
-- Otherwise, a 30-minute default cooldown is applied
+Rate limit vs. transient error handling:
+
+- **Rate limits** (HTTP 429, `rate_limit` / `too many requests` patterns): marked as globally cooling down — all sessions skip this model until the cooldown expires
+- **Transient capacity errors** (`overloaded`, `capacity`, `temporarily unavailable`): NOT marked as globally cooling down — other sessions can still use the model. The failing session retries via the multi-pass loop.
+- If a rate-limit response includes a `retry-after` header, that time is used for the cooldown
+- Otherwise, hard rate limits (HTTP 429) default to 5-minute cooldown; soft rate limits (pattern-matched) default to 60 seconds
 - Cooldown state is persisted in `~/.beige/data/provider-health.json` and survives restarts
+- A `modelSwitched` hook fires when a session ends up on a non-primary model, allowing plugins to send notifications
+
+#### Provider Concurrency Limits
+
+When multiple agents or sessions share a provider, the total number of parallel LLM requests can spike — especially with channels that handle many conversations simultaneously. The `concurrency` setting on a provider caps how many requests can be in-flight at once:
+
+```json5
+{
+  llm: {
+    providers: {
+      zai: {
+        apiKey: "...",
+        concurrency: 5,  // max 5 parallel LLM calls to this provider
+      },
+    },
+  },
+}
+```
+
+- Requests beyond the limit are queued (FIFO) and await until a slot frees up — they are **never rejected**.
+- Default: no limit (`-1` / omitted). All requests pass through immediately.
+- The limiter sits inside `executePromptWithModel`, so it applies to both `prompt()` and `promptStreaming()` calls uniformly.
+- Concurrency is tracked per provider, not per model — all models on the same provider share the same pool.
+
+This is complementary to the rate-limit fallback system: concurrency limits **prevent** overloading a provider in the first place, while fallback handles errors **after** they occur.
 
 ### 3. Core Tools (`src/tools/core.ts`)
 

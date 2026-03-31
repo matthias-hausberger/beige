@@ -180,6 +180,8 @@ Plugin `path` values are resolved relative to the config file's directory, unles
 
 Optional array of `ModelRef` objects tried in order when the primary model fails or is rate-limited. Each fallback can carry its own `thinkingLevel` and `compactionThreshold`.
 
+The gateway uses a **multi-pass retry loop**: it cycles through the model list up to 3 times, giving each model up to 3 chances per prompt. Rate-limited models (HTTP 429) are skipped immediately; transient errors (e.g. "overloaded") consume one of the 3 chances and the model is retried on the next pass. See [Model Fallback](/gateway/architecture#model-fallback) for details.
+
 ### `agents.<name>.sandbox`
 
 | Field | Required | Default | Description |

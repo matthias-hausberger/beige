@@ -19,7 +19,7 @@ import type { BeigeConfig, AgentConfig, ModelRef } from "../config/schema.js";
 import type { SandboxManager } from "../sandbox/manager.js";
 import type { AuditLogger } from "./audit.js";
 import type { BeigeSessionStore } from "./sessions.js";
-import { createCoreTools, type ToolStartHandlerRef, type CurrentModelRef } from "../tools/core.js";
+import { createCoreTools, type ToolStartHandlerRef, type CurrentModelRef, type HeartbeatRef } from "../tools/core.js";
 import type { PluginRegistry } from "../plugins/registry.js";
 import { buildSkillContext, validateSkillDeps, type LoadedSkill } from "../skills/registry.js";
 
@@ -104,6 +104,13 @@ export interface ManagedSession {
    * (including during fallback switches) without being recreated.
    */
   currentModelRef: CurrentModelRef;
+  /**
+   * Mutable heartbeat ref shared with core tool closures.
+   * Set by executePromptWithModel to the watchdog arm function so that
+   * tool executions reset the inactivity timer — prevents long-running
+   * tools (e.g. `pnpm test`) from triggering a false timeout.
+   */
+  heartbeatRef: HeartbeatRef;
 }
 
 /**
@@ -506,6 +513,12 @@ export class AgentManager {
         // Arm the watchdog immediately — reset on each incoming event.
         armWatchdog();
 
+        // Wire the heartbeat so core tool executions also reset the watchdog.
+        // This prevents long-running tools (e.g. `pnpm test`) from triggering
+        // a false timeout — the watchdog only fires if NOTHING happens (no
+        // session events AND no tool calls) for the full timeout period.
+        managed.heartbeatRef.fn = armWatchdog;
+
         const unsubscribe = managed.session.subscribe(
           makeSessionSubscriber({
             sessionKey,
@@ -522,6 +535,7 @@ export class AgentManager {
               if (!settled) {
                 settled = true;
                 clearTimeout(watchdog);
+                managed.heartbeatRef.fn = undefined;
                 if (errMsg) {
                   promptLogger.error("[AGENT]", `LLM error: ${errMsg}`);
                   reject(new Error(errMsg));
@@ -668,11 +682,12 @@ export class AgentManager {
 
     // Build pi session
     const toolStartHandlerRef: ToolStartHandlerRef = { fn: opts?.onToolStart };
+    const heartbeatRef: HeartbeatRef = { fn: undefined };
     const agentDir = resolve(this.beigeDir, "agents", agentName);
     const workspaceDir = agentConfig.workspaceDir 
       ?? resolve(agentDir, "workspace");
     const sessionContext = { ...parseSessionKey(sessionKey), agentName, agentDir, workspaceDir, onToolStart: toolStartHandlerRef.fn };
-    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext, currentModelRef);
+    const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext, currentModelRef, heartbeatRef);
     const toolContext = buildPluginToolContext(agentConfig.tools, this.pluginRegistry);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
     const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
@@ -730,6 +745,7 @@ export class AgentManager {
       drainResolvers: [],
       toolStartHandlerRef,
       currentModelRef,
+      heartbeatRef,
     };
 
     this.sessions.set(sessionKey, managed);

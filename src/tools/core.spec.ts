@@ -447,4 +447,80 @@ describe("createCoreTools", () => {
       expect(handler1).toHaveBeenCalledTimes(1); // Not called again
     });
   });
+
+  describe("heartbeatRef", () => {
+    it("calls heartbeat on every tool execution", async () => {
+      const heartbeat = vi.fn();
+      const { HeartbeatRef } = await import("./core.js");
+      const heartbeatRef = { fn: heartbeat };
+
+      const toolsWithHeartbeat = createCoreTools(
+        "test-agent",
+        mockSandbox as unknown as SandboxManager,
+        mockAudit as unknown as AuditLogger,
+        handlerRef,
+        undefined,
+        undefined,
+        heartbeatRef
+      );
+
+      mockSandbox.exec.mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+
+      // Each tool should call heartbeat when executing
+      for (const tool of toolsWithHeartbeat) {
+        heartbeat.mockClear();
+
+        if (tool.name === "read") {
+          await tool.execute("id", { path: "/test.txt" });
+        } else if (tool.name === "write") {
+          await tool.execute("id", { path: "/test.txt", content: "hello" });
+        } else if (tool.name === "patch") {
+          await tool.execute("id", { path: "/test.txt", oldText: "a", newText: "b" });
+        } else if (tool.name === "exec") {
+          await tool.execute("id", { command: "echo hi" });
+        }
+
+        expect(heartbeat).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it("works without heartbeatRef (no crash)", async () => {
+      // Default tools created in beforeEach have no heartbeatRef
+      mockSandbox.exec.mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+      const result = await getTool("exec").execute("id", { command: "echo hi" });
+      expect(result.isError).toBeFalsy();
+    });
+
+    it("heartbeat can be wired and unwired at runtime", async () => {
+      const heartbeat = vi.fn();
+      const heartbeatRef = { fn: undefined as (() => void) | undefined };
+
+      const toolsWithRef = createCoreTools(
+        "test-agent",
+        mockSandbox as unknown as SandboxManager,
+        mockAudit as unknown as AuditLogger,
+        handlerRef,
+        undefined,
+        undefined,
+        heartbeatRef
+      );
+
+      mockSandbox.exec.mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+      const exec = toolsWithRef.find((t) => t.name === "exec")!;
+
+      // No heartbeat wired — should not crash
+      await exec.execute("id-1", { command: "echo 1" });
+      expect(heartbeat).not.toHaveBeenCalled();
+
+      // Wire it
+      heartbeatRef.fn = heartbeat;
+      await exec.execute("id-2", { command: "echo 2" });
+      expect(heartbeat).toHaveBeenCalledTimes(1);
+
+      // Unwire it
+      heartbeatRef.fn = undefined;
+      await exec.execute("id-3", { command: "echo 3" });
+      expect(heartbeat).toHaveBeenCalledTimes(1); // Not called again
+    });
+  });
 });

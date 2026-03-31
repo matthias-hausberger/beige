@@ -10,6 +10,14 @@ import type { SessionContext } from "../types/session.js";
 export type ToolStartHandlerRef = { fn: OnToolStart | undefined };
 
 /**
+ * Mutable ref for watchdog heartbeat.
+ * Core tools call `fn()` when they start executing so the inactivity watchdog
+ * in executePromptWithModel is reset — prevents long-running tool calls
+ * (e.g. `pnpm test`) from being mistaken for a stuck session.
+ */
+export type HeartbeatRef = { fn: (() => void) | undefined };
+
+/**
  * Resolved pi-SDK model shape — only the fields core tools need.
  * Avoids importing the full pi-ai Model type into core.ts.
  */
@@ -32,16 +40,18 @@ export function createCoreTools(
   audit: AuditLogger,
   handlerRef?: ToolStartHandlerRef,
   sessionContext?: SessionContext,
-  modelRef?: CurrentModelRef
+  modelRef?: CurrentModelRef,
+  heartbeatRef?: HeartbeatRef
 ): ToolDefinition[] {
   const handler: ToolStartHandlerRef = handlerRef ?? { fn: undefined };
   const model: CurrentModelRef = modelRef ?? { current: undefined };
+  const heartbeat: HeartbeatRef = heartbeatRef ?? { fn: undefined };
 
   return [
-    createReadTool(agentName, sandbox, audit, handler, model, sessionContext),
-    createWriteTool(agentName, sandbox, audit, handler, model, sessionContext),
-    createPatchTool(agentName, sandbox, audit, handler, model, sessionContext),
-    createExecTool(agentName, sandbox, audit, handler, sessionContext, model),
+    createReadTool(agentName, sandbox, audit, handler, model, sessionContext, heartbeat),
+    createWriteTool(agentName, sandbox, audit, handler, model, sessionContext, heartbeat),
+    createPatchTool(agentName, sandbox, audit, handler, model, sessionContext, heartbeat),
+    createExecTool(agentName, sandbox, audit, handler, sessionContext, model, heartbeat),
   ];
 }
 
@@ -55,7 +65,8 @@ function createReadTool(
   audit: AuditLogger,
   handler: HandlerRef,
   modelRef: CurrentModelRef,
-  sessionContext?: SessionContext
+  sessionContext?: SessionContext,
+  heartbeat?: HeartbeatRef
 ): ToolDefinition {
   return {
     name: "read",
@@ -75,6 +86,7 @@ function createReadTool(
     }),
     execute: async (toolCallId, params) => {
       const p = params as { path: string; offset?: number; limit?: number };
+      heartbeat?.fn?.();
       handler.fn?.("read", { path: p.path });
 
       // ── Image handling ──────────────────────────────────────────────
@@ -190,7 +202,8 @@ function createWriteTool(
   audit: AuditLogger,
   handler: HandlerRef,
   modelRef?: CurrentModelRef,
-  sessionContext?: SessionContext
+  sessionContext?: SessionContext,
+  heartbeat?: HeartbeatRef
 ): ToolDefinition {
   return {
     name: "write",
@@ -203,6 +216,7 @@ function createWriteTool(
     }),
     execute: async (toolCallId, params) => {
       const p = params as { path: string; content: string };
+      heartbeat?.fn?.();
       handler.fn?.("write", { path: p.path, bytes: Buffer.byteLength(p.content) });
       const timer = audit.start(
         agentName,
@@ -263,7 +277,8 @@ function createPatchTool(
   audit: AuditLogger,
   handler: HandlerRef,
   modelRef?: CurrentModelRef,
-  sessionContext?: SessionContext
+  sessionContext?: SessionContext,
+  heartbeat?: HeartbeatRef
 ): ToolDefinition {
   return {
     name: "patch",
@@ -277,6 +292,7 @@ function createPatchTool(
     }),
     execute: async (toolCallId, params) => {
       const p = params as { path: string; oldText: string; newText: string };
+      heartbeat?.fn?.();
       handler.fn?.("patch", { path: p.path });
       const timer = audit.start(
         agentName,
@@ -377,7 +393,8 @@ function createExecTool(
   audit: AuditLogger,
   handler: HandlerRef,
   sessionContext?: SessionContext,
-  modelRef?: CurrentModelRef
+  modelRef?: CurrentModelRef,
+  heartbeat?: HeartbeatRef
 ): ToolDefinition {
   return {
     name: "exec",
@@ -396,6 +413,7 @@ function createExecTool(
     }),
     execute: async (toolCallId, params) => {
       const p = params as { command: string; timeout?: number };
+      heartbeat?.fn?.();
       handler.fn?.("exec", { command: p.command });
       const args = ["sh", "-c", p.command];
       const timer = audit.start(

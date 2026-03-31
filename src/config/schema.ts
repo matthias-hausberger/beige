@@ -137,6 +137,16 @@ const LLMProviderConfig = Type.Object(
         }
       )
     ),
+    maxConcurrency: Type.Optional(
+      Type.Number({
+        description:
+          "Maximum concurrent requests to this provider. " +
+          "Requests that exceed this limit queue and await until a slot frees. " +
+          "Default: 3 if not specified.",
+        minimum: 1,
+        default: 3,
+      })
+    ),
   },
   { title: "LLMProviderConfig" }
 );

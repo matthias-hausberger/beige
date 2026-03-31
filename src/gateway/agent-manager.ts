@@ -70,6 +70,7 @@ class PromptTimeoutError extends Error {
   }
 }
 import { ProviderHealthTracker, extractRateLimitInfo } from "./provider-health.js";
+import { ConcurrencyLimiter, type ConcurrencyLimiterConfig } from "./concurrency-limiter.js";
 import { parseSessionKey, type SessionContext } from "../types/session.js";
 import { beigeDir } from "../paths.js";
 import { validateModelAllowed, buildAllowedModels } from "../config/restricted-model-registry.js";
@@ -121,6 +122,8 @@ export class AgentManager {
   private sessions = new Map<string, ManagedSession>();
   /** Tracks provider health and rate limits */
   private providerHealth = new ProviderHealthTracker();
+  /** Per-provider concurrency limiter */
+  private concurrencyLimiter: ConcurrencyLimiter;
   /** Beige home directory */
   private beigeDir = beigeDir();
   /**
@@ -141,7 +144,20 @@ export class AgentManager {
     private authStorage: AuthStorage,
     private modelRegistry: ModelRegistry,
     private sessionStore: BeigeSessionStore
-  ) {}
+  ) {
+    // Initialize concurrency limiter
+    const providerLimits: Record<string, number> = {};
+    for (const [providerName, providerConfig] of Object.entries(config.llm.providers)) {
+      if (providerConfig.maxConcurrency !== undefined) {
+        providerLimits[providerName] = providerConfig.maxConcurrency;
+      }
+    }
+
+    this.concurrencyLimiter = new ConcurrencyLimiter({
+      defaultConcurrency: 3,
+      providerLimits,
+    });
+  }
 
   /**
    * Get or create a session for a given key.
@@ -439,15 +455,25 @@ export class AgentManager {
       onAutoCompactionEnd?: (r: { success: boolean; tokensBefore?: number; willRetry: boolean; errorMessage?: string }) => void;
     }
   ): Promise<string> {
-    const managed = await this.getOrCreateSessionWithModel(
-      sessionKey,
-      agentName,
-      modelRef,
-      opts
-    );
-    managed.inflightCount++;
+    const { provider, model: modelId } = modelRef;
+    const modelLabel = `${provider}/${modelId}`;
+    const promptLogger = createLogger({ agent: agentName, session: sessionKey, model: modelLabel });
+
+    // Acquire concurrency slot before proceeding
+    promptLogger.log("[AGENT]", `Acquiring concurrency slot for ${modelLabel}`);
+    await this.concurrencyLimiter.acquire(provider, modelId);
+    promptLogger.log("[AGENT]", `Concurrency slot acquired for ${modelLabel}`);
 
     try {
+      const managed = await this.getOrCreateSessionWithModel(
+        sessionKey,
+        agentName,
+        modelRef,
+        opts
+      );
+      managed.inflightCount++;
+
+      try {
       return await new Promise<string>((resolve, reject) => {
         let responseText = "";
         let settled = false;
@@ -523,8 +549,13 @@ export class AgentManager {
           }
         });
       });
+      } finally {
+        this.decrementInflight(managed);
+      }
     } finally {
-      this.decrementInflight(managed);
+      // Release slot after request completes
+      this.concurrencyLimiter.release(provider, modelId);
+      promptLogger.log("[AGENT]", `Concurrency slot released for ${modelLabel}`);
     }
   }
 

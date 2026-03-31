@@ -51,6 +51,12 @@
                       "type": "string"
                     }
                   ]
+                },
+                "maxConcurrency": {
+                  "description": "Maximum concurrent requests to this provider. Requests that exceed this limit queue and await until a slot frees. Default: 3 if not specified.",
+                  "minimum": 1,
+                  "default": 3,
+                  "type": "number"
                 }
               }
             }
@@ -242,6 +248,10 @@
                   "description": "Docker image name. Default: \"beige-sandbox:latest\"",
                   "type": "string"
                 },
+                "memoryLimit": {
+                  "description": "Container memory limit (e.g. \"3g\", \"512m\"). Default: \"3g\". Prevents runaway processes (heavy npm installs, build tools) from taking down the host. The container will hit a cgroup OOM and be killed rather than exhausting host RAM.",
+                  "type": "string"
+                },
                 "extraMounts": {
                   "description": "Additional host→container bind mounts. Reduces isolation — use carefully.",
                   "type": "object",
@@ -293,6 +303,20 @@
         "logFile": {
           "description": "Daemon stdout/stderr log file. Default: ~/.beige/logs/gateway.log",
           "type": "string"
+        },
+        "log": {
+          "description": "Log rotation settings applied to gateway.log (on startup) and audit.jsonl (on each write).",
+          "type": "object",
+          "properties": {
+            "maxSizeBytes": {
+              "description": "Rotate a log file when it exceeds this size in bytes. Default: 10485760 (10 MB).",
+              "type": "number"
+            },
+            "maxFiles": {
+              "description": "Number of rotated log files to keep (.1 … .N). Oldest is deleted when the limit is reached. Default: 5.",
+              "type": "number"
+            }
+          }
         }
       }
     }

@@ -741,7 +741,7 @@ export class AgentManager {
     const coreTools = createCoreTools(agentName, this.sandbox, this.audit, toolStartHandlerRef, sessionContext, currentModelRef, heartbeatRef);
     const toolContext = buildPluginToolContext(agentConfig.tools, this.pluginRegistry);
     const skillContext = buildSkillContext(agentConfig.skills ?? [], this.loadedSkills);
-    const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext);
+    const systemPrompt = buildSystemPrompt(agentName, toolContext, skillContext, sessionContext);
     const agentsFiles = readWorkspaceAgentsMd(workspaceDir);
 
     const model = resolvedModel;
@@ -1327,9 +1327,29 @@ export function buildPluginToolContext(
   return lines.join("\n");
 }
 
-export function buildSystemPrompt(agentName: string, toolContext: string, skillContext: string = ""): string {
+export function buildSystemPrompt(agentName: string, toolContext: string, skillContext: string = "", sessionCtx?: SessionContext): string {
+  // Build the session context section only for non-TUI channels where the
+  // channel/chatId/threadId are meaningful (e.g. Telegram, Discord).
+  let sessionContextSection = "";
+  if (sessionCtx && sessionCtx.channel && sessionCtx.channel !== "tui") {
+    const lines = [
+      "## Session Context",
+      "",
+      "The current conversation was initiated via an external channel. Use these",
+      "details when calling channel tools that need to address the user (e.g.",
+      "sending a file or message back to the same chat).",
+      "",
+      `- **Channel**: ${sessionCtx.channel}`,
+      `- **Chat ID**: ${sessionCtx.chatId ?? "none"}`,
+      `- **Thread ID**: ${sessionCtx.threadId ?? "none"}`,
+      "",
+    ];
+    sessionContextSection = lines.join("\n") + "\n";
+  }
+
   return SYSTEM_PROMPT_TEMPLATE
     .replace(/\{\{agentName\}\}/g, agentName)
     .replace(/\{\{toolContext\}\}/g, toolContext)
-    .replace(/\{\{skillContext\}\}/g, skillContext);
+    .replace(/\{\{skillContext\}\}/g, skillContext)
+    .replace(/\{\{sessionContext\}\}/g, sessionContextSection);
 }

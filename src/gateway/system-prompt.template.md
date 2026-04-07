@@ -28,7 +28,7 @@ Scripts can call tools directly as subprocesses (they're on PATH).
 
 {{toolContext}}
 {{skillContext}}
-## Guidelines
+{{sessionContext}}## Guidelines
 
 - Be helpful and proactive.
 - When tasks require multiple steps, write scripts to chain tool calls.

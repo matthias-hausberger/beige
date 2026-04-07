@@ -89,18 +89,26 @@
         tickInterval: 15,
       },
     },
-    "brave-search": {
-      path: "../../beige-toolkit/plugins/brave-search",
-      config: {
-        apiKey: "${BRAVE_SEARCH_API_KEY}",
-      },
-    },
     image: {
       path: "../../beige-toolkit/plugins/image",
       config: {
         "analyzeProvider": "anthropic",        // must match a key in llm.providers
         "analyzeModel": "claude-sonnet-4-6",      // must match a model in the provider
       },
+    },
+    "markdown-pdf": {
+      path: "../../beige-toolkit/plugins/markdown-pdf"
+    },
+    "websearch": {
+      "path": "../../beige-toolkit/plugins/websearch",
+      "config": {
+        "providerPriority": [
+          { "provider": "tavily", "enabled": true, "apiKey": "${TAVILY_API_KEY}" },
+          { "provider": "brave", "enabled": true, "apiKey": "${BRAVE_SEARCH_API_KEY}" }
+        ],
+        "enableCache": true,
+        "cacheTTLSeconds": 600
+      }
     },
     telegram: {
       path: "../../beige-toolkit/plugins/telegram",
@@ -132,7 +140,7 @@
           thinkingLevel: "off",
         },
       ],
-      tools: ["chrome", "sessions", "spawn", "git", "github", "wrangler", "telegram", "schedule", "brave-search", "image"],
+      tools: ["chrome", "sessions", "spawn", "git", "github", "wrangler", "telegram", "schedule", "websearch", "image", "markdown-pdf"],
       sandbox: {
         image: "beige-sandbox:latest",
       },

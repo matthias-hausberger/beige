@@ -82,6 +82,7 @@
                   "extensibility/kits/beige-toolkit/slack",
                   "extensibility/kits/beige-toolkit/spawn",
                   "extensibility/kits/beige-toolkit/telegram",
+                  "extensibility/kits/beige-toolkit/websearch",
                   "extensibility/kits/beige-toolkit/wrangler"
                 ]
               }

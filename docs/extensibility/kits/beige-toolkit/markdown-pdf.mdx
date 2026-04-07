@@ -1,0 +1,175 @@
+---
+title: "markdown-pdf — Beige Markdown to PDF Plugin"
+---
+
+{/* Auto-generated from beige-toolkit — do not edit manually. */}
+{/* Run: pnpm run docs:sync-toolkit */}
+
+
+Convert markdown files to PDF with support for hyperlinks, tables, and local images.
+
+## Why this plugin exists
+
+Agents often need to generate professional documents from markdown — reports, itineraries, documentation, or printable versions of travel research. This plugin provides a complete markdown-to-PDF conversion pipeline that runs entirely on the gateway host (no external services required).
+
+**Workspace path resolution:** `/workspace/file.md` automatically translates to the host's workspace directory, making it seamless for agents to generate PDFs from their working files.
+
+## Installation
+
+Install this tool individually:
+
+```bash
+beige tools install github:matthias-hausberger/beige-toolkit/plugins/markdown-pdf
+```
+
+Or install all tools from the toolkit:
+
+```bash
+# From npm
+beige tools install npm:@matthias-hausberger/beige-toolkit
+
+# From GitHub
+beige tools install github:matthias-hausberger/beige-toolkit
+```
+
+## Configuration
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `format` | `"A4"` | Paper format. Supported: `A4`, `Letter`, `Legal`, `Tabloid`, `Ledger`. |
+| `margins.top` | `"2cm"` | Top page margin. |
+| `margins.right` | `"2cm"` | Right page margin. |
+| `margins.bottom` | `"2cm"` | Bottom page margin. |
+| `margins.left` | `"2cm"` | Left page margin. |
+| `displayHeaderFooter` | `false` | Display header and footer with page numbers. |
+| `printBackground` | `true` | Include background graphics and colors. |
+
+## Prerequisites
+
+| Requirement | Details |
+|---|---|
+| `puppeteer` | Installed automatically with plugin (runs headless Chrome for PDF rendering) |
+| `marked` | Installed automatically with plugin (markdown parser) |
+
+## Config Examples
+
+**Basic setup (all defaults):**
+
+```json5
+{
+  plugins: {
+    "markdown-pdf": {
+      config: {
+        format: "A4",
+        margins: {
+          top: "2cm",
+          right: "2cm",
+          bottom: "2cm",
+          left: "2cm",
+        },
+        displayHeaderFooter: false,
+        printBackground: true,
+      },
+    },
+  },
+}
+```
+
+**Letter format with narrow margins:**
+
+```json5
+{
+  plugins: {
+    "markdown-pdf": {
+      config: {
+        format: "Letter",
+        margins: {
+          top: "1cm",
+          right: "1cm",
+          bottom: "1cm",
+          left: "1cm",
+        },
+      },
+    },
+  },
+}
+```
+
+**With header/footer (page numbers):**
+
+```json5
+{
+  plugins: {
+    "markdown-pdf": {
+      config: {
+        displayHeaderFooter: true,
+        format: "A4",
+      },
+    },
+  },
+}
+```
+
+## Usage
+
+```
+markdown-pdf generate <markdownPath> <pdfPath>
+markdown-pdf generate <markdownPath> <pdfPath> --options '<json>'
+```
+
+**Examples:**
+
+```bash
+# Basic conversion
+markdown-pdf generate /workspace/README.md /workspace/README.pdf
+
+# Custom format
+markdown-pdf generate /workspace/report.md /workspace/report.pdf --options '{"format": "Letter"}'
+
+# Custom margins
+markdown-pdf generate /workspace/doc.md /workspace/doc.pdf --options '{"margins": {"top": "1cm", "bottom": "1cm"}}'
+
+# From agent's working directory
+markdown-pdf generate notes.md notes.pdf
+```
+
+**Path resolution:** paths are resolved against the agent's sandbox workspace (`/workspace/...` → host workspace directory). Relative paths are resolved from the agent's current working directory within the workspace.
+
+## Markdown Features Supported
+
+| Feature | Support |
+|----------|----------|
+| Headers (h1-h6) | ✅ Styled with hierarchy |
+| Bold, italic, code | ✅ Full inline formatting |
+| Lists (ordered, unordered, nested) | ✅ All list types |
+| Tables | ✅ Styled with borders and alternating rows |
+| Hyperlinks | ✅ Clickable in PDF (local and external) |
+| Images (local and remote) | ✅ Automatically embedded |
+| Code blocks | ✅ Syntax-friendly styling |
+| Blockquotes | ✅ Styled with left border |
+| Horizontal rules | ✅ Rendered as dividers |
+
+## Command Reference
+
+| Command | Description |
+|---------|-------------|
+| `generate <markdownPath> <pdfPath>` | Convert markdown to PDF using default config |
+| `generate <markdownPath> <pdfPath> --options '<json>'` | Convert with custom format/margins (overrides config) |
+
+**Tool name**: `markdown-pdf`
+
+## Error Reference
+
+| Error | Cause |
+|---|---|
+| `markdown file not found` | The input markdown file does not exist on the host filesystem after workspace path translation. |
+| `Failed to load PDF generation dependencies` | `marked` or `puppeteer` modules not found. Run `npm install` in the plugin directory. |
+| `PDF generation failed` | Puppeteer error during rendering. Check system has required dependencies for headless Chrome. |
+| `Invalid JSON in --options` | The `--options` argument is not valid JSON. |
+
+## Dependencies
+
+- **marked** (^12.0.0): Markdown parser — converts markdown to HTML
+- **puppeteer** (^22.0.0): Headless Chrome — renders HTML to PDF
+
+Both are installed automatically when the plugin is loaded.

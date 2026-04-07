@@ -34,7 +34,7 @@ beige tools install github:matthias-hausberger/beige-toolkit
 | `tickInterval` | No | `15` | How often (in seconds) the background loop checks for due schedules. Lower values give more precise timing at the cost of slightly more CPU. |
 | `allowExec` | No | `true` | Allow agents to create `exec`-type schedules that run shell commands on the gateway host. Enabled by default — agents are sandboxed so exec runs on the gateway side of that boundary. Set to `false` to disable if needed. |
 | `maxSchedulesPerAgent` | No | `20` | Maximum number of active (non-completed, non-cancelled) schedules per agent. Prevents runaway schedule creation. |
-| `maxConsecutiveErrors` | No | `0` | How many consecutive execution errors a schedule is allowed before it is automatically marked as `"failed"` and stopped. With the default of `0`, a schedule is failed on the very first error (no retries). Set to e.g. `2` to allow up to 2 retries (3 total attempts) before the schedule is disabled. The counter resets to `0` on every successful run. |
+| `maxConsecutiveFailures` | No | `-1` | How many consecutive execution failures a schedule is allowed before it is automatically marked as `"failed"` and stopped. `-1` means infinite — the schedule will never auto-fail due to errors (default). `0` fails on the very first error (no retries). Set to e.g. `2` to allow up to 2 retries (3 total attempts) before the schedule is disabled. The counter resets to `0` on every successful run. |
 
 ## Prerequisites
 
@@ -70,7 +70,7 @@ No external dependencies beyond `cron-parser` (bundled). Requires beige ≥ 0.1.
 | `get <id>` | Show full details for a schedule. |
 | `cancel <id>` | Cancel an active or paused schedule. |
 | `pause <id>` | Pause an active cron schedule without cancelling it. |
-| `resume <id>` | Resume a paused schedule, re-computing the next run time. |
+| `resume <id> [--once <ISO8601>]` | Resume a paused, failed, or cancelled schedule, re-computing the next run time. Resets the consecutive error counter for failed schedules. For one-off schedules whose trigger time has passed, use `--once <ISO8601>` to set a new future trigger time. |
 | `history <id> [--limit <n>] [--format json]` | Show run history for a schedule. |
 | `test <id>` | Trigger a schedule immediately without affecting its state (runCount, status, nextRun are preserved). |
 
@@ -90,6 +90,10 @@ Schedule files are stored as individual JSON files at `storagePath/schedules/<id
 - **exec**: the command is run via `child_process.execFile` with `shell: true` on the gateway host.
 
 A run history record is written to `storagePath/history/` after every execution, regardless of success or failure. The tick loop also fires once at gateway startup to catch any schedules that became due while the gateway was offline.
+
+### Concurrency
+
+Different schedules run **in parallel** — a slow schedule A will never block schedule B from firing on time. However, each individual schedule can only have **one execution in flight at a time**. If a schedule's previous execution is still running when the next tick finds it due again, that window is simply skipped (no catch-up). This prevents resource exhaustion from a single schedule while keeping independent schedules responsive.
 
 ## Storage Layout
 
